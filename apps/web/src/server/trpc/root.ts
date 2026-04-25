@@ -1,6 +1,7 @@
 import { authRouter } from './routers/auth';
 import { contactsRouter } from './routers/contacts';
 import { customFieldsRouter } from './routers/custom-fields';
+import { emailTemplatesRouter } from './routers/email-templates';
 import { eventsRouter } from './routers/events';
 import { importsRouter } from './routers/imports';
 import { invitationRouter } from './routers/invitation';
@@ -29,6 +30,7 @@ export const appRouter = createTRPCRouter({
   events: eventsRouter,
   suppression: suppressionRouter,
   sendingDomain: sendingDomainsRouter,
+  emailTemplate: emailTemplatesRouter,
 });
 
 export type AppRouter = typeof appRouter;
