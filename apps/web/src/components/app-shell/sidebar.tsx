@@ -31,7 +31,7 @@ const items: Item[] = [
     label: 'Dashboard',
     icon: LayoutDashboard,
   },
-  { href: (s) => `/t/${s}/campaigns`, label: 'Campaigns', icon: Mail, soon: true },
+  { href: (s) => `/t/${s}/campaigns`, label: 'Campaigns', icon: Mail },
   {
     href: (s) => `/t/${s}/templates`,
     label: 'Templates',
