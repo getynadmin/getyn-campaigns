@@ -9,6 +9,7 @@ const tabs = [
   { key: 'workspace', label: 'Workspace' },
   { key: 'team', label: 'Team' },
   { key: 'custom-fields', label: 'Custom fields' },
+  { key: 'sending-domains', label: 'Sending domains' },
   { key: 'billing', label: 'Billing' },
   { key: 'channels', label: 'Channels' },
 ] as const;

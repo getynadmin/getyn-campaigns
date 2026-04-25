@@ -85,14 +85,30 @@ export type CampaignEventTypeValue = z.infer<typeof campaignEventTypeSchema>;
  * until each entry's `status` flips to "verified".
  *
  * MX records have an additional `priority` integer; TXT/CNAME do not.
+ * `record` is Resend's category tag (SPF / DKIM) — purely informational.
+ *
+ * Schema uses `passthrough()` so we round-trip any future Resend fields
+ * without a code change.
  */
-export const sendingDomainDnsRecordSchema = z.object({
-  type: z.enum(['MX', 'TXT', 'CNAME']),
-  name: z.string().min(1).max(253),
-  value: z.string().min(1).max(2048),
-  status: z.enum(['pending', 'verified', 'failed']).default('pending'),
-  priority: z.number().int().min(0).max(65535).optional(),
-});
+export const sendingDomainDnsRecordSchema = z
+  .object({
+    type: z.enum(['MX', 'TXT', 'CNAME']),
+    name: z.string().min(1).max(253),
+    value: z.string().min(1).max(4096),
+    status: z
+      .enum([
+        'pending',
+        'verified',
+        'failed',
+        'temporary_failure',
+        'not_started',
+      ])
+      .default('pending'),
+    priority: z.number().int().min(0).max(65535).optional(),
+    ttl: z.string().optional(),
+    record: z.string().optional(), // Resend's "SPF" / "DKIM" tag
+  })
+  .passthrough();
 export type SendingDomainDnsRecord = z.infer<
   typeof sendingDomainDnsRecordSchema
 >;

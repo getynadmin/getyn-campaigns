@@ -7,6 +7,7 @@ import { invitationRouter } from './routers/invitation';
 import { membershipRouter } from './routers/membership';
 import { onboardingRouter } from './routers/onboarding';
 import { segmentsRouter } from './routers/segments';
+import { sendingDomainsRouter } from './routers/sending-domains';
 import { signupRouter } from './routers/signup';
 import { suppressionRouter } from './routers/suppression';
 import { tagsRouter } from './routers/tags';
@@ -27,6 +28,7 @@ export const appRouter = createTRPCRouter({
   segments: segmentsRouter,
   events: eventsRouter,
   suppression: suppressionRouter,
+  sendingDomain: sendingDomainsRouter,
 });
 
 export type AppRouter = typeof appRouter;
