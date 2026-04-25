@@ -5,8 +5,10 @@ import {
   QUEUE_NAMES,
   importJobPayloadSchema,
   prepareCampaignPayloadSchema,
+  resendWebhookPayloadSchema,
   type ImportJobPayload,
   type PrepareCampaignPayload,
+  type ResendWebhookPayload,
 } from '@getyn/types';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
@@ -25,6 +27,7 @@ import { Redis } from 'ioredis';
 let cachedConnection: Redis | null = null;
 let cachedImportsQueue: Queue<ImportJobPayload> | null = null;
 let cachedSendsQueue: Queue | null = null;
+let cachedWebhooksQueue: Queue<ResendWebhookPayload> | null = null;
 
 function getConnection(): Redis {
   if (cachedConnection) return cachedConnection;
@@ -84,6 +87,36 @@ function getSendsQueue(): Queue {
     },
   });
   return cachedSendsQueue;
+}
+
+function getWebhooksQueue(): Queue<ResendWebhookPayload> {
+  if (cachedWebhooksQueue) return cachedWebhooksQueue;
+  cachedWebhooksQueue = new Queue<ResendWebhookPayload>(QUEUE_NAMES.webhooks, {
+    connection: getConnection(),
+    defaultJobOptions: {
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 2_000 },
+      removeOnComplete: { age: 60 * 60 * 24 * 3, count: 5000 },
+      removeOnFail: { age: 60 * 60 * 24 * 7 },
+    },
+  });
+  return cachedWebhooksQueue;
+}
+
+/**
+ * Enqueue a Resend webhook event for async processing. The receiver at
+ * /api/webhooks/resend hands events here so the HTTP response stays fast
+ * (<100ms) regardless of DB load.
+ */
+export async function enqueueResendWebhookEvent(
+  payload: ResendWebhookPayload,
+): Promise<void> {
+  const validated = resendWebhookPayloadSchema.parse(payload);
+  const queue = getWebhooksQueue();
+  // jobId scoped on (messageId, eventType) — duplicate POSTs collapse.
+  await queue.add(JOB_NAMES.webhooks.processResendEvent, validated, {
+    jobId: `resend:${validated.messageId}:${validated.eventType}`,
+  });
 }
 
 /**

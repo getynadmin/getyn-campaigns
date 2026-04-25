@@ -8,6 +8,7 @@ import { loadEnv } from './env';
 import { handleDailyReset, handleRatesDriftCorrect } from './handlers/cron';
 import { handleImportJob } from './handlers/imports';
 import { handleSendsJob } from './handlers/sends';
+import { handleResendWebhook } from './handlers/webhooks';
 import { createRedisConnection } from './redis';
 
 const env = loadEnv();
@@ -44,6 +45,19 @@ workers.push(
     concurrency: env.WORKER_IMPORTS_CONCURRENCY,
     // Each job gets a fresh lock that renews every 30s. If the worker
     // crashes mid-job, BullMQ re-queues it after the lock expires.
+    lockDuration: 30_000,
+  }),
+);
+
+// Webhooks queue — Phase 3 M7's Resend event ingestion.
+//
+// The web app's /api/webhooks/resend verifies the signature and enqueues
+// here. Concurrency 8 — webhook events are tiny + idempotent so we can
+// burn through them in parallel.
+workers.push(
+  new Worker(QUEUE_NAMES.webhooks, handleResendWebhook, {
+    connection,
+    concurrency: 8,
     lockDuration: 30_000,
   }),
 );

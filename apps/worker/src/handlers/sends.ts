@@ -504,11 +504,14 @@ async function handleDispatchBatch(job: Job): Promise<void> {
           text: rendered.text,
           replyTo: rendered.replyTo ?? undefined,
           headers: {
-            // RFC 8058 one-click unsubscribe. Both header lines required —
-            // the URL gets POSTed by mail clients that support it.
-            'List-Unsubscribe': `<${APP_URL}/u/${
-              // Re-derive token from the rendered HTML's substituted URL
-              // is tedious; sign a fresh one here.
+            // RFC 8058 one-click unsubscribe. Mail clients POST to the
+            // URL on the user's button press; our /api/unsubscribe/[token]
+            // handler accepts the empty POST body.
+            //
+            // The visible Unsubscribe link in the email body points to
+            // /u/[token] (the confirmation page — GET handles that).
+            // Both flow to the same DB write via verifyEmailToken.
+            'List-Unsubscribe': `<${APP_URL}/api/unsubscribe/${
               (await import('@getyn/db')).signEmailToken({
                 campaignSendId: send.id,
                 tenantId,
