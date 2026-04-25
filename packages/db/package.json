@@ -25,6 +25,7 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@getyn/types": "workspace:*",
     "@prisma/client": "^5.19.1"
   },
   "devDependencies": {

@@ -1,4 +1,4 @@
-import type { Prisma } from '@getyn/db';
+import type { Prisma } from '@prisma/client';
 import {
   SEGMENT_DATE_FIELDS,
   SEGMENT_ENUM_FIELDS,

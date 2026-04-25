@@ -28,7 +28,8 @@ import {
   compileSegmentRules,
   SegmentCompileError,
   type SegmentCustomFieldEntry,
-} from '@/server/segments/compiler';
+} from '@getyn/db';
+import { enqueuePrepareCampaign } from '@/server/queues';
 
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
 
@@ -667,10 +668,18 @@ async function runPreFlightAndTransition(args: {
       });
     }
 
-    // Transition. The worker (M6) reads the new status and processes.
-    // For now we just flip the status — the worker isn't deployed yet,
-    // so SENDING campaigns will sit until Railway lands. Acceptable
-    // because nobody's pushing real campaigns through prod yet.
+    // Transition + enqueue.
+    //
+    // For SENDING (sendNow): flip status, enqueue prepare-campaign with
+    // no delay — worker picks it up immediately.
+    // For SCHEDULED (schedule): flip status + scheduledAt, enqueue
+    // prepare-campaign with `delay = scheduledAt - now`. BullMQ holds
+    // the job until then.
+    //
+    // Cancel logic in `campaign.cancel` doesn't proactively remove the
+    // delayed job — instead, the worker re-checks campaign.status
+    // before doing any work. SCHEDULED → CANCELED transitions cause
+    // prepare-campaign to skip cleanly when it fires.
     await tx.campaign.update({
       where: { id: c.id },
       data: {
@@ -678,6 +687,36 @@ async function runPreFlightAndTransition(args: {
         scheduledAt: args.scheduledAt ?? null,
       },
     });
+
+    // Outside the transaction (BullMQ enqueue isn't a DB op).
+    // We do this AFTER the DB write so the worker never reads a stale
+    // campaign — by the time it picks up the job, the status is set.
+    const delayMs = args.scheduledAt
+      ? Math.max(0, args.scheduledAt.getTime() - Date.now())
+      : undefined;
+    try {
+      await enqueuePrepareCampaign(
+        { campaignId: c.id, tenantId },
+        { delayMs },
+      );
+    } catch (err) {
+      // Enqueue failed — REDIS_URL likely unset. Roll back to DRAFT
+      // so the user can try again rather than leaving a SENDING-but-
+      // never-processed campaign.
+      await tx.campaign.update({
+        where: { id: c.id },
+        data: {
+          status: CampaignStatus.DRAFT,
+          scheduledAt: null,
+        },
+      });
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: `Could not queue the send: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+    }
 
     return { ok: true as const };
   });

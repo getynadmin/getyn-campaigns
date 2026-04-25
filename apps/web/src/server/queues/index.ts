@@ -4,7 +4,9 @@ import {
   JOB_NAMES,
   QUEUE_NAMES,
   importJobPayloadSchema,
+  prepareCampaignPayloadSchema,
   type ImportJobPayload,
+  type PrepareCampaignPayload,
 } from '@getyn/types';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
@@ -22,6 +24,7 @@ import { Redis } from 'ioredis';
 
 let cachedConnection: Redis | null = null;
 let cachedImportsQueue: Queue<ImportJobPayload> | null = null;
+let cachedSendsQueue: Queue | null = null;
 
 function getConnection(): Redis {
   if (cachedConnection) return cachedConnection;
@@ -66,5 +69,45 @@ export async function enqueueImportJob(payload: ImportJobPayload): Promise<void>
   const queue = getImportsQueue();
   await queue.add(JOB_NAMES.imports.processImport, validated, {
     jobId: validated.importJobId,
+  });
+}
+
+function getSendsQueue(): Queue {
+  if (cachedSendsQueue) return cachedSendsQueue;
+  cachedSendsQueue = new Queue(QUEUE_NAMES.sends, {
+    connection: getConnection(),
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5_000 },
+      removeOnComplete: { age: 60 * 60 * 24 * 7, count: 1000 },
+      removeOnFail: { age: 60 * 60 * 24 * 30 },
+    },
+  });
+  return cachedSendsQueue;
+}
+
+/**
+ * Enqueue a `prepare-campaign` job. Called from `campaign.sendNow` and
+ * `campaign.schedule`. The worker takes over from there: resolves the
+ * segment, materializes CampaignSend rows, and chain-enqueues
+ * `dispatch-batch` jobs.
+ *
+ * `jobId` is set to `prepare:${campaignId}` so a duplicate enqueue (HTTP
+ * retry, scheduler firing twice in a race) collapses instead of running
+ * twice.
+ *
+ * `delay` is used by `campaign.schedule` to wait until `scheduledAt` —
+ * BullMQ delays the job until then. The worker's pickup order respects
+ * the delay.
+ */
+export async function enqueuePrepareCampaign(
+  payload: PrepareCampaignPayload,
+  options: { delayMs?: number } = {},
+): Promise<void> {
+  const validated = prepareCampaignPayloadSchema.parse(payload);
+  const queue = getSendsQueue();
+  await queue.add(JOB_NAMES.sends.prepareCampaign, validated, {
+    jobId: `prepare:${validated.campaignId}`,
+    ...(options.delayMs !== undefined ? { delay: options.delayMs } : {}),
   });
 }

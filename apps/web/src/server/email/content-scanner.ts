@@ -123,6 +123,66 @@ export function scanCampaignContent(input: ScanInput): ScanResult {
     });
   }
 
+  // Body-level checks — only run when renderedHtml is present (i.e. after
+  // the user has saved the design). Until then the wizard's pre-flight
+  // surfaces "Save the design" instead.
+  if (input.renderedHtml) {
+    const html = input.renderedHtml;
+
+    // Strip HTML tags + collapse whitespace to estimate visible text content.
+    const visibleText = html
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (visibleText.length < 20) {
+      issues.push({
+        level: 'error',
+        field: 'renderedHtml',
+        message: 'Email body has almost no text content. Empty designs send poorly.',
+      });
+    }
+
+    // Image-to-text ratio. Spam filters flag emails that are mostly images
+    // with little text. Count <img> tags vs visible text length.
+    const imgCount = (html.match(/<img[\s>]/gi) ?? []).length;
+    if (imgCount > 0 && visibleText.length < imgCount * 80) {
+      issues.push({
+        level: 'warning',
+        field: 'renderedHtml',
+        message: `Email is mostly images (${imgCount} images, ${visibleText.length} chars of text). Many spam filters flag this — add some text body copy.`,
+      });
+    }
+
+    // Unsubscribe link presence. We accept either the merge tag
+    // `{{unsubscribeUrl}}` (substituted at send time) or a literal `/u/`
+    // path. The kickoff requires this, and it's law in most jurisdictions.
+    if (!/{{\s*unsubscribeUrl\s*}}/i.test(html) && !/\/u\//.test(html)) {
+      issues.push({
+        level: 'error',
+        field: 'renderedHtml',
+        message:
+          'Missing unsubscribe link. Add an Unlayer "Unsubscribe" element or insert {{unsubscribeUrl}} as a link.',
+      });
+    }
+
+    // ALL CAPS body — same heuristic as subject.
+    const bodyLetters = visibleText.match(/[A-Za-z]/g) ?? [];
+    const bodyUpperLetters = visibleText.match(/[A-Z]/g) ?? [];
+    if (
+      bodyLetters.length >= 200 &&
+      bodyUpperLetters.length / bodyLetters.length >= ALL_CAPS_THRESHOLD
+    ) {
+      issues.push({
+        level: 'warning',
+        field: 'renderedHtml',
+        message: 'Body is mostly uppercase text — toned-down formatting reads better.',
+      });
+    }
+  }
+
   return {
     issues,
     hasErrors: issues.some((i) => i.level === 'error'),

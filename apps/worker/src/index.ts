@@ -6,6 +6,7 @@ import { Worker } from 'bullmq';
 
 import { loadEnv } from './env';
 import { handleImportJob } from './handlers/imports';
+import { handleSendsJob } from './handlers/sends';
 import { createRedisConnection } from './redis';
 
 const env = loadEnv();
@@ -35,8 +36,7 @@ connection.on('error', (err) => console.error('[worker] redis error:', err.messa
 
 const workers: Worker[] = [];
 
-// Imports queue — Phase 2's CSV ingestion. Phase 3 M6 will add `sends` and
-// `webhooks` queues alongside this one.
+// Imports queue — Phase 2's CSV ingestion.
 workers.push(
   new Worker(QUEUE_NAMES.imports, handleImportJob, {
     connection,
@@ -44,6 +44,24 @@ workers.push(
     // Each job gets a fresh lock that renews every 30s. If the worker
     // crashes mid-job, BullMQ re-queues it after the lock expires.
     lockDuration: 30_000,
+  }),
+);
+
+// Sends queue — Phase 3 M6's campaign send pipeline.
+//
+// Three job types share this queue (prepare-campaign / dispatch-batch /
+// evaluate-ab) — handleSendsJob dispatches by job.name. Concurrency 4
+// means 4 dispatch-batch jobs can run in parallel; each job processes
+// up to 500 sends. The bottleneck is Resend's 10 req/s rate limit, which
+// we throttle inside the dispatch handler — running more workers
+// accelerates queueing but doesn't violate the upstream cap.
+workers.push(
+  new Worker(QUEUE_NAMES.sends, handleSendsJob, {
+    connection,
+    concurrency: 4,
+    // dispatch-batch can run for several minutes; bump the lock so a
+    // slow Resend response doesn't trigger a re-queue.
+    lockDuration: 120_000,
   }),
 );
 

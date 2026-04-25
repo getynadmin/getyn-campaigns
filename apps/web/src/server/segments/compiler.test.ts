@@ -6,7 +6,7 @@ import {
   compileSegmentRules,
   SegmentCompileError,
   type SegmentCustomFieldEntry,
-} from './compiler';
+} from '@getyn/db';
 
 /**
  * Compiler tests. We go through every field category + operator so future

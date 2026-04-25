@@ -8,6 +8,26 @@ import {
 
 export * from '@prisma/client';
 
+export {
+  compileSegmentRules,
+  SegmentCompileError,
+  type SegmentCustomFieldEntry,
+} from './segments/compiler';
+
+export {
+  signEmailToken,
+  verifyEmailToken,
+  type EmailTokenKind,
+  type VerifiedEmailToken,
+} from './email-tokens';
+
+export {
+  computeSuspensionDecision,
+  checkAndApplySuspension,
+  incrementSendCounters,
+  type SuspensionDecision,
+} from './sending-policy';
+
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };

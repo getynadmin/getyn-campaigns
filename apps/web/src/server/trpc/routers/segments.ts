@@ -17,7 +17,7 @@ import {
   SegmentCompileError,
   compileSegmentRules,
   type SegmentCustomFieldEntry,
-} from '@/server/segments/compiler';
+} from '@getyn/db';
 
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
 

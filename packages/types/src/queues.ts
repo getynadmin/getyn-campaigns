@@ -10,6 +10,8 @@ import { cuidSchema } from './common';
 
 export const QUEUE_NAMES = {
   imports: 'imports',
+  sends: 'sends',
+  webhooks: 'webhooks',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -34,6 +36,64 @@ export const importJobPayloadSchema = z.object({
 });
 export type ImportJobPayload = z.infer<typeof importJobPayloadSchema>;
 
+/**
+ * Payloads for the `sends` queue (Phase 3 M6).
+ *
+ * `prepare-campaign` runs once per campaign — resolves the segment, filters
+ * by suppression, materializes CampaignSend rows, and enqueues
+ * `dispatch-batch` jobs in chunks of 500.
+ */
+export const prepareCampaignPayloadSchema = z.object({
+  campaignId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type PrepareCampaignPayload = z.infer<
+  typeof prepareCampaignPayloadSchema
+>;
+
+/**
+ * `dispatch-batch` runs once per chunk of recipients. Each job receives up
+ * to 500 (campaignSendId, contactId, email) tuples. The worker renders the
+ * per-recipient HTML, calls Resend, updates CampaignSend status, emits
+ * CampaignEvent and ContactEvent.
+ */
+export const dispatchBatchPayloadSchema = z.object({
+  campaignId: cuidSchema,
+  tenantId: cuidSchema,
+  /** A/B variant for this batch — null when the campaign isn't an A/B test. */
+  abVariant: z.enum(['A', 'B']).nullable().default(null),
+  sendIds: z.array(cuidSchema).min(1).max(500),
+});
+export type DispatchBatchPayload = z.infer<typeof dispatchBatchPayloadSchema>;
+
+/**
+ * `evaluate-ab` runs as a single delayed job per A/B campaign. After the
+ * test cohort has been sending for `winnerDecisionAfterMinutes`, this job
+ * picks the winner by metric (open_rate or click_rate) and releases the
+ * held-back cohort with the winning variant.
+ */
+export const evaluateAbPayloadSchema = z.object({
+  campaignId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type EvaluateAbPayload = z.infer<typeof evaluateAbPayloadSchema>;
+
+/**
+ * Payload for the `webhooks` queue (Phase 3 M7).
+ *
+ * The web's /api/webhooks/resend route verifies the signature and immediately
+ * enqueues the parsed event so the worker can process it asynchronously.
+ * That keeps webhook responses fast (<100ms) regardless of DB load.
+ */
+export const resendWebhookPayloadSchema = z.object({
+  tenantId: cuidSchema.optional(),
+  eventType: z.string(),
+  messageId: z.string(),
+  payload: z.record(z.unknown()),
+  receivedAt: z.string().datetime(),
+});
+export type ResendWebhookPayload = z.infer<typeof resendWebhookPayloadSchema>;
+
 // -----------------------------------------------------------------------------
 // Job name registry per queue. Keeps BullMQ's `name` field strongly typed on
 // both sides of the wire.
@@ -42,5 +102,13 @@ export type ImportJobPayload = z.infer<typeof importJobPayloadSchema>;
 export const JOB_NAMES = {
   imports: {
     processImport: 'processImport',
+  },
+  sends: {
+    prepareCampaign: 'prepare-campaign',
+    dispatchBatch: 'dispatch-batch',
+    evaluateAb: 'evaluate-ab',
+  },
+  webhooks: {
+    processResendEvent: 'process-resend-event',
   },
 } as const;
