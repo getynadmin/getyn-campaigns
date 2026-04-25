@@ -5,6 +5,7 @@ import {
   Check,
   Circle,
   Filter,
+  Mail,
   MessagesSquare,
   UserPlus,
   Users,
@@ -39,11 +40,13 @@ export function OnboardingChecklist({
   teamSize,
   contactsCount,
   segmentsCount,
+  campaignsCount,
 }: {
   tenantSlug: string;
   teamSize: number;
   contactsCount: number;
   segmentsCount: number;
+  campaignsCount?: number;
 }): JSX.Element {
   const steps: Step[] = [
     {
@@ -77,10 +80,23 @@ export function OnboardingChecklist({
       done: segmentsCount > 0,
     },
     {
-      key: 'channel',
-      title: 'Connect a sending channel',
+      key: 'campaign',
+      title: 'Send your first campaign',
       description:
-        'Hook up email, WhatsApp, or SMS. Unlocks in Phase 3.',
+        'Pick a segment, design an email in the builder, and send. Tracking + analytics come for free.',
+      href: `/t/${tenantSlug}/campaigns/new`,
+      cta:
+        (campaignsCount ?? 0) > 0
+          ? 'View campaigns'
+          : 'Create campaign',
+      icon: Mail,
+      done: (campaignsCount ?? 0) > 0,
+    },
+    {
+      key: 'channel',
+      title: 'Add WhatsApp + SMS',
+      description:
+        'Email is live. WhatsApp + SMS channels unlock in Phase 4.',
       href: `/t/${tenantSlug}/settings/channels`,
       cta: 'Coming soon',
       icon: MessagesSquare,
