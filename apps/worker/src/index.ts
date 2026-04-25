@@ -2,9 +2,10 @@ import { createServer, type Server } from 'node:http';
 
 import { prisma } from '@getyn/db';
 import { QUEUE_NAMES } from '@getyn/types';
-import { Worker } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
 
 import { loadEnv } from './env';
+import { handleDailyReset, handleRatesDriftCorrect } from './handlers/cron';
 import { handleImportJob } from './handlers/imports';
 import { handleSendsJob } from './handlers/sends';
 import { createRedisConnection } from './redis';
@@ -63,6 +64,70 @@ workers.push(
     // slow Resend response doesn't trigger a re-queue.
     lockDuration: 120_000,
   }),
+);
+
+// Cron queue — repeatable maintenance jobs.
+//
+// Two repeatable jobs:
+//   1. daily-reset @ 00:00 UTC each day — resets currentDailyCount and
+//      resumes campaigns that paused on yesterday's daily cap.
+//   2. rates-drift @ top of each hour — recomputes
+//      cachedComplaintRate30d / cachedBounceRate30d from raw events
+//      so the suspension-decision counters don't drift from the
+//      incremental updates the M7 webhook handler does.
+//
+// addRepeatableJob is idempotent on (queue, name, repeat-key) so
+// restarting the worker doesn't pile up duplicates.
+const CRON_QUEUE_NAME = 'cron';
+const cronQueue = new Queue(CRON_QUEUE_NAME, { connection });
+
+workers.push(
+  new Worker(
+    CRON_QUEUE_NAME,
+    async (job) => {
+      switch (job.name) {
+        case 'daily-reset':
+          return handleDailyReset();
+        case 'rates-drift':
+          return handleRatesDriftCorrect();
+        default:
+          throw new Error(`Unknown cron job: ${job.name}`);
+      }
+    },
+    {
+      connection,
+      concurrency: 1, // Cron jobs are serialized — never run two daily
+                     // resets simultaneously across replicas.
+      lockDuration: 600_000, // 10 min — drift-correct can take a while
+    },
+  ),
+);
+
+// Register repeatables on boot. BullMQ deduplicates by (name,
+// repeatPattern) so this is safe to call every boot.
+async function setupCronJobs(): Promise<void> {
+  // 00:00 UTC daily.
+  await cronQueue.add(
+    'daily-reset',
+    {},
+    {
+      repeat: { pattern: '0 0 * * *', tz: 'UTC' },
+      jobId: 'cron:daily-reset',
+    },
+  );
+  // Every hour at :05 (avoid clashing with daily-reset at midnight).
+  await cronQueue.add(
+    'rates-drift',
+    {},
+    {
+      repeat: { pattern: '5 * * * *', tz: 'UTC' },
+      jobId: 'cron:rates-drift',
+    },
+  );
+  console.info('[worker:cron] repeatable jobs registered');
+}
+void setupCronJobs().catch((err) =>
+  console.error('[worker:cron] setup failed:', err),
 );
 
 for (const worker of workers) {
