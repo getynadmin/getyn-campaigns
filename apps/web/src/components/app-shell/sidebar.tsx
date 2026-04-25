@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   BarChart3,
+  FileText,
   Filter,
   LayoutDashboard,
   Mail,
@@ -31,6 +32,11 @@ const items: Item[] = [
     icon: LayoutDashboard,
   },
   { href: (s) => `/t/${s}/campaigns`, label: 'Campaigns', icon: Mail, soon: true },
+  {
+    href: (s) => `/t/${s}/templates`,
+    label: 'Templates',
+    icon: FileText,
+  },
   {
     href: (s) => `/t/${s}/contacts`,
     label: 'Contacts',
