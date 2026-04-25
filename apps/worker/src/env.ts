@@ -20,6 +20,11 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   // Optional: concurrency per worker. Tune based on Railway instance size.
   WORKER_IMPORTS_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  // HTTP health endpoint port. Railway injects PORT automatically; locally
+  // defaults to 8080. The endpoint returns 200 with queue + redis status —
+  // Railway uses it for liveness probes and to tell when the service is
+  // ready to receive traffic (even though we don't serve any).
+  PORT: z.coerce.number().int().positive().default(8080),
 });
 
 export type WorkerEnv = z.infer<typeof envSchema>;

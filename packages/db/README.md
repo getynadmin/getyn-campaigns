@@ -207,46 +207,69 @@ The web app issues a short-lived signed upload URL; the browser PUTs the CSV; th
 
 ### One-time bucket setup
 
+> **Phase 3 update:** the buckets and policies are now applied via the
+> Supabase MCP migration `phase3_m0_storage_bucket_policies` (see
+> Supabase dashboard → Database → Migrations). The dashboard-click
+> walkthrough below is preserved for reference / disaster recovery.
+
+Two buckets:
+
+- `imports` — CSV uploads from the contacts import flow (Phase 2 M5).
+- `email-assets` — images uploaded from the Unlayer email editor (Phase 3 M3).
+  Referenced as 1-year signed URLs inside immutable rendered email HTML, so
+  the bucket stays private.
+
 Run this once per environment (dev + staging + prod). It's idempotent.
 
-1. **Create the bucket** — Supabase dashboard → Storage → New bucket:
-   - Name: `imports`
-   - Public: **off**
-   - File size limit: 25 MB (Phase 2 cap; revisit in Phase 5)
-   - Allowed MIME types: `text/csv`, `application/vnd.ms-excel`
+1. **Create the buckets** — Supabase dashboard → Storage → New bucket:
+   - `imports`: Public **off**, file size limit 25 MB (`26214400`),
+     allowed MIME types `text/csv, application/vnd.ms-excel`
+   - `email-assets`: Public **off**, file size limit 10 MB (`10485760`),
+     allowed MIME types `image/jpeg, image/png, image/gif, image/webp`
+     (SVG omitted on purpose — XSS surface in some email clients)
 
-2. **Apply RLS policies** — Supabase dashboard → Storage → Policies → New policy on `imports`. Create the four below (INSERT/SELECT/UPDATE/DELETE). Each checks that the first path segment after `imports/` equals the caller's current tenant id:
+2. **Apply RLS policies** — Supabase dashboard → Storage → Policies. Create
+   four policies on each bucket (INSERT/SELECT/UPDATE/DELETE). Each checks
+   that the first path segment after the bucket name equals the caller's
+   current tenant id:
 
    ```sql
-   -- INSERT: a user can only upload into imports/{their-tenant-id}/*
-   CREATE POLICY "imports_insert_own_tenant"
-     ON storage.objects FOR INSERT
-     TO authenticated
+   -- One block per bucket. Replace BUCKET below with 'imports' or
+   -- 'email-assets'; create the same four policies for each.
+
+   CREATE POLICY "BUCKET_insert_own_tenant"
+     ON storage.objects FOR INSERT TO authenticated
      WITH CHECK (
-       bucket_id = 'imports'
+       bucket_id = 'BUCKET'
        AND (storage.foldername(name))[1] = current_setting('app.current_tenant_id', true)
      );
 
-   -- SELECT / UPDATE / DELETE: same check on USING
-   CREATE POLICY "imports_select_own_tenant"
+   CREATE POLICY "BUCKET_select_own_tenant"
      ON storage.objects FOR SELECT TO authenticated
-     USING (bucket_id = 'imports'
+     USING (bucket_id = 'BUCKET'
        AND (storage.foldername(name))[1] = current_setting('app.current_tenant_id', true));
 
-   CREATE POLICY "imports_update_own_tenant"
+   CREATE POLICY "BUCKET_update_own_tenant"
      ON storage.objects FOR UPDATE TO authenticated
-     USING (bucket_id = 'imports'
+     USING (bucket_id = 'BUCKET'
        AND (storage.foldername(name))[1] = current_setting('app.current_tenant_id', true));
 
-   CREATE POLICY "imports_delete_own_tenant"
+   CREATE POLICY "BUCKET_delete_own_tenant"
      ON storage.objects FOR DELETE TO authenticated
-     USING (bucket_id = 'imports'
+     USING (bucket_id = 'BUCKET'
        AND (storage.foldername(name))[1] = current_setting('app.current_tenant_id', true));
    ```
 
    > **Why the same session variable trick?** The Storage REST layer runs inside a Postgres session per request. We set `app.current_tenant_id` the same way Prisma does (`SELECT set_config(…, true)`), and the policies read it. This keeps Storage and table RLS in lock-step without duplicating tenant-membership logic in SQL.
 
-3. **Worker-side access.** The worker uses the Supabase **service role** key, which bypasses Storage RLS (it's Supabase's superuser). That's what we want — the worker is trusted and already validates tenant ownership in code via the `ImportJob.tenantId` column before reading the file.
+3. **Worker-side access.** The worker uses the Supabase **service role**
+   key, which bypasses Storage RLS (it's Supabase's superuser). That's
+   what we want — the worker is trusted and already validates tenant
+   ownership in code via the `ImportJob.tenantId` column before reading
+   the file. The same pattern applies to `email-assets`: the web app
+   issues 1-year signed URLs (which bypass RLS) so email recipients can
+   see images without authenticating, while the bucket itself stays
+   private to authenticated tenant members for upload + management.
 
 ### Upload flow (Phase 2 Milestone 5)
 
