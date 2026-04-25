@@ -1,0 +1,387 @@
+// Getyn Campaigns schema
+//
+// Phase 1: User, Tenant, Membership, Invitation (foundational identity/tenancy)
+// Phase 2: Contact, Tag, ContactTag, CustomField, Segment, ImportJob,
+//          SuppressionEntry, ContactEvent (audience management)
+// Campaigns, channels, AI, and billing belong to later phases.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ------------------------------------------------------------------
+// Enums — Phase 1
+// ------------------------------------------------------------------
+
+enum Plan {
+  TRIAL
+  STARTER
+  GROWTH
+  PRO
+}
+
+enum BillingStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+// ------------------------------------------------------------------
+// Enums — Phase 2 (audience & contacts)
+// ------------------------------------------------------------------
+
+enum ContactSource {
+  MANUAL
+  IMPORT
+  API
+  FORM
+}
+
+enum SubscriptionStatus {
+  SUBSCRIBED
+  UNSUBSCRIBED
+  BOUNCED
+  COMPLAINED
+  PENDING
+}
+
+enum CustomFieldType {
+  TEXT
+  NUMBER
+  DATE
+  BOOLEAN
+  SELECT
+}
+
+enum ImportJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+enum ImportDedupeStrategy {
+  EMAIL
+  PHONE
+  EMAIL_OR_PHONE
+}
+
+enum Channel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum SuppressionReason {
+  UNSUBSCRIBED
+  BOUNCED
+  COMPLAINED
+  MANUAL
+  IMPORT
+}
+
+// Full event vocabulary defined now. Phase 2 only emits the manual/import
+// subset (CREATED, UPDATED, IMPORTED, TAG_ADDED, TAG_REMOVED, SUBSCRIBED,
+// UNSUBSCRIBED, BOUNCED, COMPLAINED). The send-pipeline values
+// (EMAIL_*, SMS_*, WHATSAPP_*) are reserved for Phase 3+ so the segment
+// rule builder can expose them as selectable fields today with a
+// "No data yet" badge.
+enum ContactEventType {
+  CREATED
+  UPDATED
+  IMPORTED
+  TAG_ADDED
+  TAG_REMOVED
+  SUBSCRIBED
+  UNSUBSCRIBED
+  BOUNCED
+  COMPLAINED
+  EMAIL_SENT
+  EMAIL_DELIVERED
+  EMAIL_OPENED
+  EMAIL_CLICKED
+  SMS_SENT
+  SMS_DELIVERED
+  WHATSAPP_SENT
+  WHATSAPP_DELIVERED
+  WHATSAPP_READ
+}
+
+// ------------------------------------------------------------------
+// Models — Phase 1
+// ------------------------------------------------------------------
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String?
+  avatarUrl      String?
+  supabaseUserId String   @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  memberships     Membership[]
+  sentInvites     Invitation[] @relation("InvitedBy")
+  segmentsCreated Segment[]    @relation("SegmentsCreatedBy")
+  importsCreated  ImportJob[]  @relation("ImportsCreatedBy")
+
+  @@index([email])
+}
+
+model Tenant {
+  id            String        @id @default(cuid())
+  slug          String        @unique
+  name          String
+  plan          Plan          @default(TRIAL)
+  billingStatus BillingStatus @default(TRIALING)
+  trialEndsAt   DateTime?
+  settings      Json          @default("{}")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  memberships        Membership[]
+  invitations        Invitation[]
+  contacts           Contact[]
+  tags               Tag[]
+  customFields       CustomField[]
+  segments           Segment[]
+  importJobs         ImportJob[]
+  suppressionEntries SuppressionEntry[]
+  contactEvents      ContactEvent[]
+
+  @@index([slug])
+}
+
+model Membership {
+  id        String   @id @default(cuid())
+  userId    String
+  tenantId  String
+  role      Role
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+  @@index([userId])
+}
+
+model Invitation {
+  id              String    @id @default(cuid())
+  tenantId        String
+  email           String
+  role            Role
+  token           String    @unique
+  invitedByUserId String
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invitedBy User   @relation("InvitedBy", fields: [invitedByUserId], references: [id])
+
+  @@index([tenantId])
+  @@index([email])
+  @@index([token])
+}
+
+// ------------------------------------------------------------------
+// Models — Phase 2
+// ------------------------------------------------------------------
+
+// A person we can market to. Tenant-scoped.
+//
+// At least one of `email` / `phone` must be set — enforced in the app layer
+// (Zod + tRPC mutations) rather than a DB check so we can return nicer
+// errors and keep raw SQL inserts flexible for the seed script.
+//
+// `customFields` is a free-form JSON bag keyed by `CustomField.key`.
+// Writes must validate keys against the tenant's CustomField registry
+// (app-layer enforcement).
+//
+// Soft delete via `deletedAt`. Partial unique indexes on (tenantId, email)
+// and (tenantId, phone) — see `0002_phase2_audience/migration.sql` — exclude
+// soft-deleted rows so a deleted email can be re-added later.
+model Contact {
+  id             String             @id @default(cuid())
+  tenantId       String
+  email          String? // lowercase-normalized at write time
+  phone          String? // E.164-normalized at write time
+  firstName      String?
+  lastName       String?
+  customFields   Json               @default("{}")
+  source         ContactSource      @default(MANUAL)
+  emailStatus    SubscriptionStatus @default(SUBSCRIBED)
+  smsStatus      SubscriptionStatus @default(SUBSCRIBED)
+  whatsappStatus SubscriptionStatus @default(SUBSCRIBED)
+  language       String             @default("en")
+  timezone       String?
+  deletedAt      DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tags   ContactTag[]
+  events ContactEvent[]
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, updatedAt])
+  @@index([tenantId, emailStatus])
+  @@index([tenantId, smsStatus])
+  @@index([tenantId, whatsappStatus])
+  @@index([tenantId, deletedAt])
+  // Partial unique indexes on (tenantId, email) and (tenantId, phone) are
+  // added via raw SQL in the migration because Prisma 5.22 cannot declare
+  // partial indexes in the schema.
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  color     String // "#RRGGBB"
+  createdAt DateTime @default(now())
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contacts ContactTag[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model ContactTag {
+  contactId String
+  tagId     String
+  createdAt DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+  @@index([contactId])
+  @@index([tagId])
+}
+
+// Defines the schema for `Contact.customFields`. `key` is a slug (e.g.
+// "plan_tier", "lifetime_value") unique per tenant. Adding a new field is
+// non-destructive. Removing a field strips that key from all contacts'
+// `customFields` JSON (app-layer, with a confirmation step). `type` is
+// immutable after creation — enforced in the app's update handler.
+model CustomField {
+  id        String          @id @default(cuid())
+  tenantId  String
+  key       String
+  label     String
+  type      CustomFieldType
+  options   Json? // { choices: string[] } for SELECT
+  createdAt DateTime        @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
+}
+
+model Segment {
+  id              String    @id @default(cuid())
+  tenantId        String
+  name            String
+  description     String?
+  rules           Json // validated via `segmentRulesSchema` (packages/types)
+  cachedCount     Int?
+  cachedCountAt   DateTime?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation("SegmentsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+}
+
+model ImportJob {
+  id                    String               @id @default(cuid())
+  tenantId              String
+  status                ImportJobStatus      @default(PENDING)
+  fileName              String
+  storagePath           String // "imports/{tenantId}/{id}.csv" in Supabase Storage
+  totalRows             Int?
+  processedRows         Int                  @default(0)
+  successRows           Int                  @default(0)
+  errorRows             Int                  @default(0)
+  errors                Json                 @default("[]") // capped at 100 entries + { truncated: boolean }
+  mapping               Json // { [csvColumn]: { kind: 'field'|'custom_field'|'skip', field?: string, customFieldId?: string } }
+  tagIds                String[]
+  defaultEmailStatus    SubscriptionStatus   @default(SUBSCRIBED)
+  defaultSmsStatus      SubscriptionStatus   @default(SUBSCRIBED)
+  defaultWhatsappStatus SubscriptionStatus   @default(SUBSCRIBED)
+  dedupeBy              ImportDedupeStrategy @default(EMAIL_OR_PHONE)
+  createdByUserId       String?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime             @default(now())
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation("ImportsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, status])
+}
+
+// Per-tenant block list keyed on (channel, value). Contacts whose status
+// flips to UNSUBSCRIBED/BOUNCED/COMPLAINED get a matching entry auto-created
+// at the app layer. The send pipeline (Phase 3) must check this table
+// before every send.
+//
+// Removing an entry here does NOT auto-resubscribe the associated contact —
+// that's a separate explicit action (keeps the semantics safe under
+// accidental bulk-delete).
+model SuppressionEntry {
+  id        String            @id @default(cuid())
+  tenantId  String
+  channel   Channel
+  value     String // email: lowercased; phone: E.164
+  reason    SuppressionReason
+  metadata  Json              @default("{}")
+  createdAt DateTime          @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, channel, value])
+  @@index([tenantId, channel])
+}
+
+model ContactEvent {
+  id         String           @id @default(cuid())
+  tenantId   String
+  contactId  String
+  type       ContactEventType
+  metadata   Json             @default("{}")
+  occurredAt DateTime         @default(now())
+  createdAt  DateTime         @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, contactId, occurredAt(sort: Desc)])
+  @@index([tenantId, type, occurredAt(sort: Desc)])
+  @@index([tenantId, occurredAt(sort: Desc)])
+}

@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+.next/
+.turbo/
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Prisma
+packages/db/src/generated/
+**/.prisma/
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+
+# Test / coverage
+coverage/
+.vitest-cache/
+
+# Vercel
+.vercel
+
+# Sentry
+.sentryclirc
