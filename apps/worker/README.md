@@ -15,11 +15,21 @@ web app via the database.
 
 | Queue      | Phase | Producer                       | Job types                                     |
 | ---------- | ----- | ------------------------------ | --------------------------------------------- |
-| `imports`  | 2     | `apps/web` → `imports.start`   | `{ importJobId, tenantId }`                   |
-| `sends`    | 3     | `apps/web` → `campaign.send*`  | `prepare-campaign`, `dispatch-batch`, `evaluate-ab` _(planned)_ |
-| `webhooks` | 3     | Resend webhook receiver        | `process-resend-event` _(planned)_            |
+| `imports`  | 2     | `apps/web` → `imports.start`   | `processImport`                               |
+| `sends`    | 3     | `apps/web` → `campaign.sendNow` / `campaign.schedule`; chained from `prepare-campaign` | `prepare-campaign`, `dispatch-batch`, `evaluate-ab` |
+| `webhooks` | 3     | `apps/web` → Resend webhook receiver  | `process-resend-event`                 |
+| `cron`     | 3     | self (BullMQ repeatable jobs)  | `daily-reset`, `rates-drift`                  |
 
-Phase 3 will land `sends` + `webhooks`. The `imports` queue is live today.
+`sends` and `webhooks` are live as of Phase 3 M6/M7. `cron` runs two
+repeatable jobs registered on worker boot:
+
+- `daily-reset` (00:00 UTC) — zeros every `TenantSendingPolicy.currentDailyCount`,
+  resumes campaigns that paused on yesterday's daily cap.
+- `rates-drift` (every hour at :05) — recomputes
+  `cachedComplaintRate30d` / `cachedBounceRate30d` /
+  `cachedSendCount30d` from raw `CampaignEvent` rows so the suspension
+  decision counters don't drift from the incremental updates the
+  webhook handler does.
 
 ## Env vars
 
@@ -33,6 +43,9 @@ Phase 3 will land `sends` + `webhooks`. The `imports` queue is live today.
 | `SUPABASE_SERVICE_ROLE_KEY` | yes for imports | Bypasses Storage RLS so the worker can download any tenant's CSV. The worker still validates `ImportJob.tenantId` in code before reading. |
 | `WORKER_IMPORTS_CONCURRENCY` | no (default 2) | Parallel `imports` jobs. Increase on bigger Railway plans. |
 | `PORT` | no (default 8080) | Health endpoint port. Railway injects this automatically. |
+| `RESEND_API_KEY` | yes for Phase 3 sends | Resend's REST API key. When unset, the dispatch handler logs intended sends and stamps `messageId="stub-{sendId}"` so dev exercises the full pipeline without burning Resend quota. |
+| `EMAIL_TOKEN_SECRET` | yes for Phase 3 | 32+ char random string. HMAC secret for `/u/{token}` and `/v/{token}` URLs in every email. Rotating invalidates all outstanding tokens — treat as a database password. |
+| `NEXT_PUBLIC_APP_URL` | yes for Phase 3 | Used by the render pipeline to absolute-URL the unsubscribe / web-view / tracking-pixel / `/r/` redirector links. |
 
 ## Health endpoint
 

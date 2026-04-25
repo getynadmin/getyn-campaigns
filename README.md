@@ -2,19 +2,26 @@
 
 Multi-tenant B2B SaaS for email, WhatsApp, and SMS marketing campaigns with an AI copilot and drag-and-drop email template builder.
 
-> **Status:** Phase 2 shipped — Audience & Contacts. Phase 1 (foundations: monorepo, database, auth, app shell, team invites) is also live. Phase 3 (channels + send pipeline + campaigns) is up next.
+> **Status:** Phase 3 shipped — Email Builder, Send Pipeline, Campaign Analytics. Phases 1 and 2 (foundations + audience) live. Phases 4-7 (WhatsApp, SMS, AI copilot, Stripe billing) up next.
 
 ## What ships today
 
-Phase 2 delivers the audience side of the product end-to-end:
+**Phase 1 — Foundations**: multi-tenant monorepo, Supabase Postgres + RLS, auth (email + Google), app shell, team invites.
 
-- **Contacts** — manual create / edit / soft-delete, tag chips, free-form custom fields, full-text search, role-gated mutations.
-- **Tags** — CRUD with hex color picker; assignment from the contact list and detail.
-- **Custom fields** — TEXT / NUMBER / DATE / BOOLEAN / SELECT, scoped per tenant. Type is immutable post-create.
-- **CSV imports** — browser → Supabase Storage → BullMQ worker → Prisma upsert. Idempotent, with column mapping, dedupe strategy, default statuses, and per-row error capture.
-- **Segments** — recursive rule builder (AND/OR groups, equality / numeric / set / range / custom-field operators), live preview with debounced count, cached counts persisted on save, on-demand recompute.
-- **Activity timeline** — every contact mutation appends a `ContactEvent` (CREATED / UPDATED / TAG_ADDED / TAG_REMOVED / status flips / IMPORTED) inside the same RLS-scoped transaction. Paginated via `events.list`.
-- **Suppression list** — per-tenant block list keyed on `(channel, value)`. Auto-populated on UNSUBSCRIBED / BOUNCED / COMPLAINED status flips; admins can browse, filter, manually add, and remove entries.
+**Phase 2 — Audience**: contacts CRUD with soft-delete + tags + custom fields, CSV imports (BullMQ worker), nested AND/OR + behavioral segments, activity timeline, suppression list.
+
+**Phase 3 — Email**:
+
+- **Sending domains** — Resend-verified per-tenant domains. DNS records displayed in the UI for copy-paste, verification polling, plan-gated (Growth + Pro).
+- **Email builder** — Unlayer-embedded full-screen editor. Per-tenant image library backed by Supabase Storage `email-assets` bucket. Merge tags from system + custom fields. Server-side render to HTML at save time, plaintext alternative auto-generated.
+- **Template library** — 8 system templates seeded (Welcome / Newsletter / Promotional / Announcement / Event / Re-engagement / Product launch / Transactional). Tenant-owned templates via "Use template" duplication.
+- **Campaign wizard** — segment recipients with suppression-aware preview, design link-out, settings (subject / from / sending domain / A/B), schedule or send now. Pre-flight checks block on missing postal address, unsaved design, empty segment, content scan errors.
+- **A/B subject testing** — split test cohort 10–45%, winner picked by open rate or click rate after 1–48h, held-back cohort sent with winner. Sample-size floor of 100/variant.
+- **Send pipeline** — 3 BullMQ job types (prepare-campaign, dispatch-batch, evaluate-ab) with content scanner, suspension threshold guardrails (cached complaint/bounce rates), per-tenant daily caps, retry-on-Resend-429.
+- **Tracking** — open pixel with bot UA filter + 1h dedup, click redirector with shared TrackingLink slugs + per-recipient `?s=` query param, RFC 8058 one-click unsubscribe, web-view URL.
+- **Resend webhooks** — HMAC-verified receiver enqueues async; worker maps delivery / bounce / complaint events; hard bounces and complaints auto-suppress.
+- **Analytics** — per-campaign metrics row, funnel viz, time-series chart, top links, recipients tab, A/B winner card.
+- **Daily cron** — resets daily caps at 00:00 UTC, hourly drift-correction of cached suppression counters from raw events.
 
 ## Prerequisites
 
