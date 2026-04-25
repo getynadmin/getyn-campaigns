@@ -11,11 +11,15 @@ import {
 } from '@getyn/db';
 import {
   abTestSchema,
+  campaignAnalyticsSummaryInputSchema,
+  campaignAnalyticsTimeSeriesInputSchema,
+  campaignAnalyticsTopLinksInputSchema,
   campaignCancelSchema,
   campaignCreateSchema,
   campaignDeleteSchema,
   campaignGetSchema,
   campaignListInputSchema,
+  campaignRecipientsInputSchema,
   campaignScheduleSchema,
   campaignSendNowSchema,
   campaignUpdateSchema,
@@ -555,6 +559,250 @@ export const campaignsRouter = createTRPCRouter({
             typeof scanCampaignContent
           >[0]['abTest'],
         });
+      });
+    }),
+
+  /**
+   * Analytics — top-line numbers. Cheap: aggregates over CampaignSend
+   * status, indexed on (tenantId, campaignId, status). Returns rates +
+   * counts that the analytics page renders as the metrics row.
+   */
+  analyticsSummary: tenantProcedure
+    .input(campaignAnalyticsSummaryInputSchema)
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return withTenant(tenantId, async (tx) => {
+        const c = await tx.campaign.findFirst({
+          where: { id: input.campaignId, tenantId },
+          include: { emailCampaign: { select: { abTest: true } } },
+        });
+        if (!c) throw new TRPCError({ code: 'NOT_FOUND' });
+
+        // groupBy is the right shape for status histograms.
+        const grouped = await tx.campaignSend.groupBy({
+          by: ['status'],
+          where: { tenantId, campaignId: c.id },
+          _count: { _all: true },
+        });
+        const counts: Record<string, number> = {};
+        for (const g of grouped) counts[g.status] = g._count._all;
+
+        const sent =
+          (counts.SENT ?? 0) +
+          (counts.DELIVERED ?? 0) +
+          (counts.OPENED ?? 0) +
+          (counts.CLICKED ?? 0);
+        const delivered =
+          (counts.DELIVERED ?? 0) + (counts.OPENED ?? 0) + (counts.CLICKED ?? 0);
+        const opened = (counts.OPENED ?? 0) + (counts.CLICKED ?? 0);
+        const clicked = counts.CLICKED ?? 0;
+        const bounced = counts.BOUNCED ?? 0;
+        const complained = counts.COMPLAINED ?? 0;
+        const failed = counts.FAILED ?? 0;
+        const queued = counts.QUEUED ?? 0;
+        const suppressed = counts.SUPPRESSED ?? 0;
+
+        // Unsubscribe is a CampaignEvent type, not a CampaignSend status.
+        const unsubscribed = await tx.campaignEvent.count({
+          where: { tenantId, campaignId: c.id, type: 'UNSUBSCRIBED' },
+        });
+
+        const total = sent + bounced + complained + failed + queued + suppressed;
+
+        const rate = (n: number, d: number): number =>
+          d === 0 ? 0 : n / d;
+
+        return {
+          campaignId: c.id,
+          status: c.status,
+          sentAt: c.sentAt,
+          totals: {
+            total,
+            sent,
+            delivered,
+            opened,
+            clicked,
+            bounced,
+            complained,
+            failed,
+            queued,
+            suppressed,
+            unsubscribed,
+          },
+          rates: {
+            // Delivery rate = delivered / sent (excluding bounces).
+            deliveryRate: rate(delivered, sent),
+            // Open / click rates are conventionally per-send (not per-delivered)
+            // but we use delivered as the denominator since opens require
+            // delivery — and we want fewer "wow what?" numbers when bounces
+            // are nonzero.
+            openRate: rate(opened, delivered),
+            clickRate: rate(clicked, delivered),
+            // Click-to-open: the "did your content land" metric.
+            clickToOpenRate: rate(clicked, opened),
+            bounceRate: rate(bounced, sent + bounced),
+            complaintRate: rate(complained, sent),
+            unsubscribeRate: rate(unsubscribed, sent),
+          },
+          abTest: c.emailCampaign?.abTest ?? null,
+        };
+      });
+    }),
+
+  /**
+   * Time-series of events. Bucketed by hour or day per the input.
+   *
+   * For analytics on >1M events (kickoff suggested gating), we'd add a
+   * row count check + return-empty here. For Phase 3 launch volumes
+   * the raw aggregate is fine.
+   */
+  analyticsTimeSeries: tenantProcedure
+    .input(campaignAnalyticsTimeSeriesInputSchema)
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return withTenant(tenantId, async (tx) => {
+        const c = await tx.campaign.findFirst({
+          where: { id: input.campaignId, tenantId },
+          select: { id: true, sentAt: true },
+        });
+        if (!c) throw new TRPCError({ code: 'NOT_FOUND' });
+
+        const since =
+          input.since ??
+          (c.sentAt ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).toISOString();
+        const until =
+          input.until ??
+          new Date(
+            (c.sentAt ?? new Date()).getTime() + 7 * 24 * 60 * 60 * 1000,
+          ).toISOString();
+
+        // Pull every event in the window. For huge campaigns this would
+        // be expensive — gate behind a count check in M9 polish.
+        const events = await tx.campaignEvent.findMany({
+          where: {
+            tenantId,
+            campaignId: c.id,
+            occurredAt: {
+              gte: new Date(since),
+              lte: new Date(until),
+            },
+          },
+          select: { type: true, occurredAt: true },
+          orderBy: { occurredAt: 'asc' },
+        });
+
+        // Bucket — hour or day depending on input.granularity.
+        const bucketMs =
+          input.granularity === 'day' ? 86_400_000 : 3_600_000;
+        const buckets = new Map<
+          number,
+          {
+            timestamp: number;
+            opened: number;
+            clicked: number;
+            bounced: number;
+            complained: number;
+            unsubscribed: number;
+          }
+        >();
+        for (const evt of events) {
+          const bucket =
+            Math.floor(evt.occurredAt.getTime() / bucketMs) * bucketMs;
+          const cur = buckets.get(bucket) ?? {
+            timestamp: bucket,
+            opened: 0,
+            clicked: 0,
+            bounced: 0,
+            complained: 0,
+            unsubscribed: 0,
+          };
+          if (evt.type === 'OPENED') cur.opened++;
+          else if (evt.type === 'CLICKED') cur.clicked++;
+          else if (evt.type === 'BOUNCED') cur.bounced++;
+          else if (evt.type === 'COMPLAINED') cur.complained++;
+          else if (evt.type === 'UNSUBSCRIBED') cur.unsubscribed++;
+          buckets.set(bucket, cur);
+        }
+        return {
+          granularity: input.granularity,
+          buckets: Array.from(buckets.values()).sort(
+            (a, b) => a.timestamp - b.timestamp,
+          ),
+        };
+      });
+    }),
+
+  /**
+   * Top tracked links by click count. Uses the denormalized
+   * `clickCount` column on TrackingLink (kept current by the
+   * redirector), so this is a single indexed query.
+   */
+  analyticsTopLinks: tenantProcedure
+    .input(campaignAnalyticsTopLinksInputSchema)
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return withTenant(tenantId, async (tx) => {
+        const links = await tx.trackingLink.findMany({
+          where: { tenantId, campaignId: input.campaignId },
+          orderBy: { clickCount: 'desc' },
+          take: input.limit,
+          select: {
+            id: true,
+            originalUrl: true,
+            slug: true,
+            clickCount: true,
+          },
+        });
+        // For click-through rate, we need the campaign's send total.
+        const sentCount = await tx.campaignSend.count({
+          where: {
+            tenantId,
+            campaignId: input.campaignId,
+            status: { in: ['SENT', 'DELIVERED', 'OPENED', 'CLICKED'] },
+          },
+        });
+        return {
+          links: links.map((l) => ({
+            ...l,
+            clickThroughRate:
+              sentCount === 0 ? 0 : l.clickCount / sentCount,
+          })),
+          sentCount,
+        };
+      });
+    }),
+
+  /**
+   * Paginated CampaignSend list — the recipients tab of analytics.
+   */
+  analyticsRecipients: tenantProcedure
+    .input(campaignRecipientsInputSchema)
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return withTenant(tenantId, async (tx) => {
+        const where = {
+          tenantId,
+          campaignId: input.campaignId,
+          ...(input.status ? { status: input.status } : {}),
+        };
+        const rows = await tx.campaignSend.findMany({
+          where,
+          orderBy: [{ sentAt: 'desc' }, { id: 'desc' }],
+          take: input.limit + 1,
+          ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+          include: {
+            contact: {
+              select: { id: true, firstName: true, lastName: true, email: true },
+            },
+          },
+        });
+        let nextCursor: string | null = null;
+        if (rows.length > input.limit) {
+          const next = rows.pop();
+          nextCursor = next?.id ?? null;
+        }
+        const total = await tx.campaignSend.count({ where });
+        return { items: rows, nextCursor, total };
       });
     }),
 });
