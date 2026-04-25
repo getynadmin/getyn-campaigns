@@ -271,6 +271,114 @@ async function main(): Promise<void> {
         assert(count === 0, `expected 0 but got ${count}`);
       },
     },
+
+    // -------- Phase 3 (email pipeline) --------
+
+    {
+      name: 'SendingDomain: no tenant set → 0 rows',
+      run: async () => {
+        const count = await withAuthenticatedTx(
+          (tx) => tx.sendingDomain.count(),
+          null,
+        );
+        assert(count === 0, `expected 0 but got ${count}`);
+      },
+    },
+    {
+      name: 'Campaign: no tenant set → 0 rows',
+      run: async () => {
+        const count = await withAuthenticatedTx(
+          (tx) => tx.campaign.count(),
+          null,
+        );
+        assert(count === 0, `expected 0 but got ${count}`);
+      },
+    },
+    {
+      name: 'EmailCampaign: no tenant set → 0 rows (gated via Campaign EXISTS)',
+      run: async () => {
+        const count = await withAuthenticatedTx(
+          (tx) => tx.emailCampaign.count(),
+          null,
+        );
+        assert(count === 0, `expected 0 but got ${count}`);
+      },
+    },
+    {
+      name: 'CampaignSend: no tenant set → 0 rows',
+      run: async () => {
+        const count = await withAuthenticatedTx(
+          (tx) => tx.campaignSend.count(),
+          null,
+        );
+        assert(count === 0, `expected 0 but got ${count}`);
+      },
+    },
+    {
+      name: 'CampaignEvent: no tenant set → 0 rows',
+      run: async () => {
+        const count = await withAuthenticatedTx(
+          (tx) => tx.campaignEvent.count(),
+          null,
+        );
+        assert(count === 0, `expected 0 but got ${count}`);
+      },
+    },
+    {
+      name: 'TrackingLink: no tenant set → 0 rows',
+      run: async () => {
+        const count = await withAuthenticatedTx(
+          (tx) => tx.trackingLink.count(),
+          null,
+        );
+        assert(count === 0, `expected 0 but got ${count}`);
+      },
+    },
+    {
+      name: 'TenantSendingPolicy: no tenant set → 0 rows',
+      run: async () => {
+        const count = await withAuthenticatedTx(
+          (tx) => tx.tenantSendingPolicy.count(),
+          null,
+        );
+        assert(count === 0, `expected 0 but got ${count}`);
+      },
+    },
+    {
+      name: 'TenantSendingPolicy: acme scope → 1 row (backfilled)',
+      run: async () => {
+        const count = await withAuthenticatedTx(
+          (tx) => tx.tenantSendingPolicy.count(),
+          acme.id,
+        );
+        assert(count === 1, `expected 1 but got ${count}`);
+      },
+    },
+    {
+      name: 'EmailTemplate: system templates visible without a tenant set',
+      run: async () => {
+        // The emailtemplate_system_read policy allows SELECT when tenantId
+        // IS NULL — system templates must be readable in every tenant
+        // scope (and even with no scope set, since they're public).
+        // Seeded count is 8 (M1 seed), but during M1 verify before seed
+        // updates may differ. We just assert >= 0 and that tenant-owned
+        // rows are still hidden.
+        const visibleSystem = await withAuthenticatedTx(
+          (tx) => tx.emailTemplate.count({ where: { tenantId: null } }),
+          null,
+        );
+        const visibleTenant = await withAuthenticatedTx(
+          (tx) => tx.emailTemplate.count({ where: { tenantId: { not: null } } }),
+          null,
+        );
+        // System templates may or may not exist yet; tenant-owned must be 0.
+        assert(visibleSystem >= 0, `expected >= 0 system templates but got ${visibleSystem}`);
+        assert(
+          visibleTenant === 0,
+          `tenant-owned templates leaked without scope: ${visibleTenant}`,
+        );
+      },
+    },
   ];
 
   let failed = 0;

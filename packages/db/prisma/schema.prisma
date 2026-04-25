@@ -3,7 +3,9 @@
 // Phase 1: User, Tenant, Membership, Invitation (foundational identity/tenancy)
 // Phase 2: Contact, Tag, ContactTag, CustomField, Segment, ImportJob,
 //          SuppressionEntry, ContactEvent (audience management)
-// Campaigns, channels, AI, and billing belong to later phases.
+// Phase 3: SendingDomain, Campaign, EmailCampaign, EmailTemplate, CampaignSend,
+//          CampaignEvent, TrackingLink, TenantSendingPolicy (email builder + send pipeline)
+// AI and Stripe billing belong to later phases.
 
 generator client {
   provider      = "prisma-client-js"
@@ -96,6 +98,71 @@ enum SuppressionReason {
   IMPORT
 }
 
+// ------------------------------------------------------------------
+// Enums — Phase 3 (email builder, sending, campaign analytics)
+// ------------------------------------------------------------------
+
+enum SendingDomainStatus {
+  PENDING
+  VERIFIED
+  FAILED
+  SUSPENDED
+}
+
+enum CampaignType {
+  EMAIL
+  WHATSAPP
+  SMS
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  PAUSED
+  FAILED
+  CANCELED
+}
+
+enum EmailTemplateCategory {
+  NEWSLETTER
+  ANNOUNCEMENT
+  PROMOTIONAL
+  TRANSACTIONAL
+  EVENT
+  WELCOME
+  OTHER
+}
+
+enum CampaignSendStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  BOUNCED
+  COMPLAINED
+  FAILED
+  SUPPRESSED
+}
+
+enum AbVariant {
+  A
+  B
+}
+
+enum CampaignEventType {
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  BOUNCED
+  COMPLAINED
+  UNSUBSCRIBED
+  FAILED
+}
+
 // Full event vocabulary defined now. Phase 2 only emits the manual/import
 // subset (CREATED, UPDATED, IMPORTED, TAG_ADDED, TAG_REMOVED, SUBSCRIBED,
 // UNSUBSCRIBED, BOUNCED, COMPLAINED). The send-pipeline values
@@ -136,24 +203,30 @@ model User {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  memberships     Membership[]
-  sentInvites     Invitation[] @relation("InvitedBy")
-  segmentsCreated Segment[]    @relation("SegmentsCreatedBy")
-  importsCreated  ImportJob[]  @relation("ImportsCreatedBy")
+  memberships           Membership[]
+  sentInvites           Invitation[]    @relation("InvitedBy")
+  segmentsCreated       Segment[]       @relation("SegmentsCreatedBy")
+  importsCreated        ImportJob[]     @relation("ImportsCreatedBy")
+  campaignsCreated      Campaign[]      @relation("CampaignsCreatedBy")
+  emailTemplatesCreated EmailTemplate[] @relation("EmailTemplatesCreatedBy")
 
   @@index([email])
 }
 
 model Tenant {
-  id            String        @id @default(cuid())
-  slug          String        @unique
-  name          String
-  plan          Plan          @default(TRIAL)
-  billingStatus BillingStatus @default(TRIALING)
-  trialEndsAt   DateTime?
-  settings      Json          @default("{}")
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id                 String        @id @default(cuid())
+  slug               String        @unique
+  name               String
+  plan               Plan          @default(TRIAL)
+  billingStatus      BillingStatus @default(TRIALING)
+  trialEndsAt        DateTime?
+  settings           Json          @default("{}")
+  // Phase 3 — used by the email send pipeline
+  postalAddress      String? // CAN-SPAM-required physical address; M6 blocks sending if null
+  companyDisplayName String? // shown in email footer
+  defaultFromName    String? // pre-fills the campaign wizard "from name" field
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   memberships        Membership[]
   invitations        Invitation[]
@@ -164,6 +237,14 @@ model Tenant {
   importJobs         ImportJob[]
   suppressionEntries SuppressionEntry[]
   contactEvents      ContactEvent[]
+  // Phase 3
+  sendingDomains     SendingDomain[]
+  emailTemplates     EmailTemplate[]
+  campaigns          Campaign[]
+  campaignSends      CampaignSend[]
+  campaignEvents     CampaignEvent[]
+  trackingLinks      TrackingLink[]
+  sendingPolicy      TenantSendingPolicy?
 
   @@index([slug])
 }
@@ -237,9 +318,14 @@ model Contact {
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 
-  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  tags   ContactTag[]
-  events ContactEvent[]
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tags          ContactTag[]
+  events        ContactEvent[]
+  // Phase 3 — every send to this contact records here
+  campaignSends CampaignSend[]
+  // Partial unique indexes on (tenantId, email) and (tenantId, phone) are
+  // added via raw SQL in the migration because Prisma 5.22 cannot declare
+  // partial indexes in the schema.
 
   @@index([tenantId, createdAt])
   @@index([tenantId, updatedAt])
@@ -247,9 +333,6 @@ model Contact {
   @@index([tenantId, smsStatus])
   @@index([tenantId, whatsappStatus])
   @@index([tenantId, deletedAt])
-  // Partial unique indexes on (tenantId, email) and (tenantId, phone) are
-  // added via raw SQL in the migration because Prisma 5.22 cannot declare
-  // partial indexes in the schema.
 }
 
 model Tag {
@@ -311,8 +394,10 @@ model Segment {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  createdBy User?  @relation("SegmentsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User?      @relation("SegmentsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  // Phase 3 — campaigns target a segment
+  campaigns Campaign[]
 
   @@index([tenantId, createdAt])
 }
@@ -384,4 +469,252 @@ model ContactEvent {
   @@index([tenantId, contactId, occurredAt(sort: Desc)])
   @@index([tenantId, type, occurredAt(sort: Desc)])
   @@index([tenantId, occurredAt(sort: Desc)])
+}
+
+// ------------------------------------------------------------------
+// Models — Phase 3 (email builder, sending, campaign analytics)
+// ------------------------------------------------------------------
+
+// A tenant's Resend-verified email sending domain (e.g. "mail.acme.com").
+// Created via the tRPC `sendingDomain.create` mutation, which calls Resend's
+// domain-create API and stores the returned `resendDomainId` + DNS records.
+// Verification is polled via `sendingDomain.verify` (button in the UI) and
+// also by a BullMQ repeatable job in apps/worker every 30 minutes for
+// PENDING domains.
+model SendingDomain {
+  id             String              @id @default(cuid())
+  tenantId       String
+  domain         String
+  resendDomainId String?
+  status         SendingDomainStatus @default(PENDING)
+  verifiedAt     DateTime?
+  // Array of { type, name, value, status, priority? } objects — Zod-validated
+  // by `sendingDomainSchema` in @getyn/types.
+  dnsRecords     Json                @default("[]")
+  lastCheckedAt  DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaigns EmailCampaign[]
+
+  @@unique([tenantId, domain])
+  @@index([tenantId, status])
+}
+
+// Top-level campaign entity. Phase 3 only implements `type = EMAIL`; the
+// enum is widened now so Phase 4 (WhatsApp) and Phase 5 (SMS) reuse this
+// row shape without a schema change.
+//
+// Status transitions:
+//   DRAFT  -> SCHEDULED (campaign.schedule)
+//   DRAFT  -> SENDING   (campaign.sendNow)
+//   SCHEDULED -> SENDING (worker fires at scheduledAt)
+//   SENDING -> SENT     (worker marks complete)
+//   SCHEDULED -> CANCELED (user cancels before sentAt)
+//   SENDING -> PAUSED   (auto on tenant suspension)
+//   any -> FAILED       (unrecoverable infra error)
+model Campaign {
+  id              String         @id @default(cuid())
+  tenantId        String
+  type            CampaignType   @default(EMAIL)
+  name            String
+  status          CampaignStatus @default(DRAFT)
+  segmentId       String
+  scheduledAt     DateTime?
+  sentAt          DateTime?
+  // Tenant timezone snapshotted at create time, so editing the tenant's TZ
+  // later doesn't shift an already-scheduled campaign.
+  timezone        String         @default("UTC")
+  createdByUserId String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  segment       Segment         @relation(fields: [segmentId], references: [id], onDelete: Restrict)
+  createdBy     User?           @relation("CampaignsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  emailCampaign EmailCampaign?
+  sends         CampaignSend[]
+  events        CampaignEvent[]
+  trackingLinks TrackingLink[]
+
+  @@index([tenantId, status, scheduledAt])
+  @@index([tenantId, createdAt])
+}
+
+// 1:1 sidecar of Campaign carrying email-specific fields (subject, design,
+// rendered HTML, A/B config). Has no own tenantId — RLS joins through
+// Campaign, mirroring the ContactTag pattern from Phase 2.
+//
+// `renderedHtml` is set when status moves out of DRAFT and is immutable
+// after that (enforced in tRPC + a defensive trigger added in the
+// migration). Mid-flight edits would mean recipients in the same campaign
+// got different content.
+model EmailCampaign {
+  id              String  @id @default(cuid())
+  campaignId      String  @unique
+  subject         String
+  previewText     String?
+  fromName        String
+  fromEmail       String
+  replyTo         String?
+  sendingDomainId String?
+  // Unlayer's design payload — the single source of truth for the editor.
+  designJson      Json
+  // Flattened HTML at send time. Text columns to support large emails.
+  renderedHtml    String? @db.Text
+  // Auto-generated plaintext alternative via html-to-text. Required for
+  // RFC-compliant multipart/alternative emails.
+  renderedText    String? @db.Text
+  // Zod-validated by `abTestSchema` in @getyn/types. Null when A/B is off.
+  abTest          Json?
+  templateId      String?
+
+  campaign      Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  sendingDomain SendingDomain? @relation(fields: [sendingDomainId], references: [id], onDelete: SetNull)
+  template      EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+}
+
+// System templates have `tenantId = null` and are read-only to every tenant.
+// Tenant-owned templates have `tenantId` set and follow the standard RLS
+// pattern. The migration adds two RLS policies (one for each case).
+model EmailTemplate {
+  id              String                @id @default(cuid())
+  tenantId        String? // NULL = system template
+  name            String
+  description     String?
+  category        EmailTemplateCategory @default(OTHER)
+  thumbnailUrl    String?
+  designJson      Json
+  createdByUserId String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  tenant    Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User?           @relation("EmailTemplatesCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  campaigns EmailCampaign[]
+
+  @@index([tenantId, category])
+  @@index([tenantId, createdAt])
+}
+
+// One row per (campaign, recipient). The unit of dispatch + tracking.
+// Created in bulk by the `prepare-campaign` BullMQ job; updated by the
+// `dispatch-batch` worker (status = SENT) and webhook handler
+// (DELIVERED/OPENED/CLICKED/BOUNCED/COMPLAINED).
+//
+// `email` is a snapshot at queue time — we never look up the contact
+// again after queueing. If the contact's email changes mid-send, the
+// already-queued sends still go to the original address.
+//
+// `messageId` is Resend's globally unique id; webhook lookups use it.
+model CampaignSend {
+  id           String             @id @default(cuid())
+  tenantId     String
+  campaignId   String
+  contactId    String
+  email        String
+  messageId    String?            @unique
+  status       CampaignSendStatus @default(QUEUED)
+  abVariant    AbVariant?
+  sentAt       DateTime?
+  lastEventAt  DateTime?
+  errorMessage String?
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaign Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  events   CampaignEvent[]
+
+  @@index([tenantId, campaignId, status])
+  @@index([tenantId, contactId])
+}
+
+// Append-only time-series of every send outcome. The webhook handler
+// inserts here; analytics queries this table for the time-series chart
+// (real-time numbers come from CampaignSend.status aggregates instead —
+// see M8).
+//
+// `metadata` is JSON, validated per-type by Zod schemas in @getyn/types
+// (`campaignEventMetadataSchemas`). Stored unstructured for forward
+// compatibility with new Resend event fields.
+model CampaignEvent {
+  id             String            @id @default(cuid())
+  tenantId       String
+  campaignSendId String
+  // Direct denormalized link to Campaign for analytics queries — avoids a
+  // JOIN through CampaignSend on every dashboard render. The cascade
+  // through campaignSendId already handles real deletion; this FK is just
+  // for direct lookups, hence `SetNull` to avoid double-cascade conflict.
+  campaignId     String?
+  type           CampaignEventType
+  metadata       Json              @default("{}")
+  occurredAt     DateTime          @default(now())
+  createdAt      DateTime          @default(now())
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaignSend CampaignSend @relation(fields: [campaignSendId], references: [id], onDelete: Cascade)
+  campaign     Campaign?    @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, campaignSendId, occurredAt(sort: Desc)])
+  @@index([tenantId, type, occurredAt(sort: Desc)])
+  @@index([tenantId, campaignId, occurredAt(sort: Desc)])
+}
+
+// Short-link table powering /r/{slug} click tracking. Link-rewriting
+// happens at dispatch time: the renderer scans the email HTML, replaces
+// every `<a href>` with `/r/{slug}` after creating a TrackingLink row.
+//
+// `slug` is 8-char base62 (~218T combos), generated via nanoid.
+// Collision-on-insert retry up to 3x in code.
+//
+// `clickCount` is denormalized for fast top-links queries; the source of
+// truth is CampaignEvent rows of type CLICKED.
+model TrackingLink {
+  id          String   @id @default(cuid())
+  tenantId    String
+  campaignId  String
+  originalUrl String
+  slug        String   @unique
+  clickCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, campaignId])
+}
+
+// Per-tenant deliverability guardrails + plan-driven limits. One row per
+// tenant, auto-created by the `0003_phase3_email` migration backfill.
+//
+// `currentDailyCount` resets via a BullMQ repeatable job at 00:00 UTC.
+// `cached*30d` aggregates are updated incrementally by the webhook
+// handler on every bounce/complaint event, and recomputed from raw
+// CampaignEvent rows by an hourly drift-correction job (see M6 pushback
+// item #4 in the kickoff). `dispatch-batch` reads the cached values
+// only — never aggregates raw events at send time.
+//
+// `suspendedAt` is set automatically when a rate exceeds threshold; the
+// UI shows a banner; new sends are rejected until OWNER manually clears
+// the suspension via the runbook (see apps/worker/README.md).
+model TenantSendingPolicy {
+  id                     String    @id @default(cuid())
+  tenantId               String    @unique
+  // Defaults overridden in the migration backfill based on plan.
+  dailySendLimit         Int       @default(200)
+  complaintRateThreshold Float     @default(0.003)
+  bounceRateThreshold    Float     @default(0.05)
+  currentDailyCount      Int       @default(0)
+  lastResetAt            DateTime  @default(now())
+  cachedComplaintRate30d Float     @default(0)
+  cachedBounceRate30d    Float     @default(0)
+  cachedSendCount30d     Int       @default(0)
+  cachedRatesUpdatedAt   DateTime  @default(now())
+  suspendedAt            DateTime?
+  suspensionReason       String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }

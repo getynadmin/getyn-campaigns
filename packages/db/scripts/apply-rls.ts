@@ -15,12 +15,16 @@ import { prisma } from '../src';
  *   - `0001_rls/migration.sql`                       → Phase 1 policies
  *   - tail of `0002_phase2_audience/migration.sql`   → Phase 2 partial indexes
  *                                                     + policies
+ *   - tail of `0003_phase3_email/migration.sql`      → Phase 3 RLS policies +
+ *                                                     TenantSendingPolicy backfill
+ *                                                     + renderedHtml immutability trigger
  *
- * The 0002 file starts with CREATE TABLE / ADD CONSTRAINT statements (produced
- * by `prisma migrate diff`) which are NOT idempotent — re-running them blows
- * up on "relation already exists". So we only re-apply the portion after the
- * marker `-- Partial unique indexes`, which is exclusively DROP/CREATE IF NOT
- * EXISTS and DROP POLICY IF EXISTS/CREATE POLICY — safe to re-run.
+ * The 0002 / 0003 files start with CREATE TABLE / ADD CONSTRAINT statements
+ * (produced by `prisma migrate diff`) which are NOT idempotent — re-running
+ * them blows up on "relation already exists". So we only re-apply the portion
+ * after the marker `-- Partial unique indexes`, which is exclusively
+ * DROP/CREATE IF NOT EXISTS, DROP POLICY IF EXISTS/CREATE POLICY, and
+ * idempotent INSERT...WHERE NOT EXISTS — safe to re-run.
  *
  * Future phase migrations with raw SQL must follow the same marker convention
  * so this script can pick up their tail too.
@@ -69,6 +73,10 @@ async function main(): Promise<void> {
   await runBlock(
     '0002_phase2_audience (tail)',
     readSqlTail('0002_phase2_audience', RAW_SQL_MARKER),
+  );
+  await runBlock(
+    '0003_phase3_email (tail)',
+    readSqlTail('0003_phase3_email', RAW_SQL_MARKER),
   );
   console.info('[rls] done');
 }
