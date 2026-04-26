@@ -50,7 +50,7 @@ export default async function SendingDomainsPage({
           Verify a domain you own to send campaigns from your own address.
           Without one, campaigns send from our shared{' '}
           <code className="rounded bg-muted px-1 py-0.5 text-xs">
-            @send.getyn.app
+            @getynmail.com
           </code>{' '}
           pool — fine for getting started, but inboxing is meaningfully
           better with a verified domain.

@@ -667,7 +667,7 @@ function SettingsEditor({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="shared">Shared @send.getyn.app</SelectItem>
+              <SelectItem value="shared">Shared @getynmail.com</SelectItem>
               {domains.map((d) => (
                 <SelectItem key={d.id} value={d.id}>
                   {d.domain}

@@ -33,6 +33,7 @@ export const serverEnv = {
   supabaseServiceRoleKey: (): string => requireEnv('SUPABASE_SERVICE_ROLE_KEY'),
   resendApiKey: (): string | undefined => optionalEnv('RESEND_API_KEY'),
   resendFromEmail: (): string =>
-    process.env.RESEND_FROM_EMAIL ?? 'Getyn Campaigns <no-reply@getyn.app>',
+    process.env.RESEND_FROM_EMAIL ??
+    'Getyn Campaigns <noreply@getynmail.com>',
   sentryDsn: (): string | undefined => optionalEnv('SENTRY_DSN'),
 };

@@ -81,7 +81,7 @@ export const sendingDomainsRouter = createTRPCRouter({
         throw new TRPCError({
           code: 'FORBIDDEN',
           message:
-            'Custom sending domains require the Growth or Pro plan. Starter tenants send from the shared @send.getyn.app domain.',
+            'Custom sending domains require the Growth or Pro plan. Starter tenants send from the shared @getynmail.com domain.',
         });
       }
 

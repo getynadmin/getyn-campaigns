@@ -135,7 +135,7 @@ export function SendingDomainsClient({
               domains improve deliverability — switch to Growth or Pro to add
               one. Until then, campaigns send from{' '}
               <code className="rounded bg-muted px-1 py-0.5 text-xs">
-                @send.getyn.app
+                @getynmail.com
               </code>
               .
             </p>
@@ -276,7 +276,7 @@ export function SendingDomainsClient({
             <DialogTitle>Remove this sending domain?</DialogTitle>
             <DialogDescription>
               Future campaigns can still be sent — they'll fall back to the
-              shared <code className="rounded bg-muted px-1 py-0.5 text-xs">@send.getyn.app</code>{' '}
+              shared <code className="rounded bg-muted px-1 py-0.5 text-xs">@getynmail.com</code>{' '}
               pool. Active and scheduled campaigns that already reference
               this domain keep their reference; the actual sending uses the
               shared pool from delete-time onward.

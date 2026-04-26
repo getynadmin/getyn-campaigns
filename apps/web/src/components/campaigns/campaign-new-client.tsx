@@ -66,7 +66,7 @@ export function CampaignNewClient({
             previewText: undefined,
             fromName: tenantDefaults.fromName,
             fromEmail:
-              tenantDefaults.fromEmail || `noreply@send.getyn.app`,
+              tenantDefaults.fromEmail || `noreply@getynmail.com`,
             replyTo: undefined,
             sendingDomainId: null,
             abTest: null,
