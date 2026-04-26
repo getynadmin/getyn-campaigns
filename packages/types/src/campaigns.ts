@@ -185,8 +185,18 @@ export type EmailTemplateCreateInput = z.infer<
   typeof emailTemplateCreateSchema
 >;
 
+/**
+ * Template IDs are looser than cuid because the seed inserts deterministic
+ * IDs like `seed-tpl-welcome` (so `pnpm db:seed` is idempotent across
+ * re-runs). cuid validation would reject those for the system templates,
+ * so the duplicate / get / update / delete inputs accept any short string.
+ * The DB lookup returns null for unknown IDs and the procedures throw
+ * NOT_FOUND there — same UX as a strict regex.
+ */
+const templateIdSchema = z.string().trim().min(1).max(64);
+
 export const emailTemplateUpdateSchema = z.object({
-  id: cuidSchema,
+  id: templateIdSchema,
   patch: z
     .object({
       name: emailTemplateNameSchema,
@@ -198,9 +208,9 @@ export const emailTemplateUpdateSchema = z.object({
     .partial(),
 });
 
-export const emailTemplateDeleteSchema = z.object({ id: cuidSchema });
-export const emailTemplateGetSchema = z.object({ id: cuidSchema });
-export const emailTemplateDuplicateSchema = z.object({ id: cuidSchema });
+export const emailTemplateDeleteSchema = z.object({ id: templateIdSchema });
+export const emailTemplateGetSchema = z.object({ id: templateIdSchema });
+export const emailTemplateDuplicateSchema = z.object({ id: templateIdSchema });
 
 export const emailTemplateListInputSchema = z.object({
   /** "ALL" merges system + tenant; "SYSTEM" only system; "TENANT" only this tenant's. */
