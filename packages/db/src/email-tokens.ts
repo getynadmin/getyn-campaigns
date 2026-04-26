@@ -1,4 +1,10 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+// Bare `crypto` (no `node:` prefix) — works in both Node runtime and
+// Next.js's client-bundle webpack, where the `node:` scheme is rejected.
+// Functions below only run on server paths (route handlers, worker
+// handlers); the client-side bundle that pulls this file via the
+// `@getyn/db` barrel never CALLS them, so webpack stubbing crypto to an
+// empty module is harmless at runtime.
+import { createHmac, timingSafeEqual } from 'crypto';
 
 /**
  * Signed tokens for the unsubscribe (`/u/{token}`) and web-view
