@@ -2,7 +2,8 @@ import { notFound, redirect } from 'next/navigation';
 
 import { Role, prisma } from '@getyn/db';
 
-import { SegmentEditor, emptyRules } from '@/components/segments/segment-editor';
+import { emptyRules } from '@/components/segments/empty-rules';
+import { SegmentEditor } from '@/components/segments/segment-editor';
 import { getCurrentUser } from '@/server/auth/session';
 
 export const metadata = { title: 'New segment' };

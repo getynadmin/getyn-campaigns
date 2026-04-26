@@ -44,18 +44,15 @@ export type SegmentEditorProps = {
   initialRules: SegmentRules;
 };
 
-const EMPTY_RULES: SegmentRules = {
-  kind: 'group',
-  operator: 'AND',
-  children: [
-    { kind: 'condition', field: 'email_status', operator: 'equals', value: 'SUBSCRIBED' },
-  ],
-};
-
-export function emptyRules(): SegmentRules {
-  // Deep-clone so callers can mutate without sharing references.
-  return JSON.parse(JSON.stringify(EMPTY_RULES));
-}
+// `emptyRules` and the EMPTY_RULES constant moved to ./empty-rules.ts so
+// the server-side new-segment page can call them without the Next.js
+// client-component import quirks (works in dev, fails in prod with
+// "(0, x.Y) is not a function" because non-component exports from a
+// 'use client' file don't bridge cleanly across the RSC boundary).
+//
+// Re-exported here so existing call sites that imported from
+// segment-editor keep resolving.
+export { emptyRules } from './empty-rules';
 
 export function SegmentEditor({
   tenantSlug,
