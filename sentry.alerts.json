@@ -1,0 +1,78 @@
+{
+  "_comment": "Sentry alert rule definitions for Getyn Campaigns. This file is the source of truth for what we WANT to alert on; the Sentry UI is the deployment target. Update this file when adding/removing rules and reflect the change in the Sentry dashboard. Sentry's alert API exists but isn't worth automating for a small ruleset — manual sync is fine. Phase 4 M0.",
+  "_runbook": "When an alert fires: (1) open the linked Sentry issue, (2) check tags (queue, jobName, tenantId, runtime), (3) for tenant-scoped alerts, page the on-call with tenant slug, (4) post-incident, decide whether the alert threshold is right.",
+  "rules": [
+    {
+      "name": "Send job failures > 1% over 15 min",
+      "project": "getyn-campaigns-worker",
+      "match": "tags:queue:sends OR tags:queue:wa-sends",
+      "trigger": "failure_rate > 0.01 over 15 minutes (vs. completed in same window)",
+      "channels": ["email:on-call", "slack:#alerts"],
+      "phase": "P3+P4",
+      "rationale": "Healthy send pipeline runs at <0.1% failure. 1% sustained means upstream provider issue, bad template, or tenant-level pause not propagating."
+    },
+    {
+      "name": "Webhook signature failures",
+      "project": "getyn-campaigns-web",
+      "match": "tags:webhook:* AND tags:failure:signature_mismatch",
+      "trigger": "count > 0 over 5 minutes",
+      "channels": ["email:on-call"],
+      "phase": "P3+P4",
+      "rationale": "Either a misconfigured secret on our side or someone probing the endpoint. Either way we want eyes immediately."
+    },
+    {
+      "name": "Tenant suspended for complaint/bounce rate",
+      "project": "getyn-campaigns-worker",
+      "match": "tags:event:tenant_suspended",
+      "trigger": "any occurrence",
+      "channels": ["email:on-call", "slack:#alerts"],
+      "phase": "P3+P4",
+      "rationale": "Suspension is a high-trust event — needs human review of whether the threshold matched a real spammer or a false positive."
+    },
+    {
+      "name": "Worker queue stalled > 5 min",
+      "project": "getyn-campaigns-worker",
+      "match": "tags:event:queue_stalled",
+      "trigger": "any occurrence",
+      "channels": ["email:on-call"],
+      "phase": "P3+P4",
+      "rationale": "Detects redis disconnect / worker hang / lock-renewal failures. Without this, jobs can pile up silently for hours."
+    },
+    {
+      "name": "Email send 5xx rate > 0.5%",
+      "project": "getyn-campaigns-worker",
+      "match": "tags:queue:sends AND tags:provider:resend AND level:error",
+      "trigger": "count > 25 over 1 hour",
+      "channels": ["email:on-call"],
+      "phase": "P3",
+      "rationale": "Resend availability issue or our API key revoked. 0.5% of typical hourly send volume."
+    },
+    {
+      "name": "[Phase 4] WhatsApp template rejection rate > 30% per tenant",
+      "project": "getyn-campaigns-worker",
+      "match": "tags:event:wa_template_rejected GROUP BY tags:tenantId",
+      "trigger": "rejection_rate > 0.3 over 24 hours",
+      "channels": ["email:on-call"],
+      "phase": "P4",
+      "rationale": "High rejection rate signals tenant abuse OR our content validator drifting from Meta's rules. Either is actionable."
+    },
+    {
+      "name": "[Phase 4] WABA disconnections",
+      "project": "getyn-campaigns-worker",
+      "match": "tags:event:waba_disconnected",
+      "trigger": "any occurrence",
+      "channels": ["email:on-call"],
+      "phase": "P4",
+      "rationale": "Tenant-impacting event. A disconnected WABA breaks all WhatsApp sends until reconnected. Customer needs to know fast."
+    },
+    {
+      "name": "[Phase 4] Inbound webhook silence detected by poll fallback",
+      "project": "getyn-campaigns-worker",
+      "match": "tags:event:wa_webhook_silence",
+      "trigger": "any occurrence",
+      "channels": ["email:on-call"],
+      "phase": "P4",
+      "rationale": "Poll fallback found inbound messages webhooks should have delivered. Indicates Meta webhook delivery issue OR our endpoint dropped — either way we want to know."
+    }
+  ]
+}

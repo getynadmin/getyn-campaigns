@@ -247,6 +247,27 @@ re-suspended.
 - **Why no Prisma migrate on worker boot?** Migrations run from the web
   app's deploy pipeline (Vercel), not the worker. Two services applying
   migrations races.
-- **Why no Sentry yet?** We add it in Phase 3 M10 once the send pipeline
-  is the right thing to instrument. Today's worker only does imports —
-  the web app's Sentry already covers the user-facing failure modes.
+- **Sentry (Phase 4 M0).** `@sentry/node` initialises from
+  `SENTRY_DSN_WORKER`. Every BullMQ `failed` event is captured with
+  tags `queue`, `jobName`, `failure: 'job_failed'`, plus extras
+  `jobId`, `attemptsMade`, and `tenantId` when the job carries it.
+  Alert rules live in `/sentry.alerts.json` at repo root and must be
+  reflected in Sentry's UI. Shutdown flushes Sentry with a 5s budget
+  before exit.
+
+## Encryption keys (Phase 4 M1)
+
+WABA tokens, SMS provider creds, and any future sensitive secrets
+encrypt at the application layer with AES-256-GCM via `@getyn/crypto`.
+
+- **`ENCRYPTION_KEY`**: 32-byte base64 (`openssl rand -base64 32`).
+  Same value on web + worker; the worker decrypts during send/poll,
+  the web app encrypts at write time.
+- **Key rotation**: ciphertexts carry a `keyVersion`. Add the new key
+  as `ENCRYPTION_KEY_V2` (or whatever version), keep the old key
+  available for decryption, run a backfill that re-encrypts under the
+  new version, then retire the old key. Never delete an old key while
+  any ciphertext at that version still exists.
+- **Associated data**: every encrypt/decrypt call passes `tenantId`
+  as AD. Bypassing tRPC and reading another tenant's ciphertext fails
+  decryption — defence in depth on top of RLS.

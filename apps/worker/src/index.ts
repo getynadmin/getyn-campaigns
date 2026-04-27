@@ -1,3 +1,6 @@
+// Sentry MUST be imported first so init runs before any handler can throw.
+import { Sentry } from './sentry';
+
 import { createServer, type Server } from 'node:http';
 
 import { prisma } from '@getyn/db';
@@ -148,9 +151,28 @@ for (const worker of workers) {
   worker.on('ready', () =>
     console.info(`[worker:${worker.name}] ready (concurrency=${worker.opts.concurrency})`),
   );
-  worker.on('failed', (job, err) =>
-    console.error(`[worker:${worker.name}] job ${job?.id} failed:`, err.message),
-  );
+  worker.on('failed', (job, err) => {
+    console.error(`[worker:${worker.name}] job ${job?.id} failed:`, err.message);
+    // Capture with queue + jobName + attempt tags so Sentry alerts can
+    // group/filter by failure surface. tenantId is pulled from job.data
+    // when present — handlers that put it there (sends, webhooks) get
+    // proper per-tenant attribution; cron jobs without tenantId stay
+    // global. Phase 4 WhatsApp queues will tag the same way.
+    const data = (job?.data ?? {}) as Record<string, unknown>;
+    const tenantId = typeof data.tenantId === 'string' ? data.tenantId : undefined;
+    Sentry.captureException(err, {
+      tags: {
+        queue: worker.name,
+        jobName: job?.name,
+        failure: 'job_failed',
+      },
+      extra: {
+        jobId: job?.id,
+        attemptsMade: job?.attemptsMade,
+        ...(tenantId ? { tenantId } : {}),
+      },
+    });
+  });
   worker.on('completed', (job) =>
     console.info(`[worker:${worker.name}] job ${job.id} completed`),
   );
@@ -212,6 +234,9 @@ async function shutdown(signal: string): Promise<void> {
   await Promise.allSettled(workers.map((w) => w.close()));
   await connection.quit();
   await prisma.$disconnect();
+  // Flush any in-flight Sentry events (5s budget) — without this, errors
+  // captured in the last few jobs can be lost on container shutdown.
+  await Sentry.close(5_000).catch(() => undefined);
   console.info('[worker] shutdown complete');
   process.exit(0);
 }

@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import { createHmac, timingSafeEqual } from 'crypto';
 
+import * as Sentry from '@sentry/nextjs';
 import { NextResponse, type NextRequest } from 'next/server';
 
 import { enqueueResendWebhookEvent } from '@/server/queues';
@@ -123,6 +124,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   });
   if (!sigOk) {
     console.error('[webhook:resend] signature mismatch');
+    // Tag-only capture (no Error obj) — these are alert-worthy as a class
+    // (volume), not as individual stacks. Sentry's `signature_failure`
+    // alert in sentry.alerts.json fires on count(messages) > 0 / 5min.
+    Sentry.captureMessage('webhook:resend signature mismatch', {
+      level: 'warning',
+      tags: { webhook: 'resend', failure: 'signature_mismatch' },
+    });
     return NextResponse.json({ error: 'Bad signature.' }, { status: 401 });
   }
 
@@ -157,6 +165,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
   } catch (err) {
     console.error('[webhook:resend] enqueue failed:', err);
+    Sentry.captureException(err, {
+      tags: { webhook: 'resend', failure: 'enqueue' },
+      extra: { eventType, messageId },
+    });
     // Tell Resend to retry — the failure was on our side, not theirs.
     return NextResponse.json(
       { error: 'Could not enqueue.' },

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaPlugin } from '@prisma/nextjs-monorepo-workaround-plugin';
+import { withSentryConfig } from '@sentry/nextjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -41,4 +42,17 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+// Sentry wrapping (Phase 4 M0). Source-map upload only fires when
+// SENTRY_AUTH_TOKEN + SENTRY_ORG + SENTRY_PROJECT are all set in CI;
+// otherwise this is a near-no-op that still wires up the SDK runtime.
+// `silent: !process.env.CI` keeps local builds quiet.
+export default withSentryConfig(nextConfig, {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT_WEB,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  silent: !process.env.CI,
+  // Tunnel client → /monitoring to dodge ad blockers that drop sentry.io.
+  tunnelRoute: '/monitoring',
+  hideSourceMaps: true,
+  disableLogger: true,
+});
