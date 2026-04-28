@@ -13,6 +13,7 @@
     "clean": "rm -rf .next .turbo node_modules"
   },
   "dependencies": {
+    "@getyn/crypto": "workspace:*",
     "@getyn/db": "workspace:*",
     "@getyn/types": "workspace:*",
     "@hookform/resolvers": "^3.9.0",

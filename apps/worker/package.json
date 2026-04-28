@@ -12,6 +12,7 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@getyn/crypto": "workspace:*",
     "@getyn/db": "workspace:*",
     "@getyn/types": "workspace:*",
     "@sentry/node": "^10.50.0",
