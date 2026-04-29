@@ -14,6 +14,7 @@ export const QUEUE_NAMES = {
   webhooks: 'webhooks',
   // Phase 4 — WhatsApp Business background jobs
   waPhoneRefresh: 'wa-phone-refresh',
+  waTemplateSync: 'wa-template-sync',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -117,6 +118,11 @@ export const JOB_NAMES = {
   waPhoneRefresh: {
     refreshWaba: 'refresh-waba',
   },
+  waTemplateSync: {
+    tick: 'tick',
+    syncWaba: 'sync-waba',
+    pollSubmission: 'poll-submission',
+  },
 } as const;
 
 /**
@@ -132,3 +138,33 @@ export const refreshWabaPayloadSchema = z.object({
   tenantId: cuidSchema,
 });
 export type RefreshWabaPayload = z.infer<typeof refreshWabaPayloadSchema>;
+
+/**
+ * Payloads for the wa-template-sync queue (Phase 4 M5).
+ *
+ * `sync-waba` — pulls every template from Meta for one WABA. Reconciles
+ * against local rows: matches by (name, language) when metaTemplateId
+ * is missing locally, updates status / rejectionReason / quality on
+ * existing rows, creates rows for templates Meta has that we don't.
+ *
+ * `poll-submission` — short-lived per-template poll triggered after a
+ * tenant submits a template. Tries 10 times over ~5 min for fast feedback;
+ * falls back to the hourly tick after.
+ */
+export const syncWabaTemplatesPayloadSchema = z.object({
+  whatsAppAccountId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type SyncWabaTemplatesPayload = z.infer<
+  typeof syncWabaTemplatesPayloadSchema
+>;
+
+export const pollTemplateSubmissionPayloadSchema = z.object({
+  templateId: cuidSchema,
+  tenantId: cuidSchema,
+  /** 0..9 — kill the chain after 10 attempts. */
+  attempt: z.number().int().min(0).max(9),
+});
+export type PollTemplateSubmissionPayload = z.infer<
+  typeof pollTemplateSubmissionPayloadSchema
+>;

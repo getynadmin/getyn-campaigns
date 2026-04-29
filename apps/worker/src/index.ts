@@ -15,6 +15,11 @@ import {
   handleWaPhoneRefreshOne,
   handleWaPhoneRefreshTick,
 } from './handlers/wa-phone-refresh';
+import {
+  handleWaTemplatePoll,
+  handleWaTemplateSyncOne,
+  handleWaTemplateSyncTick,
+} from './handlers/wa-template-sync';
 import { handleResendWebhook } from './handlers/webhooks';
 import { createRedisConnection } from './redis';
 
@@ -114,6 +119,34 @@ workers.push(
   ),
 );
 
+// wa-template-sync queue — Phase 4 M5.
+//
+// Three job shapes:
+//   - 'tick' (cron, hourly): finds CONNECTED WABAs, fans out
+//     'sync-waba' jobs.
+//   - 'sync-waba' (per-WABA): pulls templates from Meta and reconciles.
+//   - 'poll-submission' (short-lived chain): fast-feedback poll after
+//     a tenant submits a template. Up to 10 attempts at 30s intervals.
+//
+// Concurrency 4 — Meta's template list endpoint is cheap; we can
+// parallelise across tenants. Locks 60s.
+workers.push(
+  new Worker(
+    QUEUE_NAMES.waTemplateSync,
+    async (job) => {
+      if (job.name === 'tick') return handleWaTemplateSyncTick();
+      if (job.name === 'sync-waba') return handleWaTemplateSyncOne(job);
+      if (job.name === 'poll-submission') return handleWaTemplatePoll(job);
+      throw new Error(`Unknown wa-template-sync job: ${job.name}`);
+    },
+    {
+      connection,
+      concurrency: 4,
+      lockDuration: 60_000,
+    },
+  ),
+);
+
 // Cron queue — repeatable maintenance jobs.
 //
 // Two repeatable jobs:
@@ -188,6 +221,21 @@ async function setupCronJobs(): Promise<void> {
     },
   );
   await waPhoneRefreshQueue.close();
+
+  // Phase 4 M5 — wa-template-sync tick. Hourly fan-out per CONNECTED
+  // WABA. The poll-submission chain is enqueued ad-hoc by M6 submit.
+  const waTemplateSyncQueue = new Queue(QUEUE_NAMES.waTemplateSync, {
+    connection,
+  });
+  await waTemplateSyncQueue.add(
+    'tick',
+    {},
+    {
+      repeat: { pattern: '17 * * * *', tz: 'UTC' }, // :17 past every hour
+      jobId: 'cron:wa-template-sync-tick',
+    },
+  );
+  await waTemplateSyncQueue.close();
 
   console.info('[worker:cron] repeatable jobs registered');
 }

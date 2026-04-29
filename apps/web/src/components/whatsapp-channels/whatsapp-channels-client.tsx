@@ -208,6 +208,14 @@ function ConnectedState({
     },
     onError: (err) => toast.error(err.message),
   });
+  const syncTemplates = api.whatsAppTemplate.syncNow.useMutation({
+    onSuccess: (summary) => {
+      toast.success(
+        `Templates synced — ${summary.created} new, ${summary.updated} updated, ${summary.linked} linked, ${summary.pendingExpired} expired.`,
+      );
+    },
+    onError: (err) => toast.error(err.message),
+  });
 
   return (
     <div className="rounded-lg border bg-card p-6">
@@ -267,6 +275,21 @@ function ConnectedState({
               <Button variant="outline" size="sm" onClick={() => void onRefresh()}>
                 <RefreshCw className="mr-2 size-3.5" />
                 Refresh
+              </Button>
+            )}
+            {isConnected && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => syncTemplates.mutate()}
+                disabled={syncTemplates.isPending}
+              >
+                {syncTemplates.isPending ? (
+                  <Loader2 className="mr-2 size-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-2 size-3.5" />
+                )}
+                Sync templates
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={onDisconnect}>

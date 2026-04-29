@@ -18,6 +18,7 @@ import {
   mapQuality,
   mapTier,
   refreshPhoneNumbersForWaba,
+  syncTemplatesForWaba,
   type MetaPhoneNumber,
 } from '@getyn/whatsapp';
 
@@ -198,9 +199,21 @@ export const whatsAppAccountsRouter = createTRPCRouter({
         }),
       );
 
-      // M5's wa-template-sync repeatable job picks this up next tick.
-      // We deliberately don't kick a one-off sync here so connect
-      // returns fast — the UI can poll templates on next page render.
+      // M5: kick an immediate template sync so the M6 authoring page
+      // shows the WABA's existing templates instantly. Failures here
+      // are non-fatal — the hourly cron will catch up. We don't await
+      // failures into the user flow; just log + move on.
+      try {
+        await withTenant(tenantId, (tx) =>
+          syncTemplatesForWaba(account, tx),
+        );
+      } catch (err) {
+        // Non-fatal — the connect already succeeded.
+        console.warn(
+          `[whatsAppAccount.connectManually] post-connect template sync failed:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
 
       return redactAccount(account);
     }),

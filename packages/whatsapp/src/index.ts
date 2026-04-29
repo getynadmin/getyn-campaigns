@@ -4,3 +4,4 @@
 
 export * from './meta-client';
 export * from './phone-refresh';
+export * from './template-sync';
