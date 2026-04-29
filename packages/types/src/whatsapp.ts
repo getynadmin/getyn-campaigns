@@ -432,3 +432,63 @@ export function validateForSubmission(
     editorialIssues: validateForCategory(parsed.data),
   };
 }
+
+// ------------------------------------------------------------------
+// WhatsAppAccount mutations (Phase 4 M3)
+// ------------------------------------------------------------------
+
+/**
+ * Manual connect — tenant pastes WABA credentials. Used until M11
+ * Embedded Signup ships. We validate every field at the network edge
+ * AND the tRPC layer.
+ *
+ * `wabaId`:    Meta returns this as a numeric string (15+ digits).
+ * `accessToken`: System-User token. Meta has shipped 200..600 char
+ *               variants; we accept any non-trivial length and let
+ *               Meta's /me reject it if invalid.
+ * `appId`:     Meta App ID, numeric string.
+ * `appSecret`: 32-char hex. We don't persist this in M3 (see router
+ *               comment); requested only because tenants will want
+ *               webhook signature verification configured by M9.
+ */
+export const whatsAppAccountConnectManuallySchema = z.object({
+  wabaId: z
+    .string()
+    .trim()
+    .regex(/^\d{6,30}$/, 'WABA ID must be a numeric string from Meta Business Manager.'),
+  accessToken: z
+    .string()
+    .trim()
+    .min(50, 'Access token looks too short — copy the full system-user token.')
+    .max(2000),
+  appId: z
+    .string()
+    .trim()
+    .regex(/^\d{6,30}$/, 'App ID must be the numeric ID from your Meta app.'),
+  appSecret: z
+    .string()
+    .trim()
+    .regex(/^[a-f0-9]{32,64}$/i, 'App secret should be the hex string from Meta app dashboard.')
+    .optional(),
+  displayName: z
+    .string()
+    .trim()
+    .min(1, 'Display name helps you identify the WABA in our UI.')
+    .max(120),
+});
+
+export type WhatsAppAccountConnectManuallyInput = z.infer<
+  typeof whatsAppAccountConnectManuallySchema
+>;
+
+/**
+ * Disconnect — soft. We keep historical conversations + templates so a
+ * reconnect doesn't wipe customer history. The token is wiped from
+ * the encrypted column though, so a stolen DB snapshot post-disconnect
+ * carries no working credential.
+ */
+export const whatsAppAccountDisconnectSchema = z.object({
+  confirmation: z.literal('disconnect'),
+});
+
+export const whatsAppAccountRefreshPhoneNumbersSchema = z.object({});
