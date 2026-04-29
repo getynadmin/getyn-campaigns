@@ -2,15 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
 import { encrypt } from '@getyn/crypto';
-import {
-  Role,
-  WAStatus,
-  WAQualityRating,
-  WAMessagingTier,
-  WADisplayPhoneStatus,
-  withTenant,
-  type Prisma,
-} from '@getyn/db';
+import { Role, WAStatus, withTenant, type Prisma } from '@getyn/db';
 import {
   whatsAppAccountConnectManuallySchema,
   whatsAppAccountDisconnectSchema,
@@ -22,8 +14,12 @@ import {
   getMe,
   getWaba,
   listWabaPhoneNumbers,
+  mapPhoneStatus,
+  mapQuality,
+  mapTier,
+  refreshPhoneNumbersForWaba,
   type MetaPhoneNumber,
-} from '@/server/whatsapp/meta-client';
+} from '@getyn/whatsapp';
 
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
 
@@ -66,56 +62,9 @@ function metaErrorToTRPC(err: unknown, where: string): TRPCError {
   });
 }
 
-/** Map Meta's tier strings to our enum, defensively. */
-function mapMessagingTier(raw: string | undefined): WAMessagingTier {
-  switch (raw) {
-    case 'TIER_50':
-      return WAMessagingTier.TIER_50;
-    case 'TIER_250':
-      return WAMessagingTier.TIER_250;
-    case 'TIER_1K':
-    case 'TIER_1000':
-      return WAMessagingTier.TIER_1K;
-    case 'TIER_10K':
-    case 'TIER_10000':
-      return WAMessagingTier.TIER_10K;
-    case 'TIER_100K':
-    case 'TIER_100000':
-      return WAMessagingTier.TIER_100K;
-    case 'TIER_UNLIMITED':
-      return WAMessagingTier.TIER_UNLIMITED;
-    default:
-      return WAMessagingTier.TIER_50;
-  }
-}
-
-function mapQualityRating(raw: string | undefined): WAQualityRating {
-  switch (raw) {
-    case 'GREEN':
-      return WAQualityRating.GREEN;
-    case 'YELLOW':
-      return WAQualityRating.YELLOW;
-    case 'RED':
-      return WAQualityRating.RED;
-    default:
-      return WAQualityRating.UNKNOWN;
-  }
-}
-
-function mapPhoneStatus(raw: string | undefined): WADisplayPhoneStatus {
-  switch (raw) {
-    case 'CONNECTED':
-      return WADisplayPhoneStatus.CONNECTED;
-    case 'PENDING_REVIEW':
-      return WADisplayPhoneStatus.PENDING_REVIEW;
-    case 'FLAGGED':
-      return WADisplayPhoneStatus.FLAGGED;
-    case 'DISCONNECTED':
-      return WADisplayPhoneStatus.DISCONNECTED;
-    default:
-      return WADisplayPhoneStatus.PENDING_REVIEW;
-  }
-}
+// Tier / quality / status mappers live in @getyn/whatsapp so the
+// worker's wa-phone-refresh handler and this router agree on the
+// translation. Imported above.
 
 /**
  * Shape we return to the client. Never includes the encrypted token —
@@ -238,8 +187,8 @@ export const whatsAppAccountsRouter = createTRPCRouter({
                 phoneNumberId: p.id,
                 phoneNumber: p.display_phone_number,
                 verifiedName: p.verified_name,
-                qualityRating: mapQualityRating(p.quality_rating),
-                messagingTier: mapMessagingTier(p.messaging_limit),
+                qualityRating: mapQuality(p.quality_rating),
+                messagingTier: mapTier(p.messaging_limit),
                 displayPhoneNumberStatus: mapPhoneStatus(p.status),
                 pinSetAt: p.pin ? new Date() : null,
               })),
@@ -323,59 +272,24 @@ export const whatsAppAccountsRouter = createTRPCRouter({
         });
       }
 
-      // Decrypt the stored token to call Meta. The decryption fails if
-      // somehow tenantId doesn't match — ensures we never use one
-      // tenant's token against another's WABA.
-      const { decrypt } = await import('@getyn/crypto');
-      const accessToken = decrypt(
-        acct.accessTokenEncrypted as unknown as Parameters<typeof decrypt>[0],
-        tenantId,
-      );
-
-      let metaPhones: MetaPhoneNumber[] = [];
+      // Delegate to the shared refresh routine — same code path the
+      // wa-phone-refresh cron in apps/worker uses, so manual + cron
+      // refreshes can never drift in behaviour.
       try {
-        metaPhones = await listWabaPhoneNumbers(acct.wabaId, accessToken);
+        const refreshed = await withTenant(tenantId, async (tx) => {
+          await refreshPhoneNumbersForWaba(acct, tx);
+          return tx.whatsAppPhoneNumber.findMany({
+            where: { tenantId },
+            orderBy: { createdAt: 'asc' },
+          });
+        });
+        return {
+          phoneNumbers: refreshed,
+          refreshedAt: new Date().toISOString(),
+        };
       } catch (err) {
         throw metaErrorToTRPC(err, 'Phone number refresh failed');
       }
-
-      // Upsert each Meta phone into our DB. Numbers Meta no longer
-      // returns are NOT deleted — they may be temporarily unavailable
-      // and removing them would orphan campaign references. M4's
-      // wa-phone-refresh cron handles soft-deactivation properly.
-      const refreshed = await withTenant(tenantId, async (tx) => {
-        for (const p of metaPhones) {
-          await tx.whatsAppPhoneNumber.upsert({
-            where: {
-              tenantId_phoneNumberId: { tenantId, phoneNumberId: p.id },
-            },
-            create: {
-              tenantId,
-              whatsAppAccountId: acct.id,
-              phoneNumberId: p.id,
-              phoneNumber: p.display_phone_number,
-              verifiedName: p.verified_name,
-              qualityRating: mapQualityRating(p.quality_rating),
-              messagingTier: mapMessagingTier(p.messaging_limit),
-              displayPhoneNumberStatus: mapPhoneStatus(p.status),
-              pinSetAt: p.pin ? new Date() : null,
-            },
-            update: {
-              phoneNumber: p.display_phone_number,
-              verifiedName: p.verified_name,
-              qualityRating: mapQualityRating(p.quality_rating),
-              messagingTier: mapMessagingTier(p.messaging_limit),
-              displayPhoneNumberStatus: mapPhoneStatus(p.status),
-            },
-          });
-        }
-        return tx.whatsAppPhoneNumber.findMany({
-          where: { tenantId },
-          orderBy: { createdAt: 'asc' },
-        });
-      });
-
-      return { phoneNumbers: refreshed, refreshedAt: new Date().toISOString() };
     }),
 
   /**

@@ -12,6 +12,8 @@ export const QUEUE_NAMES = {
   imports: 'imports',
   sends: 'sends',
   webhooks: 'webhooks',
+  // Phase 4 — WhatsApp Business background jobs
+  waPhoneRefresh: 'wa-phone-refresh',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -111,4 +113,22 @@ export const JOB_NAMES = {
   webhooks: {
     processResendEvent: 'process-resend-event',
   },
+  // Phase 4 — WhatsApp Business
+  waPhoneRefresh: {
+    refreshWaba: 'refresh-waba',
+  },
 } as const;
+
+/**
+ * Payload for the wa-phone-refresh queue (Phase 4 M4).
+ *
+ * Runs once per connected WABA every 6 hours. Pulls latest tier /
+ * quality / 24h-window data from Meta and updates the local
+ * WhatsAppPhoneNumber rows. Errors are logged + skipped — Meta API
+ * blips must not flag a tenant's WABA as broken.
+ */
+export const refreshWabaPayloadSchema = z.object({
+  whatsAppAccountId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type RefreshWabaPayload = z.infer<typeof refreshWabaPayloadSchema>;

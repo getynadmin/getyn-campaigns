@@ -19,6 +19,7 @@ web app via the database.
 | `sends`    | 3     | `apps/web` → `campaign.sendNow` / `campaign.schedule`; chained from `prepare-campaign` | `prepare-campaign`, `dispatch-batch`, `evaluate-ab` |
 | `webhooks` | 3     | `apps/web` → Resend webhook receiver  | `process-resend-event`                 |
 | `cron`     | 3     | self (BullMQ repeatable jobs)  | `daily-reset`, `rates-drift`                  |
+| `wa-phone-refresh` | 4 | self — repeatable `tick` every 6h fans out per-WABA refreshes | `tick`, `refresh-waba` |
 
 `sends` and `webhooks` are live as of Phase 3 M6/M7. `cron` runs two
 repeatable jobs registered on worker boot:

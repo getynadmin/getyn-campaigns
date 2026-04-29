@@ -11,6 +11,10 @@ import { loadEnv } from './env';
 import { handleDailyReset, handleRatesDriftCorrect } from './handlers/cron';
 import { handleImportJob } from './handlers/imports';
 import { handleSendsJob } from './handlers/sends';
+import {
+  handleWaPhoneRefreshOne,
+  handleWaPhoneRefreshTick,
+} from './handlers/wa-phone-refresh';
 import { handleResendWebhook } from './handlers/webhooks';
 import { createRedisConnection } from './redis';
 
@@ -83,6 +87,33 @@ workers.push(
   }),
 );
 
+// wa-phone-refresh queue — Phase 4 M4.
+//
+// Two job shapes:
+//   1. 'tick' (cron-fanned): finds every CONNECTED WABA and enqueues
+//      'refresh-waba' jobs.
+//   2. 'refresh-waba' (per-account): pulls phone metadata + business
+//      profile from Meta and upserts WhatsAppPhoneNumber rows.
+//
+// Concurrency 4 — Meta has rate limits per app, but per-WABA the
+// limit is loose. 4 parallel refreshes is comfortable. Individual
+// jobs retry up to 3x with exponential backoff.
+workers.push(
+  new Worker(
+    QUEUE_NAMES.waPhoneRefresh,
+    async (job) => {
+      if (job.name === 'tick') return handleWaPhoneRefreshTick();
+      if (job.name === 'refresh-waba') return handleWaPhoneRefreshOne(job);
+      throw new Error(`Unknown wa-phone-refresh job: ${job.name}`);
+    },
+    {
+      connection,
+      concurrency: 4,
+      lockDuration: 120_000,
+    },
+  ),
+);
+
 // Cron queue — repeatable maintenance jobs.
 //
 // Two repeatable jobs:
@@ -141,6 +172,23 @@ async function setupCronJobs(): Promise<void> {
       jobId: 'cron:rates-drift',
     },
   );
+
+  // Phase 4 M4 — wa-phone-refresh tick. Every 6h fans out per-WABA
+  // refresh jobs. Self-fanning lives on its own queue so per-account
+  // failures don't block the central cron worker.
+  const waPhoneRefreshQueue = new Queue(QUEUE_NAMES.waPhoneRefresh, {
+    connection,
+  });
+  await waPhoneRefreshQueue.add(
+    'tick',
+    {},
+    {
+      repeat: { pattern: '11 */6 * * *', tz: 'UTC' }, // :11 past every 6h
+      jobId: 'cron:wa-phone-refresh-tick',
+    },
+  );
+  await waPhoneRefreshQueue.close();
+
   console.info('[worker:cron] repeatable jobs registered');
 }
 void setupCronJobs().catch((err) =>

@@ -15,6 +15,7 @@
     "@getyn/crypto": "workspace:*",
     "@getyn/db": "workspace:*",
     "@getyn/types": "workspace:*",
+    "@getyn/whatsapp": "workspace:*",
     "@sentry/node": "^10.50.0",
     "@supabase/supabase-js": "^2.45.4",
     "bullmq": "^5.23.0",

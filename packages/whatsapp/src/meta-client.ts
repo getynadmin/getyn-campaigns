@@ -254,6 +254,83 @@ export interface MetaTemplatesResponse {
   paging?: { cursors?: { before?: string; after?: string }; next?: string };
 }
 
+// ------------------------------------------------------------------
+// /{phoneNumberId} — single-number metadata (tier, quality, status).
+// Used by M4's wa-phone-refresh cron + manual refresh button. Returns
+// the same fields as the WABA listing for a single phone, but includes
+// the latest 24h-window usage which only the per-number endpoint
+// surfaces.
+// ------------------------------------------------------------------
+
+export interface MetaPhoneNumberDetail extends MetaPhoneNumber {
+  /** Recipients allowed in current 24h window. May be string or numeric. */
+  throughput?: { level?: string };
+  /** Some Graph versions expose this as a sibling instead of nested. */
+  current_limit?: number;
+  /** Some Graph versions expose tier-window usage as direct fields. */
+  current_24h_usage?: number;
+  next_24h_window_starts_at?: number; // unix seconds
+}
+
+export async function getPhoneNumber(
+  phoneNumberId: string,
+  accessToken: string,
+  opts?: { fetchImpl?: typeof fetch; baseUrl?: string },
+): Promise<MetaPhoneNumberDetail> {
+  return metaFetch<MetaPhoneNumberDetail>(`/${encodeURIComponent(phoneNumberId)}`, {
+    accessToken,
+    query: {
+      fields:
+        'id,display_phone_number,verified_name,quality_rating,messaging_limit,status,pin,certificate,throughput,current_limit,current_24h_usage,next_24h_window_starts_at',
+    },
+    fetchImpl: opts?.fetchImpl,
+    baseUrl: opts?.baseUrl,
+  });
+}
+
+// ------------------------------------------------------------------
+// /{phoneNumberId}/whatsapp_business_profile — read-only business
+// profile (about / description / address / websites / vertical).
+// Tenants edit this in Meta Business Manager; we surface it for
+// reference in the phone detail panel.
+// ------------------------------------------------------------------
+
+export interface MetaBusinessProfile {
+  about?: string;
+  description?: string;
+  email?: string;
+  address?: string;
+  vertical?: string;
+  websites?: string[];
+  profile_picture_url?: string;
+  messaging_product?: string;
+}
+
+interface MetaBusinessProfileResponse {
+  // Meta wraps single-record reads in a `data` array of length 1.
+  data: MetaBusinessProfile[];
+}
+
+export async function getPhoneNumberBusinessProfile(
+  phoneNumberId: string,
+  accessToken: string,
+  opts?: { fetchImpl?: typeof fetch; baseUrl?: string },
+): Promise<MetaBusinessProfile | null> {
+  const res = await metaFetch<MetaBusinessProfileResponse>(
+    `/${encodeURIComponent(phoneNumberId)}/whatsapp_business_profile`,
+    {
+      accessToken,
+      query: {
+        fields:
+          'about,description,email,address,vertical,websites,profile_picture_url,messaging_product',
+      },
+      fetchImpl: opts?.fetchImpl,
+      baseUrl: opts?.baseUrl,
+    },
+  );
+  return res.data?.[0] ?? null;
+}
+
 export async function listWabaTemplates(
   wabaId: string,
   accessToken: string,

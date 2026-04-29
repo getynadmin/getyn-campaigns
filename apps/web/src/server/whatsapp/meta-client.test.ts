@@ -21,7 +21,7 @@ import {
   listWabaPhoneNumbers,
   listWabaTemplates,
   metaFetch,
-} from './meta-client';
+} from '@getyn/whatsapp';
 import { describe, expect, it, vi } from 'vitest';
 
 type FetchCall = { url: string; init: RequestInit };

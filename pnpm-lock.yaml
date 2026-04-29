@@ -29,6 +29,9 @@ importers:
       '@getyn/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@getyn/whatsapp':
+        specifier: workspace:*
+        version: link:../../packages/whatsapp
       '@hookform/resolvers':
         specifier: ^3.9.0
         version: 3.10.0(react-hook-form@7.73.1(react@18.3.1))
@@ -210,6 +213,9 @@ importers:
       '@getyn/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@getyn/whatsapp':
+        specifier: workspace:*
+        version: link:../../packages/whatsapp
       '@sentry/node':
         specifier: ^10.50.0
         version: 10.50.0
@@ -361,6 +367,28 @@ importers:
       '@getyn/config':
         specifier: workspace:*
         version: link:../config
+      eslint:
+        specifier: ^8.57.1
+        version: 8.57.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
+  packages/whatsapp:
+    dependencies:
+      '@getyn/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+      '@getyn/db':
+        specifier: workspace:*
+        version: link:../db
+    devDependencies:
+      '@getyn/config':
+        specifier: workspace:*
+        version: link:../config
+      '@types/node':
+        specifier: ^20.16.10
+        version: 20.19.39
       eslint:
         specifier: ^8.57.1
         version: 8.57.1

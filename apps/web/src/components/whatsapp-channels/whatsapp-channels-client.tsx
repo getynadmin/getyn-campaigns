@@ -293,6 +293,11 @@ interface PhoneNumberData {
   messagingTier: string;
   currentTier24hUsage: number;
   displayPhoneNumberStatus: string;
+  // Json column populated by the wa-phone-refresh cron / per-number
+  // refresh. Tenants edit this in Meta Business Manager — we display
+  // read-only.
+  metadata?: unknown;
+  tier24hWindowResetAt?: Date | string | null;
 }
 
 function PhoneNumbersCard({
@@ -350,65 +355,211 @@ function PhoneNumbersCard({
         </div>
       ) : (
         <ul className="divide-y">
-          {phones.map((p) => {
-            const rawTierLimit = TIER_LIMITS[p.messagingTier];
-            // null = TIER_UNLIMITED, undefined = unknown tier from Meta;
-            // both render as "no progress bar".
-            const tierLimit: number | null = rawTierLimit === undefined ? null : rawTierLimit;
-            const usagePct =
-              tierLimit !== null && tierLimit > 0
-                ? Math.min(100, Math.round((p.currentTier24hUsage / tierLimit) * 100))
-                : 0;
-            return (
-              <li key={p.id} className="flex items-start justify-between gap-4 px-6 py-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm">{p.phoneNumber}</span>
-                    <span
-                      className={cn(
-                        'rounded-full px-2 py-0.5 text-xs',
-                        QUALITY_TONE[p.qualityRating] ?? QUALITY_TONE.UNKNOWN,
-                      )}
-                    >
-                      {p.qualityRating}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {p.verifiedName} · {TIER_LABEL[p.messagingTier] ?? p.messagingTier}
-                  </p>
-                </div>
-                <div className="w-40 text-right text-xs text-muted-foreground">
-                  {tierLimit !== null ? (
-                    <>
-                      <div className="mb-1 flex items-center justify-end gap-1">
-                        <span>
-                          {p.currentTier24hUsage.toLocaleString()} /{' '}
-                          {tierLimit.toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-muted">
-                        <div
-                          className={cn(
-                            'h-1.5 rounded-full',
-                            usagePct >= 90
-                              ? 'bg-rose-500'
-                              : usagePct >= 60
-                              ? 'bg-amber-500'
-                              : 'bg-emerald-500',
-                          )}
-                          style={{ width: `${usagePct}%` }}
-                        />
-                      </div>
-                    </>
-                  ) : (
-                    <span>No tier limit</span>
-                  )}
-                </div>
-              </li>
-            );
-          })}
+          {phones.map((p) => (
+            <PhoneNumberRow
+              key={p.id}
+              phone={p}
+              canManage={canManage}
+              onRefreshed={onRefreshed}
+            />
+          ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Phone number row + expansion (M4)
+// ----------------------------------------------------------------------------
+
+interface BusinessProfileShape {
+  about?: string;
+  description?: string;
+  email?: string;
+  address?: string;
+  vertical?: string;
+  websites?: string[];
+  profile_picture_url?: string;
+}
+
+function PhoneNumberRow({
+  phone: p,
+  canManage,
+  onRefreshed,
+}: {
+  phone: PhoneNumberData;
+  canManage: boolean;
+  onRefreshed: () => void;
+}): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const utils = api.useUtils();
+  const refresh = api.whatsAppPhoneNumber.refresh.useMutation({
+    onSuccess: () => {
+      toast.success(`Refreshed ${p.phoneNumber}`);
+      void utils.whatsAppAccount.get.invalidate();
+      onRefreshed();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const rawTierLimit = TIER_LIMITS[p.messagingTier];
+  const tierLimit: number | null = rawTierLimit === undefined ? null : rawTierLimit;
+  const usagePct =
+    tierLimit !== null && tierLimit > 0
+      ? Math.min(100, Math.round((p.currentTier24hUsage / tierLimit) * 100))
+      : 0;
+
+  const profile = (p.metadata as BusinessProfileShape | null) ?? null;
+  const hasProfile =
+    profile !== null &&
+    (profile.about ||
+      profile.description ||
+      profile.address ||
+      profile.email ||
+      profile.vertical ||
+      (profile.websites && profile.websites.length > 0));
+
+  return (
+    <li className="px-6 py-4">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-start justify-between gap-4 text-left"
+      >
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm">{p.phoneNumber}</span>
+            <span
+              className={cn(
+                'rounded-full px-2 py-0.5 text-xs',
+                QUALITY_TONE[p.qualityRating] ?? QUALITY_TONE.UNKNOWN,
+              )}
+            >
+              {p.qualityRating}
+            </span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+              {p.displayPhoneNumberStatus}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {p.verifiedName} · {TIER_LABEL[p.messagingTier] ?? p.messagingTier}
+          </p>
+        </div>
+        <div className="w-40 text-right text-xs text-muted-foreground">
+          {tierLimit !== null ? (
+            <>
+              <div className="mb-1 flex items-center justify-end gap-1">
+                <span>
+                  {p.currentTier24hUsage.toLocaleString()} /{' '}
+                  {tierLimit.toLocaleString()}
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-muted">
+                <div
+                  className={cn(
+                    'h-1.5 rounded-full',
+                    usagePct >= 90
+                      ? 'bg-rose-500'
+                      : usagePct >= 60
+                      ? 'bg-amber-500'
+                      : 'bg-emerald-500',
+                  )}
+                  style={{ width: `${usagePct}%` }}
+                />
+              </div>
+            </>
+          ) : (
+            <span>No tier limit</span>
+          )}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="mt-4 space-y-3 rounded-md border bg-muted/30 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Business profile
+              </h4>
+              <p className="text-[11px] text-muted-foreground">
+                Edit in Meta Business Manager. Refreshes every 6h via cron, or pull now.
+              </p>
+            </div>
+            {canManage && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => refresh.mutate({ id: p.id })}
+                disabled={refresh.isPending}
+              >
+                {refresh.isPending ? (
+                  <Loader2 className="mr-2 size-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-2 size-3.5" />
+                )}
+                Refresh
+              </Button>
+            )}
+          </div>
+          {hasProfile && profile ? (
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 text-xs sm:grid-cols-2">
+              {profile.about && (
+                <ProfileField label="About" value={profile.about} />
+              )}
+              {profile.description && (
+                <ProfileField label="Description" value={profile.description} />
+              )}
+              {profile.email && (
+                <ProfileField label="Email" value={profile.email} />
+              )}
+              {profile.address && (
+                <ProfileField label="Address" value={profile.address} />
+              )}
+              {profile.vertical && (
+                <ProfileField label="Vertical" value={profile.vertical} />
+              )}
+              {profile.websites && profile.websites.length > 0 && (
+                <ProfileField label="Websites" value={profile.websites.join(', ')} />
+              )}
+            </dl>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No business profile fields set in Meta yet.
+            </p>
+          )}
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-1 border-t pt-3 text-xs sm:grid-cols-2">
+            <ProfileField label="Phone ID" value={p.phoneNumberId} mono />
+            {p.tier24hWindowResetAt && (
+              <ProfileField
+                label="Tier window resets"
+                value={new Date(p.tier24hWindowResetAt).toLocaleString()}
+              />
+            )}
+          </dl>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function ProfileField({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}): JSX.Element {
+  return (
+    <div className="flex flex-col">
+      <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </dt>
+      <dd className={cn('break-words', mono && 'font-mono text-[11px]')}>
+        {value}
+      </dd>
     </div>
   );
 }

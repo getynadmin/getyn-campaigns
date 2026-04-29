@@ -15,6 +15,7 @@ import { suppressionRouter } from './routers/suppression';
 import { tagsRouter } from './routers/tags';
 import { tenantRouter } from './routers/tenant';
 import { whatsAppAccountsRouter } from './routers/whatsapp-accounts';
+import { whatsAppPhoneNumbersRouter } from './routers/whatsapp-phone-numbers';
 import { createCallerFactory, createTRPCRouter } from './trpc';
 
 export const appRouter = createTRPCRouter({
@@ -36,6 +37,7 @@ export const appRouter = createTRPCRouter({
   campaign: campaignsRouter,
   // Phase 4 — WhatsApp Business
   whatsAppAccount: whatsAppAccountsRouter,
+  whatsAppPhoneNumber: whatsAppPhoneNumbersRouter,
 });
 
 export type AppRouter = typeof appRouter;
