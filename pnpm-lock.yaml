@@ -311,6 +311,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@getyn/crypto':
+        specifier: workspace:*
+        version: link:../crypto
       '@getyn/types':
         specifier: workspace:*
         version: link:../types

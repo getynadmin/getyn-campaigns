@@ -10,3 +10,4 @@ export * from './queues';
 export * from './segments';
 export * from './suppression';
 export * from './campaigns';
+export * from './whatsapp';

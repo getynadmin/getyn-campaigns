@@ -5,7 +5,10 @@
 //          SuppressionEntry, ContactEvent (audience management)
 // Phase 3: SendingDomain, Campaign, EmailCampaign, EmailTemplate, CampaignSend,
 //          CampaignEvent, TrackingLink, TenantSendingPolicy (email builder + send pipeline)
-// AI and Stripe billing belong to later phases.
+// Phase 4: WhatsAppAccount, WhatsAppPhoneNumber, WhatsAppTemplate,
+//          WhatsAppCampaign, WhatsAppCampaignSend, WhatsAppConversation,
+//          WhatsAppMessage, WhatsAppWebhookEvent, Asset, AiGeneration
+// Stripe billing belongs to later phases.
 
 generator client {
   provider      = "prisma-client-js"
@@ -188,6 +191,9 @@ enum ContactEventType {
   WHATSAPP_SENT
   WHATSAPP_DELIVERED
   WHATSAPP_READ
+  // Phase 4 additions — webhook ingestion + inbox flagging
+  WHATSAPP_FAILED
+  WHATSAPP_REPLIED
 }
 
 // ------------------------------------------------------------------
@@ -209,6 +215,13 @@ model User {
   importsCreated        ImportJob[]     @relation("ImportsCreatedBy")
   campaignsCreated      Campaign[]      @relation("CampaignsCreatedBy")
   emailTemplatesCreated EmailTemplate[] @relation("EmailTemplatesCreatedBy")
+
+  // Phase 4 backrelations
+  whatsAppTemplatesCreated WhatsAppTemplate[]     @relation("WhatsAppTemplatesCreatedBy")
+  assetsUploaded           Asset[]                @relation("AssetsUploadedBy")
+  aiGenerations            AiGeneration[]
+  whatsAppMessagesSent     WhatsAppMessage[]      @relation("WhatsAppMessagesSentBy")
+  whatsAppConversationsAssigned WhatsAppConversation[] @relation("WhatsAppConversationsAssignedTo")
 
   @@index([email])
 }
@@ -245,6 +258,17 @@ model Tenant {
   campaignEvents     CampaignEvent[]
   trackingLinks      TrackingLink[]
   sendingPolicy      TenantSendingPolicy?
+
+  // Phase 4
+  whatsAppAccount       WhatsAppAccount?
+  whatsAppPhoneNumbers  WhatsAppPhoneNumber[]
+  whatsAppTemplates     WhatsAppTemplate[]
+  whatsAppCampaignSends WhatsAppCampaignSend[]
+  whatsAppConversations WhatsAppConversation[]
+  whatsAppMessages      WhatsAppMessage[]
+  whatsAppWebhookEvents WhatsAppWebhookEvent[]
+  assets                Asset[]
+  aiGenerations         AiGeneration[]
 
   @@index([slug])
 }
@@ -323,6 +347,9 @@ model Contact {
   events        ContactEvent[]
   // Phase 3 — every send to this contact records here
   campaignSends CampaignSend[]
+  // Phase 4 — WhatsApp campaign sends + inbox conversations
+  whatsAppCampaignSends WhatsAppCampaignSend[]
+  whatsAppConversations WhatsAppConversation[]
   // Partial unique indexes on (tenantId, email) and (tenantId, phone) are
   // added via raw SQL in the migration because Prisma 5.22 cannot declare
   // partial indexes in the schema.
@@ -534,6 +561,9 @@ model Campaign {
   segment       Segment         @relation(fields: [segmentId], references: [id], onDelete: Restrict)
   createdBy     User?           @relation("CampaignsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   emailCampaign EmailCampaign?
+  // Phase 4 — 1:1 sidecar for type=WHATSAPP campaigns
+  whatsAppCampaign WhatsAppCampaign?
+  whatsAppCampaignSends WhatsAppCampaignSend[]
   sends         CampaignSend[]
   events        CampaignEvent[]
   trackingLinks TrackingLink[]
@@ -717,4 +747,420 @@ model TenantSendingPolicy {
   updatedAt              DateTime  @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+// ==================================================================
+// Phase 4 — WhatsApp Business
+// ==================================================================
+//
+// BYOC model: each tenant brings their own WhatsApp Business Account
+// (WABA). We store an encrypted system-user access token (see
+// @getyn/crypto). Templates are authored in our UI, submitted to Meta,
+// status polled back. Outbound campaign status uses 2-minute Graph API
+// polling; inbound messages use webhooks with a 5-minute poll fallback.
+//
+// Core dual-write rule: outbound campaign messages create BOTH a
+// WhatsAppCampaignSend (analytics source of truth) and a
+// WhatsAppMessage (inbox source of truth) in the dispatch transaction.
+// Status updates from polling/webhooks update both by metaMessageId.
+// They are siblings — no FK between them — linked by string match.
+
+// ------------------------------------------------------------------
+// Enums — Phase 4
+// ------------------------------------------------------------------
+
+enum WAStatus {
+  PENDING
+  CONNECTED
+  DISCONNECTED
+  SUSPENDED
+}
+
+enum WAQualityRating {
+  GREEN
+  YELLOW
+  RED
+  UNKNOWN
+}
+
+// Meta's messaging tier — determines unique-recipient cap per 24h.
+// Newly registered numbers start at TIER_50; Meta auto-promotes based
+// on quality + volume.
+enum WAMessagingTier {
+  TIER_50
+  TIER_250
+  TIER_1K
+  TIER_10K
+  TIER_100K
+  TIER_UNLIMITED
+}
+
+enum WADisplayPhoneStatus {
+  CONNECTED
+  PENDING_REVIEW
+  DISCONNECTED
+  FLAGGED
+}
+
+enum WATemplateCategory {
+  MARKETING
+  UTILITY
+  AUTHENTICATION
+}
+
+enum WATemplateStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  PAUSED
+  DISABLED
+}
+
+// Per-message pricing category from Meta. Different from template
+// category — Meta may reclassify based on actual content/intent.
+enum WAPricingCategory {
+  AUTHENTICATION
+  MARKETING
+  UTILITY
+  SERVICE
+}
+
+enum WASendStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SUPPRESSED
+}
+
+enum WAMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum WAMessageType {
+  TEXT
+  TEMPLATE
+  IMAGE
+  VIDEO
+  DOCUMENT
+  AUDIO
+  STICKER
+  LOCATION
+  CONTACT
+  INTERACTIVE_BUTTON
+  INTERACTIVE_LIST
+  REACTION
+  UNSUPPORTED
+}
+
+enum WAConversationStatus {
+  OPEN
+  CLOSED
+}
+
+// ------------------------------------------------------------------
+// Models — Phase 4
+// ------------------------------------------------------------------
+
+// One WABA per tenant in MVP (see kickoff #4 pushback). The unique
+// constraint on tenantId enforces this. Multi-WABA per tenant
+// (multi-brand companies) is a future migration.
+//
+// `accessTokenEncrypted` is a Json column carrying the @getyn/crypto
+// EncryptedField shape: { ciphertext, iv, authTag, keyVersion }.
+// Encrypted with tenantId as associated data so a row stolen out of
+// tenant A's account into tenant B fails authentication.
+model WhatsAppAccount {
+  id                   String    @id @default(cuid())
+  tenantId             String    @unique
+  wabaId               String    // Meta's Business Account ID
+  displayName          String
+  status               WAStatus  @default(PENDING)
+  connectedAt          DateTime?
+  disconnectedAt       DateTime?
+  accessTokenEncrypted Json      // EncryptedField from @getyn/crypto, AD=tenantId
+  tokenExpiresAt       DateTime? // null for system-user tokens that don't expire
+  appId                String    // Meta App ID used for connection (M3 manual or M11 embedded)
+  metadata             Json      @default("{}") // business verification status, country, currency
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  tenant       Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phoneNumbers WhatsAppPhoneNumber[]
+  templates    WhatsAppTemplate[]
+  campaigns    WhatsAppCampaign[]
+  conversations WhatsAppConversation[]
+
+  @@index([tenantId])
+  @@index([wabaId])
+}
+
+// One per phone number registered to the WABA. A tenant typically has
+// one (e.g. customer-support hotline) but Meta allows up to 25.
+//
+// `currentTier24hUsage` + `tier24hWindowResetAt` are best-effort local
+// counters refreshed by the wa-phone-refresh cron from Meta's API
+// (M4). The 24h window starts at first send, NOT at midnight UTC.
+model WhatsAppPhoneNumber {
+  id                          String               @id @default(cuid())
+  tenantId                    String
+  whatsAppAccountId           String
+  phoneNumberId               String               // Meta's phone_number_id
+  phoneNumber                 String               // E.164 display, e.g. +14155551234
+  verifiedName                String
+  qualityRating               WAQualityRating      @default(UNKNOWN)
+  messagingTier               WAMessagingTier      @default(TIER_50)
+  currentTier24hUsage         Int                  @default(0)
+  tier24hWindowResetAt        DateTime?
+  displayPhoneNumberStatus    WADisplayPhoneStatus @default(PENDING_REVIEW)
+  pinSetAt                    DateTime?            // 2FA PIN required for sending
+  metadata                    Json                 @default("{}")
+  createdAt                   DateTime             @default(now())
+  updatedAt                   DateTime             @updatedAt
+
+  tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsAppAccount WhatsAppAccount     @relation(fields: [whatsAppAccountId], references: [id], onDelete: Cascade)
+  campaigns       WhatsAppCampaign[]
+  conversations   WhatsAppConversation[]
+
+  @@unique([tenantId, phoneNumberId])
+  @@index([whatsAppAccountId])
+}
+
+// In-app authored OR synced from Meta. `metaTemplateId` is null for
+// drafts not yet submitted; sync (M5) backfills it when Meta reports
+// the template under the same (name, language). Soft-deleted via
+// `deletedAt`; the partial unique index in 0004 migration excludes
+// deleted rows so a tenant can recreate same-name templates.
+//
+// `components` is a Json array matching Meta's API exactly — see
+// templateComponentsSchema in @getyn/types. We submit it directly.
+model WhatsAppTemplate {
+  id                String             @id @default(cuid())
+  tenantId          String
+  whatsAppAccountId String
+  metaTemplateId    String?            // null until submitted to Meta
+  name              String             // slug, lowercase + underscores per Meta
+  language          String             // e.g. en_US, hi, es
+  category          WATemplateCategory
+  status            WATemplateStatus   @default(DRAFT)
+  rejectionReason   String?            @db.Text
+  components        Json               // TemplateComponent[] — see @getyn/types
+  qualityRating     WAQualityRating    @default(UNKNOWN)
+  lastSyncedAt      DateTime?
+  submittedAt       DateTime?
+  approvedAt        DateTime?
+  createdByUserId   String?
+  deletedAt         DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  tenant          Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsAppAccount WhatsAppAccount    @relation(fields: [whatsAppAccountId], references: [id], onDelete: Cascade)
+  createdBy       User?              @relation("WhatsAppTemplatesCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  campaigns       WhatsAppCampaign[]
+  messages        WhatsAppMessage[]
+
+  // Partial unique index (whatsAppAccountId, name, language) WHERE
+  // deletedAt IS NULL — added in 0004 migration (Prisma can't express
+  // partial uniques in the schema).
+  @@index([tenantId, status])
+  @@index([whatsAppAccountId, status])
+}
+
+// 1:1 sidecar of Campaign for type=WHATSAPP. Mirrors EmailCampaign.
+// `templateVariables` is a Json array of { type, value | merge_tag }
+// resolved per-recipient at dispatch time.
+model WhatsAppCampaign {
+  id                  String  @id @default(cuid())
+  campaignId          String  @unique
+  whatsAppAccountId   String
+  phoneNumberId       String
+  templateId          String
+  templateLanguage    String
+  templateVariables   Json    // resolved per-recipient at dispatch
+  headerMediaAssetId  String?
+
+  campaign         Campaign            @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  whatsAppAccount  WhatsAppAccount     @relation(fields: [whatsAppAccountId], references: [id], onDelete: Restrict)
+  phoneNumber      WhatsAppPhoneNumber @relation(fields: [phoneNumberId], references: [id], onDelete: Restrict)
+  template         WhatsAppTemplate    @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  headerMediaAsset Asset?              @relation(fields: [headerMediaAssetId], references: [id], onDelete: SetNull)
+}
+
+// Per-recipient send record. Mirrors CampaignSend (Phase 3) for
+// analytics. The dispatch handler creates this AND a WhatsAppMessage
+// row atomically so the inbox renders campaign messages alongside
+// free-form replies.
+model WhatsAppCampaignSend {
+  id                String             @id @default(cuid())
+  tenantId          String
+  campaignId        String
+  contactId         String
+  phone             String             // E.164 snapshot at queue time
+  metaMessageId     String?            // null until dispatched; unique per tenant once set
+  status            WASendStatus       @default(QUEUED)
+  pricingCategory   WAPricingCategory? // Meta's per-message pricing classification
+  conversationId    String?            // Meta's conversation ID (24h window grouping)
+  errorCode         String?
+  errorMessage      String?            @db.Text
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  lastEventAt       DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, metaMessageId])
+  @@index([tenantId, campaignId, status])
+  @@index([tenantId, status, createdAt])
+}
+
+// Inbox conversation. Identified per tenant by (phoneNumberId, contactPhone).
+// `serviceWindowExpiresAt` is set/extended ONLY on inbound messages
+// (24h forward); outbound replies do NOT extend it (this is Meta's rule).
+// `unreadCount` updated atomically via SQL increment, never read-modify-write.
+model WhatsAppConversation {
+  id                     String              @id @default(cuid())
+  tenantId               String
+  whatsAppAccountId      String
+  phoneNumberId          String
+  contactId              String?             // null for inbound from unknown numbers, until matched
+  contactPhone           String              // E.164
+  lastInboundAt          DateTime?
+  lastOutboundAt         DateTime?
+  lastMessageAt          DateTime            @default(now())
+  lastMessagePreview     String              @default("") @db.Text
+  unreadCount            Int                 @default(0)
+  assignedToUserId       String?
+  serviceWindowExpiresAt DateTime?           // null = window closed; only template messages allowed
+  status                 WAConversationStatus @default(OPEN)
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsAppAccount WhatsAppAccount     @relation(fields: [whatsAppAccountId], references: [id], onDelete: Cascade)
+  phoneNumber     WhatsAppPhoneNumber @relation(fields: [phoneNumberId], references: [id], onDelete: Cascade)
+  contact         Contact?            @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  assignedTo      User?               @relation("WhatsAppConversationsAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  messages        WhatsAppMessage[]
+
+  @@unique([tenantId, phoneNumberId, contactPhone])
+  @@index([tenantId, lastMessageAt])
+  @@index([tenantId, status, lastMessageAt])
+  @@index([tenantId, assignedToUserId, lastMessageAt])
+}
+
+// Every inbound + outbound message in the inbox. Outbound campaign
+// messages also land here (dual write with WhatsAppCampaignSend).
+//
+// `metaMessageId` is unique per tenant — used by the webhook /
+// poll-status handlers to dedupe and update status. `replyToMessageId`
+// is a self-FK for quoted replies.
+model WhatsAppMessage {
+  id                String              @id @default(cuid())
+  tenantId          String
+  conversationId    String
+  direction         WAMessageDirection
+  metaMessageId     String?             // unique per tenant once set
+  type              WAMessageType
+  body              String?             @db.Text // text body; caption for media; null for non-text
+  mediaAssetId      String?             // resolved Asset for media messages
+  mediaMetaId       String?             // Meta's media id, used for delayed download
+  templateId        String?             // for outbound TEMPLATE messages
+  templateVariables Json?               // resolved variables at send time
+  status            WASendStatus        @default(QUEUED)
+  errorCode         String?
+  errorMessage      String?             @db.Text
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  sentByUserId      String?             // for free-form replies sent from inbox UI
+  replyToMessageId  String?             // self-FK
+  metadata          Json                @default("{}")
+  createdAt         DateTime            @default(now())
+
+  tenant       Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation WhatsAppConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  template     WhatsAppTemplate?     @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  mediaAsset   Asset?                @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  sentBy       User?                 @relation("WhatsAppMessagesSentBy", fields: [sentByUserId], references: [id], onDelete: SetNull)
+  replyTo      WhatsAppMessage?      @relation("WhatsAppMessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies      WhatsAppMessage[]     @relation("WhatsAppMessageReplies")
+
+  @@index([conversationId, createdAt])
+  @@index([tenantId, metaMessageId])
+}
+
+// Raw event log for idempotency + debugging. The webhook receiver
+// upserts on `dedupeKey` (computed from event kind + metaMessageId +
+// status, see kickoff pushback #1). Successful processing sets
+// `processedAt`; failure stamps `processError` for retry.
+model WhatsAppWebhookEvent {
+  id            String    @id @default(cuid())
+  tenantId      String?   // null until matched (e.g. unknown WABA hits us)
+  phoneNumberId String?   // null until matched
+  eventType     String    // 'inbound' | 'status:sent' | 'status:delivered' | etc.
+  dedupeKey     String    @unique
+  rawPayload    Json
+  processedAt   DateTime?
+  processError  String?   @db.Text
+  receivedAt    DateTime  @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, receivedAt])
+  @@index([eventType, processedAt])
+}
+
+// Generic media table. Used by template media headers, inbox media
+// messages, and future asset-bearing features. Storage path lives
+// under tenants/<tenantId>/wa-assets/<id>.<ext> in the wa-assets
+// bucket (private, signed URLs only).
+model Asset {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  fileName            String
+  mimeType            String
+  sizeBytes           Int
+  storagePath         String   // tenants/<tenantId>/wa-assets/<id>.<ext>
+  mediaMetaId         String?  // Meta's media id, populated after upload to Meta
+  uploadedByUserId    String?
+  createdAt           DateTime @default(now())
+
+  tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  uploadedBy User?              @relation("AssetsUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  templateMessages   WhatsAppMessage[]
+  campaignsAsHeader  WhatsAppCampaign[]
+
+  @@index([tenantId, createdAt])
+}
+
+// AI generation audit log. Phase 4 M7 introduces the first AI feature
+// (template drafting). Phase 5 will expand this with per-feature
+// rate limits / cost rollups.
+model AiGeneration {
+  id          String   @id @default(cuid())
+  tenantId    String
+  userId      String
+  feature     String   // 'wa_template_draft' for now; enum in Phase 5
+  prompt      String   @db.Text
+  response    String   @db.Text
+  tokensUsed  Int
+  cost        Decimal  @db.Decimal(10, 4) // USD; sub-cent precision for token-cost rollups
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, feature, createdAt])
 }
