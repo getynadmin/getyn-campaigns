@@ -331,6 +331,74 @@ export async function getPhoneNumberBusinessProfile(
   return res.data?.[0] ?? null;
 }
 
+/**
+ * POST /{wabaId}/message_templates — submit a new template to Meta.
+ * Body shape matches Meta's API exactly (we serialize the same
+ * components Json the M2 schema produces). Returns the new id +
+ * initial status (typically PENDING).
+ */
+export interface CreateMessageTemplateBody {
+  name: string;
+  language: string;
+  category: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+  components: unknown[];
+  /** Avoid post-submit reclassification surprises. Default true. */
+  allow_category_change?: boolean;
+}
+
+export interface CreateMessageTemplateResponse {
+  id: string;
+  status: MetaTemplate['status'];
+  category?: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+}
+
+export async function createMessageTemplate(
+  wabaId: string,
+  accessToken: string,
+  body: CreateMessageTemplateBody,
+  opts?: { fetchImpl?: typeof fetch; baseUrl?: string },
+): Promise<CreateMessageTemplateResponse> {
+  return metaFetch<CreateMessageTemplateResponse>(
+    `/${encodeURIComponent(wabaId)}/message_templates`,
+    {
+      accessToken,
+      method: 'POST',
+      body: { allow_category_change: true, ...body } as unknown as Record<
+        string,
+        unknown
+      >,
+      fetchImpl: opts?.fetchImpl,
+      baseUrl: opts?.baseUrl,
+    },
+  );
+}
+
+/**
+ * DELETE /{wabaId}/message_templates?name={name}&hsm_id={id}.
+ * Meta deletes by name; passing hsm_id targets a single language
+ * variant. Without hsm_id Meta deletes every language for the name.
+ */
+export async function deleteMessageTemplate(
+  wabaId: string,
+  accessToken: string,
+  args: { name: string; hsmId?: string },
+  opts?: { fetchImpl?: typeof fetch; baseUrl?: string },
+): Promise<{ success?: boolean }> {
+  return metaFetch<{ success?: boolean }>(
+    `/${encodeURIComponent(wabaId)}/message_templates`,
+    {
+      accessToken,
+      method: 'DELETE',
+      query: {
+        name: args.name,
+        ...(args.hsmId ? { hsm_id: args.hsmId } : {}),
+      },
+      fetchImpl: opts?.fetchImpl,
+      baseUrl: opts?.baseUrl,
+    },
+  );
+}
+
 export async function listWabaTemplates(
   wabaId: string,
   accessToken: string,

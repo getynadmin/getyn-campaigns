@@ -1,4 +1,6 @@
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { ArrowRight, MessageSquare } from 'lucide-react';
 
 import { Role, prisma } from '@getyn/db';
 
@@ -60,6 +62,24 @@ export default async function WhatsAppChannelPage({
       </div>
 
       <WhatsAppChannelsClient canManage={canManage} />
+
+      <Link
+        href={`/t/${params.slug}/settings/channels/whatsapp/templates`}
+        className="group flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:border-primary/40"
+      >
+        <div className="flex items-center gap-3">
+          <span className="grid size-9 place-items-center rounded-md bg-muted text-muted-foreground">
+            <MessageSquare className="size-4" />
+          </span>
+          <div>
+            <p className="text-sm font-medium">Templates</p>
+            <p className="text-xs text-muted-foreground">
+              Author, submit, sync and version templates for this WABA.
+            </p>
+          </div>
+        </div>
+        <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+      </Link>
     </div>
   );
 }

@@ -492,3 +492,69 @@ export const whatsAppAccountDisconnectSchema = z.object({
 });
 
 export const whatsAppAccountRefreshPhoneNumbersSchema = z.object({});
+
+// ------------------------------------------------------------------
+// WhatsAppTemplate authoring mutations (Phase 4 M6)
+// ------------------------------------------------------------------
+
+/**
+ * Create a draft locally. metaTemplateId stays null until submitted.
+ * Schema-validated by templateDraftSchema; the router additionally
+ * runs validateForCategory and surfaces editorial issues alongside
+ * the persisted row.
+ */
+export const whatsAppTemplateCreateSchema = templateDraftSchema;
+export type WhatsAppTemplateCreateInput = z.infer<
+  typeof whatsAppTemplateCreateSchema
+>;
+
+const templateIdRefSchema = z.string().min(1).max(64);
+
+/**
+ * Update — only DRAFT rows. PENDING/APPROVED/REJECTED/PAUSED are
+ * append-only via duplicate (Meta forbids in-place edits). Patch
+ * shape mirrors create but every field is optional.
+ */
+export const whatsAppTemplateUpdateSchema = z.object({
+  id: templateIdRefSchema,
+  patch: z
+    .object({
+      name: templateNameSchema.optional(),
+      language: templateLanguageSchema.optional(),
+      category: templateCategorySchema.optional(),
+      components: templateComponentsSchema.optional(),
+    })
+    .refine((p) => Object.keys(p).length > 0, {
+      message: 'patch must include at least one field',
+    }),
+});
+export type WhatsAppTemplateUpdateInput = z.infer<
+  typeof whatsAppTemplateUpdateSchema
+>;
+
+/**
+ * Submit — DRAFT → PENDING. Hits Meta's create-template endpoint.
+ * After this, status moves through Meta's lifecycle and the worker's
+ * poll-submission chain (M5) feeds back updates.
+ */
+export const whatsAppTemplateSubmitSchema = z.object({
+  id: templateIdRefSchema,
+});
+
+/** Soft-delete — only blocked when a non-DRAFT campaign references it. */
+export const whatsAppTemplateDeleteSchema = z.object({
+  id: templateIdRefSchema,
+});
+
+/**
+ * Duplicate — creates a new DRAFT from an existing template (any status).
+ * Used as the "edit approved template" entry point: Meta forbids editing,
+ * so the UI offers "Duplicate as draft" instead.
+ *
+ * `newName` defaults to `${original}_v2` (auto-incrementing if taken)
+ * and can be overridden by the caller.
+ */
+export const whatsAppTemplateDuplicateSchema = z.object({
+  id: templateIdRefSchema,
+  newName: templateNameSchema.optional(),
+});

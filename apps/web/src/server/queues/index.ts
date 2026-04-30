@@ -4,9 +4,11 @@ import {
   JOB_NAMES,
   QUEUE_NAMES,
   importJobPayloadSchema,
+  pollTemplateSubmissionPayloadSchema,
   prepareCampaignPayloadSchema,
   resendWebhookPayloadSchema,
   type ImportJobPayload,
+  type PollTemplateSubmissionPayload,
   type PrepareCampaignPayload,
   type ResendWebhookPayload,
 } from '@getyn/types';
@@ -142,5 +144,40 @@ export async function enqueuePrepareCampaign(
   await queue.add(JOB_NAMES.sends.prepareCampaign, validated, {
     jobId: `prepare:${validated.campaignId}`,
     ...(options.delayMs !== undefined ? { delay: options.delayMs } : {}),
+  });
+}
+
+// ----------------------------------------------------------------------------
+// Phase 4 M5/M6 — wa-template-sync producer
+//
+// The web app enqueues a poll-submission job after a tenant submits a
+// template via the M6 authoring UI. The worker chain handles up to 10
+// follow-up polls at 30s intervals before yielding to the hourly tick.
+// ----------------------------------------------------------------------------
+
+let cachedWaTemplateSyncQueue: Queue | null = null;
+
+function getWaTemplateSyncQueue(): Queue {
+  if (cachedWaTemplateSyncQueue) return cachedWaTemplateSyncQueue;
+  cachedWaTemplateSyncQueue = new Queue(QUEUE_NAMES.waTemplateSync, {
+    connection: getConnection(),
+    defaultJobOptions: {
+      removeOnComplete: { age: 60 * 60, count: 200 },
+      removeOnFail: { age: 60 * 60 * 24 },
+    },
+  });
+  return cachedWaTemplateSyncQueue;
+}
+
+export async function enqueuePollTemplateSubmission(
+  payload: PollTemplateSubmissionPayload,
+): Promise<void> {
+  const validated = pollTemplateSubmissionPayloadSchema.parse(payload);
+  const queue = getWaTemplateSyncQueue();
+  await queue.add(JOB_NAMES.waTemplateSync.pollSubmission, validated, {
+    // First poll fires 30s after submit so Meta has time to assign a status.
+    delay: 30_000,
+    attempts: 1,
+    jobId: `poll:${validated.templateId}:${validated.attempt}`,
   });
 }
