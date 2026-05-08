@@ -55,7 +55,10 @@ export async function handleWaTemplateSyncTick(): Promise<{ enqueued: number }> 
       'sync-waba',
       { whatsAppAccountId: a.id, tenantId: a.tenantId },
       {
-        jobId: `wa-template-sync:${a.id}`,
+        // BullMQ rejects `:` in custom jobIds when combined with the
+        // queue's internal `repeat:hash:ts` keying — use `_` to dedupe
+        // per-account fan-outs without colliding.
+        jobId: `wa-template-sync_${a.id}`,
         removeOnComplete: 50,
         removeOnFail: 50,
         attempts: 3,

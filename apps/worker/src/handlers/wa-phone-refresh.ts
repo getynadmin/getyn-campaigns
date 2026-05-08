@@ -53,7 +53,10 @@ export async function handleWaPhoneRefreshTick(): Promise<{
       'refresh-waba',
       { whatsAppAccountId: a.id, tenantId: a.tenantId },
       {
-        jobId: `wa-phone-refresh:${a.id}`,
+        // BullMQ rejects `:` in custom jobIds when combined with the
+        // queue's internal `repeat:hash:ts` keying — use `_` to dedupe
+        // per-account fan-outs without colliding.
+        jobId: `wa-phone-refresh_${a.id}`,
         removeOnComplete: 50,
         removeOnFail: 50,
         attempts: 3,
