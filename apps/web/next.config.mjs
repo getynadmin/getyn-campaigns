@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   reactStrictMode: true,
   // Monorepo packages consumed as raw TS sources — Next compiles them.
-  transpilePackages: ['@getyn/crypto', '@getyn/db', '@getyn/types', '@getyn/ui', '@getyn/whatsapp'],
+  transpilePackages: ['@getyn/ai', '@getyn/crypto', '@getyn/db', '@getyn/types', '@getyn/ui', '@getyn/whatsapp'],
   // Trace files from the MONOREPO root, not apps/web. Without this, Vercel's
   // serverless bundler walks up only as far as apps/web/ and misses files
   // hoisted to the root node_modules — notably Prisma's platform-specific

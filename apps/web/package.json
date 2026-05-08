@@ -16,6 +16,7 @@
     "@getyn/crypto": "workspace:*",
     "@getyn/db": "workspace:*",
     "@getyn/types": "workspace:*",
+    "@getyn/ai": "workspace:*",
     "@getyn/whatsapp": "workspace:*",
     "@hookform/resolvers": "^3.9.0",
     "@radix-ui/react-avatar": "^1.1.1",

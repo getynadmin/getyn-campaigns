@@ -1,3 +1,4 @@
+import { aiRouter } from './routers/ai';
 import { authRouter } from './routers/auth';
 import { campaignsRouter } from './routers/campaigns';
 import { contactsRouter } from './routers/contacts';
@@ -40,6 +41,8 @@ export const appRouter = createTRPCRouter({
   whatsAppAccount: whatsAppAccountsRouter,
   whatsAppPhoneNumber: whatsAppPhoneNumbersRouter,
   whatsAppTemplate: whatsAppTemplatesRouter,
+  // Phase 4 M7
+  ai: aiRouter,
 });
 
 export type AppRouter = typeof appRouter;

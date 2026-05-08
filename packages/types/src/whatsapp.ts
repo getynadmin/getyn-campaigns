@@ -558,3 +558,19 @@ export const whatsAppTemplateDuplicateSchema = z.object({
   id: templateIdRefSchema,
   newName: templateNameSchema.optional(),
 });
+
+// ------------------------------------------------------------------
+// AI template drafting (Phase 4 M7)
+// ------------------------------------------------------------------
+
+export const aiDraftTemplateSchema = z.object({
+  brief: z
+    .string()
+    .trim()
+    .min(10, 'Describe the template in at least a sentence.')
+    .max(2000),
+  category: templateCategorySchema,
+  language: templateLanguageSchema,
+  tone: z.enum(['transactional', 'friendly', 'urgent', 'formal']),
+});
+export type AiDraftTemplateInput = z.infer<typeof aiDraftTemplateSchema>;

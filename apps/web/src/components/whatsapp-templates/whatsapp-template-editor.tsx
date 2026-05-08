@@ -13,6 +13,7 @@ import {
   Plus,
   Save,
   Send,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 
@@ -22,10 +23,19 @@ import {
   validateForCategory,
   type TemplateButton,
   type TemplateComponent,
+  type TemplateComponents,
   type TemplateDraft,
 } from '@getyn/types';
 
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -127,6 +137,8 @@ export function WhatsAppTemplateEditor({
     );
 
   const [state, setState] = useState<EditorState>(blankState);
+  const [aiOpen, setAiOpen] = useState(false);
+  const aiAvailable = api.ai.isAvailable.useQuery();
 
   // Hydrate state from existing when loaded.
   useEffect(() => {
@@ -272,6 +284,28 @@ export function WhatsAppTemplateEditor({
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
         <div className={cn('space-y-6', isReadOnly && 'pointer-events-none opacity-70')}>
+          {!isReadOnly && aiAvailable.data?.available && (
+            <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Skip the blank page</p>
+                  <p className="text-xs text-muted-foreground">
+                    Describe what you want and we&apos;ll draft the body,
+                    header, and buttons. Review and edit before submitting.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setAiOpen(true)}
+                >
+                  <Sparkles className="mr-2 size-3.5" />
+                  Draft with AI
+                </Button>
+              </div>
+            </div>
+          )}
+
           <Section title="Identity">
             <Field label="Name">
               <Input
@@ -591,8 +625,211 @@ export function WhatsAppTemplateEditor({
           )}
         </div>
       </div>
+
+      <AiDraftDialog
+        open={aiOpen}
+        onOpenChange={setAiOpen}
+        defaultCategory={state.category}
+        defaultLanguage={state.language}
+        onApply={(draft) => {
+          // Replace just the body / header / footer / buttons from the
+          // AI draft. Keep the user's name + language + category as-is —
+          // those came from the form and the user picked them deliberately.
+          setState((prev) => mergeAiDraft(prev, draft));
+          setAiOpen(false);
+        }}
+      />
     </div>
   );
+}
+
+// ----------------------------------------------------------------------------
+// AI dialog
+// ----------------------------------------------------------------------------
+
+function AiDraftDialog({
+  open,
+  onOpenChange,
+  defaultCategory,
+  defaultLanguage,
+  onApply,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  defaultCategory: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+  defaultLanguage: string;
+  onApply: (components: TemplateComponents) => void;
+}): JSX.Element {
+  const [brief, setBrief] = useState('');
+  const [tone, setTone] = useState<
+    'transactional' | 'friendly' | 'urgent' | 'formal'
+  >('transactional');
+  const [rationale, setRationale] = useState<string | null>(null);
+
+  const draft = api.ai.draftWhatsAppTemplate.useMutation({
+    onSuccess: (res) => {
+      if (!res.components) {
+        toast.error(
+          'AI returned an unparseable draft. Try a tighter brief or write manually.',
+        );
+        return;
+      }
+      setRationale(res.rationale);
+      onApply(res.components);
+      if (res.issues.length > 0) {
+        toast.warning(
+          `Draft applied with ${res.issues.length} editorial warning(s) — review before submit.`,
+        );
+      } else {
+        toast.success('Draft applied. Review and edit before submitting.');
+      }
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) {
+          setBrief('');
+          setRationale(null);
+        }
+        onOpenChange(o);
+      }}
+    >
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="size-4 text-primary" /> Draft with AI
+          </DialogTitle>
+          <DialogDescription>
+            Describe the message you want. We&apos;ll draft a Meta-compliant
+            template structure you can edit before submitting.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <Field label="Brief">
+            <textarea
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1"
+              rows={4}
+              value={brief}
+              onChange={(e) => setBrief(e.target.value)}
+              placeholder="Order shipped notification with tracking link button. Include the order number and ETA."
+              maxLength={2000}
+            />
+          </Field>
+          <Field label="Tone">
+            <Select
+              value={tone}
+              onValueChange={(v) =>
+                setTone(v as typeof tone)
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="transactional">
+                  Transactional — concise, neutral
+                </SelectItem>
+                <SelectItem value="friendly">
+                  Friendly — warm, conversational
+                </SelectItem>
+                <SelectItem value="urgent">
+                  Urgent — time-sensitive, direct
+                </SelectItem>
+                <SelectItem value="formal">
+                  Formal — professional, polite
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <p className="text-xs text-muted-foreground">
+            Will use category{' '}
+            <strong>{defaultCategory}</strong> and language{' '}
+            <strong>{defaultLanguage}</strong> from your form. Change them
+            in the form if needed.
+          </p>
+
+          {rationale && (
+            <div className="rounded-md border bg-muted/30 p-3 text-xs">
+              <p className="mb-1 font-semibold">Why this design</p>
+              <p className="text-muted-foreground">{rationale}</p>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() =>
+              draft.mutate({
+                brief,
+                tone,
+                category: defaultCategory,
+                language: defaultLanguage,
+              })
+            }
+            disabled={draft.isPending || brief.trim().length < 10}
+          >
+            {draft.isPending && <Loader2 className="mr-2 size-4 animate-spin" />}
+            <Sparkles className="mr-2 size-4" />
+            Generate
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Merge an AI-supplied components array into the editor's flat state.
+ * Body / header / footer / buttons all replace; identity (name, language,
+ * category) is left untouched — those are user-controlled inputs that
+ * sit outside the AI's responsibility.
+ */
+function mergeAiDraft(
+  prev: EditorState,
+  components: TemplateComponents,
+): EditorState {
+  const header = components.find((c) => c.type === 'HEADER');
+  const body = components.find((c) => c.type === 'BODY');
+  const footer = components.find((c) => c.type === 'FOOTER');
+  const buttons = components.find((c) => c.type === 'BUTTONS');
+
+  return {
+    ...prev,
+    headerEnabled: Boolean(header),
+    headerFormat:
+      header && header.type === 'HEADER'
+        ? header.format === 'LOCATION'
+          ? 'TEXT'
+          : header.format
+        : 'TEXT',
+    headerText:
+      header && header.type === 'HEADER' && header.format === 'TEXT'
+        ? header.text ?? ''
+        : '',
+    headerExampleText:
+      header &&
+      header.type === 'HEADER' &&
+      header.example?.header_text?.[0]
+        ? header.example.header_text[0]
+        : '',
+    body: body && body.type === 'BODY' ? body.text : prev.body,
+    bodyExamples:
+      body && body.type === 'BODY' && body.example?.body_text?.[0]
+        ? body.example.body_text[0]
+        : [],
+    footerEnabled: Boolean(footer),
+    footerText: footer && footer.type === 'FOOTER' ? footer.text : '',
+    buttonsEnabled: Boolean(buttons),
+    buttons: buttons && buttons.type === 'BUTTONS' ? buttons.buttons : [],
+  };
 }
 
 // ----------------------------------------------------------------------------
