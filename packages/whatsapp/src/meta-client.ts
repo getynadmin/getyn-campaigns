@@ -399,6 +399,94 @@ export async function deleteMessageTemplate(
   );
 }
 
+// ------------------------------------------------------------------
+// POST /{phoneNumberId}/messages — send a template message (M8).
+// ------------------------------------------------------------------
+
+export interface SendTemplateBody {
+  to: string; // E.164, no leading + per Meta's spec
+  templateName: string;
+  templateLanguage: string;
+  /**
+   * Body parameter values — aligned with {{1}}, {{2}}, ... in the
+   * approved template. Header parameters and button URL parameters
+   * land in M9; M8 supports BODY-only variable templates.
+   */
+  bodyParams: string[];
+}
+
+export interface SendTemplateResponse {
+  messaging_product: 'whatsapp';
+  contacts?: Array<{ input: string; wa_id: string }>;
+  messages: Array<{ id: string; message_status?: string }>;
+}
+
+export async function sendTemplateMessage(
+  phoneNumberId: string,
+  accessToken: string,
+  body: SendTemplateBody,
+  opts?: { fetchImpl?: typeof fetch; baseUrl?: string },
+): Promise<SendTemplateResponse> {
+  // Meta wants `to` without the leading `+`.
+  const toBare = body.to.replace(/^\+/, '');
+  const components =
+    body.bodyParams.length > 0
+      ? [
+          {
+            type: 'body',
+            parameters: body.bodyParams.map((text) => ({
+              type: 'text',
+              text,
+            })),
+          },
+        ]
+      : [];
+  return metaFetch<SendTemplateResponse>(
+    `/${encodeURIComponent(phoneNumberId)}/messages`,
+    {
+      accessToken,
+      method: 'POST',
+      body: {
+        messaging_product: 'whatsapp',
+        to: toBare,
+        type: 'template',
+        template: {
+          name: body.templateName,
+          language: { code: body.templateLanguage },
+          ...(components.length > 0 ? { components } : {}),
+        },
+      },
+      fetchImpl: opts?.fetchImpl,
+      baseUrl: opts?.baseUrl,
+    },
+  );
+}
+
+// ------------------------------------------------------------------
+// GET /{messageId} — pull current status of a sent message (M8 poll).
+// ------------------------------------------------------------------
+
+export interface MetaMessageStatus {
+  id: string;
+  status?: 'sent' | 'delivered' | 'read' | 'failed';
+  timestamp?: string;
+  recipient_id?: string;
+  errors?: Array<{ code?: number; title?: string; message?: string }>;
+}
+
+export async function getMessageStatus(
+  messageId: string,
+  accessToken: string,
+  opts?: { fetchImpl?: typeof fetch; baseUrl?: string },
+): Promise<MetaMessageStatus> {
+  return metaFetch<MetaMessageStatus>(`/${encodeURIComponent(messageId)}`, {
+    accessToken,
+    query: { fields: 'id,status,timestamp,recipient_id,errors' },
+    fetchImpl: opts?.fetchImpl,
+    baseUrl: opts?.baseUrl,
+  });
+}
+
 export async function listWabaTemplates(
   wabaId: string,
   accessToken: string,

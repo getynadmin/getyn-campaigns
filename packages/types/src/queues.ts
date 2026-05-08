@@ -15,6 +15,8 @@ export const QUEUE_NAMES = {
   // Phase 4 — WhatsApp Business background jobs
   waPhoneRefresh: 'wa-phone-refresh',
   waTemplateSync: 'wa-template-sync',
+  waSends: 'wa-sends',
+  waPollStatus: 'wa-poll-status',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -123,6 +125,16 @@ export const JOB_NAMES = {
     syncWaba: 'sync-waba',
     pollSubmission: 'poll-submission',
   },
+  waSends: {
+    prepareCampaign: 'prepare-wa-campaign',
+    dispatchBatch: 'dispatch-wa-batch',
+    dispatchSingle: 'dispatch-wa-single', // free-form inbox replies
+    resumeAfterTier: 'resume-after-tier', // re-enqueue prep when tier window resets
+  },
+  waPollStatus: {
+    tick: 'tick',
+    pollCampaign: 'poll-campaign',
+  },
 } as const;
 
 /**
@@ -168,3 +180,74 @@ export const pollTemplateSubmissionPayloadSchema = z.object({
 export type PollTemplateSubmissionPayload = z.infer<
   typeof pollTemplateSubmissionPayloadSchema
 >;
+
+/**
+ * Payloads for the wa-sends queue (Phase 4 M8).
+ *
+ * `prepare-wa-campaign` — runs once per WhatsApp campaign. Resolves
+ * the segment, filters out non-SUBSCRIBED whatsappStatus + WHATSAPP
+ * suppression entries, validates each contact has an E.164 phone,
+ * pre-flights the WABA / phone / template, materialises (contactId,
+ * phone) tuples, creates WhatsAppCampaignSend rows in QUEUED status,
+ * fans out `dispatch-wa-batch` in chunks of 100 (smaller than email
+ * batches because Meta's per-second rate limits are tighter).
+ *
+ * `dispatch-wa-batch` — receives ≤100 send tuples; renders template
+ * variables per recipient and POSTs to Meta. On per-phone tier limit
+ * exhaustion mid-batch, the campaign pauses and `resume-after-tier`
+ * is scheduled to re-enqueue prep at the next tier-window reset.
+ *
+ * `dispatch-wa-single` — free-form inbox replies (M10 hook). Same
+ * code path as dispatch-wa-batch but for a single message.
+ */
+export const prepareWaCampaignPayloadSchema = z.object({
+  campaignId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type PrepareWaCampaignPayload = z.infer<
+  typeof prepareWaCampaignPayloadSchema
+>;
+
+export const dispatchWaBatchPayloadSchema = z.object({
+  campaignId: cuidSchema,
+  tenantId: cuidSchema,
+  /** Send rows already materialised in WhatsAppCampaignSend (QUEUED). */
+  sendIds: z.array(cuidSchema).min(1).max(100),
+});
+export type DispatchWaBatchPayload = z.infer<
+  typeof dispatchWaBatchPayloadSchema
+>;
+
+export const dispatchWaSinglePayloadSchema = z.object({
+  tenantId: cuidSchema,
+  conversationId: cuidSchema,
+  /** WhatsAppMessage row id created in OUTBOUND/QUEUED state. */
+  messageId: cuidSchema,
+});
+export type DispatchWaSinglePayload = z.infer<
+  typeof dispatchWaSinglePayloadSchema
+>;
+
+export const resumeAfterTierPayloadSchema = z.object({
+  campaignId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type ResumeAfterTierPayload = z.infer<
+  typeof resumeAfterTierPayloadSchema
+>;
+
+/**
+ * Payloads for the wa-poll-status queue (Phase 4 M8).
+ *
+ * `tick` (cron, every 2 min): finds active WhatsApp campaigns
+ * (sent within the last 72h with non-terminal sends) and fans out
+ * `poll-campaign`.
+ *
+ * `poll-campaign`: pulls Meta status for non-terminal sends in the
+ * given campaign and updates DELIVERED / READ / FAILED transitions.
+ */
+export const pollCampaignPayloadSchema = z.object({
+  campaignId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type PollCampaignPayload = z.infer<typeof pollCampaignPayloadSchema>;

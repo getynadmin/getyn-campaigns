@@ -16,6 +16,15 @@ import {
   handleWaPhoneRefreshTick,
 } from './handlers/wa-phone-refresh';
 import {
+  handleWaPollCampaign,
+  handleWaPollStatusTick,
+} from './handlers/wa-poll-status';
+import {
+  handleDispatchWaBatch,
+  handlePrepareWaCampaign,
+  handleResumeAfterTier,
+} from './handlers/wa-sends';
+import {
   handleWaTemplatePoll,
   handleWaTemplateSyncOne,
   handleWaTemplateSyncTick,
@@ -147,6 +156,53 @@ workers.push(
   ),
 );
 
+// wa-sends queue — Phase 4 M8.
+//
+// Three job shapes via one Worker:
+//   prepare-wa-campaign   — once per campaign, materialises sends.
+//   dispatch-wa-batch     — chunks of 100, calls Meta per recipient.
+//   resume-after-tier     — re-prepares after tier window resets.
+//
+// Concurrency 4. Locks 5 min — dispatch may take a couple minutes
+// when batching 100 Meta calls per job.
+workers.push(
+  new Worker(
+    QUEUE_NAMES.waSends,
+    async (job) => {
+      if (job.name === 'prepare-wa-campaign') return handlePrepareWaCampaign(job);
+      if (job.name === 'dispatch-wa-batch') return handleDispatchWaBatch(job);
+      if (job.name === 'resume-after-tier') return handleResumeAfterTier(job);
+      throw new Error(`Unknown wa-sends job: ${job.name}`);
+    },
+    {
+      connection,
+      concurrency: 4,
+      lockDuration: 300_000,
+    },
+  ),
+);
+
+// wa-poll-status queue — Phase 4 M8 (outbound delivery polling).
+//
+// Two job shapes:
+//   tick (cron, every 2 min): fans out poll-campaign jobs.
+//   poll-campaign: pulls Meta status for one campaign's pending sends.
+workers.push(
+  new Worker(
+    QUEUE_NAMES.waPollStatus,
+    async (job) => {
+      if (job.name === 'tick') return handleWaPollStatusTick();
+      if (job.name === 'poll-campaign') return handleWaPollCampaign(job);
+      throw new Error(`Unknown wa-poll-status job: ${job.name}`);
+    },
+    {
+      connection,
+      concurrency: 4,
+      lockDuration: 60_000,
+    },
+  ),
+);
+
 // Cron queue — repeatable maintenance jobs.
 //
 // Two repeatable jobs:
@@ -216,8 +272,11 @@ async function setupCronJobs(): Promise<void> {
     'tick',
     {},
     {
+      // No custom jobId — BullMQ's job scheduler dedupes repeatables on
+      // (queue, name, pattern). Custom jobIds with colons (`cron:...`)
+      // collide with BullMQ's internal `repeat:hash:ts` keying in newer
+      // versions and throw "Custom Id cannot contain :" at runtime.
       repeat: { pattern: '11 */6 * * *', tz: 'UTC' }, // :11 past every 6h
-      jobId: 'cron:wa-phone-refresh-tick',
     },
   );
   await waPhoneRefreshQueue.close();
@@ -231,11 +290,27 @@ async function setupCronJobs(): Promise<void> {
     'tick',
     {},
     {
+      // See comment on waPhoneRefreshQueue above re: no custom jobId.
       repeat: { pattern: '17 * * * *', tz: 'UTC' }, // :17 past every hour
-      jobId: 'cron:wa-template-sync-tick',
     },
   );
   await waTemplateSyncQueue.close();
+
+  // Phase 4 M8 — wa-poll-status tick. Every 2 min, fans out poll
+  // jobs for campaigns sent in the last 72h with non-terminal sends.
+  // Polling is the primary signal; webhooks (M9) supplement.
+  const waPollStatusQueue = new Queue(QUEUE_NAMES.waPollStatus, {
+    connection,
+  });
+  await waPollStatusQueue.add(
+    'tick',
+    {},
+    {
+      // No custom jobId — see waPhoneRefreshQueue comment.
+      repeat: { pattern: '*/2 * * * *', tz: 'UTC' }, // every 2 min
+    },
+  );
+  await waPollStatusQueue.close();
 
   console.info('[worker:cron] repeatable jobs registered');
 }

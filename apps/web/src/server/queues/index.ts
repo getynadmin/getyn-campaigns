@@ -6,10 +6,12 @@ import {
   importJobPayloadSchema,
   pollTemplateSubmissionPayloadSchema,
   prepareCampaignPayloadSchema,
+  prepareWaCampaignPayloadSchema,
   resendWebhookPayloadSchema,
   type ImportJobPayload,
   type PollTemplateSubmissionPayload,
   type PrepareCampaignPayload,
+  type PrepareWaCampaignPayload,
   type ResendWebhookPayload,
 } from '@getyn/types';
 import { Queue } from 'bullmq';
@@ -179,5 +181,41 @@ export async function enqueuePollTemplateSubmission(
     delay: 30_000,
     attempts: 1,
     jobId: `poll:${validated.templateId}:${validated.attempt}`,
+  });
+}
+
+// ----------------------------------------------------------------------------
+// Phase 4 M8 — wa-sends producer
+// ----------------------------------------------------------------------------
+
+let cachedWaSendsQueue: Queue<PrepareWaCampaignPayload> | null = null;
+
+function getWaSendsQueue(): Queue<PrepareWaCampaignPayload> {
+  if (cachedWaSendsQueue) return cachedWaSendsQueue;
+  cachedWaSendsQueue = new Queue<PrepareWaCampaignPayload>(QUEUE_NAMES.waSends, {
+    connection: getConnection(),
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5_000 },
+      removeOnComplete: { age: 60 * 60 * 24 * 7, count: 1000 },
+      removeOnFail: { age: 60 * 60 * 24 * 30 },
+    },
+  });
+  return cachedWaSendsQueue;
+}
+
+/**
+ * Enqueue prepare-wa-campaign. Kickoff from sendNow / schedule.
+ * Idempotent on jobId — re-clicks won't double-prepare.
+ */
+export async function enqueuePrepareWaCampaign(
+  payload: PrepareWaCampaignPayload,
+  options: { delayMs?: number } = {},
+): Promise<void> {
+  const validated = prepareWaCampaignPayloadSchema.parse(payload);
+  const queue = getWaSendsQueue();
+  await queue.add(JOB_NAMES.waSends.prepareCampaign, validated, {
+    jobId: `prepare-wa_${validated.campaignId}`,
+    ...(options.delayMs !== undefined ? { delay: options.delayMs } : {}),
   });
 }

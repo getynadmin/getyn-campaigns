@@ -32,6 +32,8 @@
  */
 import { z } from 'zod';
 
+import { cuidSchema } from './common';
+
 // ------------------------------------------------------------------
 // Buttons (plain objects — discriminator-compat)
 // ------------------------------------------------------------------
@@ -574,3 +576,76 @@ export const aiDraftTemplateSchema = z.object({
   tone: z.enum(['transactional', 'friendly', 'urgent', 'formal']),
 });
 export type AiDraftTemplateInput = z.infer<typeof aiDraftTemplateSchema>;
+
+// ------------------------------------------------------------------
+// WhatsApp campaign mutations (Phase 4 M8)
+//
+// 1:1 with Campaign(type=WHATSAPP). The Campaign row carries
+// status/scheduledAt/segmentId/name; the WhatsAppCampaign row
+// carries the WhatsApp-specific bits.
+//
+// templateVariables is an array of param values, one per {{N}} in the
+// template body. Values may be a literal string ("Welcome to Acme")
+// or a contact merge tag reference ("contact.firstName"). Resolution
+// happens at dispatch time per recipient.
+// ------------------------------------------------------------------
+
+export const templateVariableSchema = z.object({
+  /** Either a static string or a merge tag like "contact.firstName". */
+  type: z.enum(['static', 'merge']),
+  value: z.string().trim().min(1).max(500),
+});
+export type TemplateVariable = z.infer<typeof templateVariableSchema>;
+
+export const whatsAppCampaignCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  segmentId: cuidSchema,
+  /** Picked from whatsAppPhoneNumber.list — must be CONNECTED. */
+  phoneNumberId: cuidSchema,
+  /** Local WhatsAppTemplate id; status must be APPROVED at send time. */
+  templateId: cuidSchema,
+  templateLanguage: templateLanguageSchema,
+  /** Array of variable values aligned with {{1}}, {{2}}, ... in body. */
+  templateVariables: z.array(templateVariableSchema).max(10).default([]),
+  /** Optional Asset id for media-format header. */
+  headerMediaAssetId: cuidSchema.nullable().optional(),
+});
+export type WhatsAppCampaignCreateInput = z.infer<
+  typeof whatsAppCampaignCreateSchema
+>;
+
+export const whatsAppCampaignUpdateSchema = z.object({
+  id: cuidSchema,
+  patch: z
+    .object({
+      name: z.string().trim().min(1).max(120),
+      segmentId: cuidSchema,
+      phoneNumberId: cuidSchema,
+      templateId: cuidSchema,
+      templateLanguage: templateLanguageSchema,
+      templateVariables: z.array(templateVariableSchema).max(10),
+      headerMediaAssetId: cuidSchema.nullable(),
+    })
+    .partial(),
+});
+export type WhatsAppCampaignUpdateInput = z.infer<
+  typeof whatsAppCampaignUpdateSchema
+>;
+
+export const whatsAppCampaignScheduleSchema = z.object({
+  id: cuidSchema,
+  /** ISO 8601 with TZ offset; must be in the future. */
+  scheduledAt: z.string().datetime(),
+});
+
+export const whatsAppCampaignSendNowSchema = z.object({ id: cuidSchema });
+export const whatsAppCampaignCancelSchema = z.object({ id: cuidSchema });
+export const whatsAppCampaignDeleteSchema = z.object({ id: cuidSchema });
+
+/**
+ * `previewRecipient` — server-side preview of a single send: resolves
+ * the segment to N candidate contacts, picks the first, applies
+ * suppression + status filters, renders the variables. Used by the
+ * UI's pre-send confirmation panel.
+ */
+export const whatsAppCampaignPreviewSchema = z.object({ id: cuidSchema });
