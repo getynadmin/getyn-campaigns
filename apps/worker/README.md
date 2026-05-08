@@ -23,6 +23,8 @@ web app via the database.
 | `wa-template-sync` | 4 | self — repeatable `tick` hourly fans out per-WABA syncs; `poll-submission` chained from M6 submit | `tick`, `sync-waba`, `poll-submission` |
 | `wa-sends` | 4 | `apps/web` → `whatsAppCampaign.sendNow` / `.schedule`; chained from `prepare-wa-campaign` and `resume-after-tier` | `prepare-wa-campaign`, `dispatch-wa-batch`, `dispatch-wa-single`, `resume-after-tier` |
 | `wa-poll-status` | 4 | self — repeatable `tick` every 2 min fans out per-campaign polls | `tick`, `poll-campaign` |
+| `wa-webhooks` | 4 | `apps/web` → `/api/webhooks/whatsapp/[appId]` receiver enqueues per persisted event | `process-wa-event` |
+| `wa-poll-inbound` | 4 | self — repeatable `tick` every 5 min fans out per-WABA silence checks | `tick`, `poll-waba` |
 
 `sends` and `webhooks` are live as of Phase 3 M6/M7. `cron` runs two
 repeatable jobs registered on worker boot:

@@ -219,3 +219,32 @@ export async function enqueuePrepareWaCampaign(
     ...(options.delayMs !== undefined ? { delay: options.delayMs } : {}),
   });
 }
+
+// ----------------------------------------------------------------------------
+// Phase 4 M9 — wa-webhooks producer
+// ----------------------------------------------------------------------------
+
+let cachedWaWebhooksQueue: Queue | null = null;
+
+function getWaWebhooksQueue(): Queue {
+  if (cachedWaWebhooksQueue) return cachedWaWebhooksQueue;
+  cachedWaWebhooksQueue = new Queue(QUEUE_NAMES.waWebhooks, {
+    connection: getConnection(),
+    defaultJobOptions: {
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 2_000 },
+      removeOnComplete: { age: 60 * 60 * 24 * 3, count: 5000 },
+      removeOnFail: { age: 60 * 60 * 24 * 7 },
+    },
+  });
+  return cachedWaWebhooksQueue;
+}
+
+export async function enqueueWaWebhookEvent(payload: {
+  webhookEventId: string;
+}): Promise<void> {
+  const queue = getWaWebhooksQueue();
+  await queue.add(JOB_NAMES.waWebhooks.process, payload, {
+    jobId: `wa-webhook_${payload.webhookEventId}`,
+  });
+}

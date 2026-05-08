@@ -17,6 +17,8 @@ export const QUEUE_NAMES = {
   waTemplateSync: 'wa-template-sync',
   waSends: 'wa-sends',
   waPollStatus: 'wa-poll-status',
+  waWebhooks: 'wa-webhooks',
+  waPollInbound: 'wa-poll-inbound',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -135,6 +137,13 @@ export const JOB_NAMES = {
     tick: 'tick',
     pollCampaign: 'poll-campaign',
   },
+  waWebhooks: {
+    process: 'process-wa-event',
+  },
+  waPollInbound: {
+    tick: 'tick',
+    pollWaba: 'poll-waba',
+  },
 } as const;
 
 /**
@@ -251,3 +260,20 @@ export const pollCampaignPayloadSchema = z.object({
   tenantId: cuidSchema,
 });
 export type PollCampaignPayload = z.infer<typeof pollCampaignPayloadSchema>;
+
+/**
+ * Payload for the wa-webhooks queue (Phase 4 M9).
+ *
+ * The /api/webhooks/whatsapp/[appId] receiver verifies the
+ * X-Hub-Signature-256 header, persists the raw event to
+ * WhatsAppWebhookEvent (with a deterministic dedupeKey for
+ * idempotency), and enqueues this payload. The worker then
+ * dispatches to inbound / status / template-status / quality
+ * branches based on payload contents.
+ */
+export const waWebhookProcessPayloadSchema = z.object({
+  webhookEventId: cuidSchema,
+});
+export type WaWebhookProcessPayload = z.infer<
+  typeof waWebhookProcessPayloadSchema
+>;

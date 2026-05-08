@@ -29,6 +29,11 @@ import {
   handleWaTemplateSyncOne,
   handleWaTemplateSyncTick,
 } from './handlers/wa-template-sync';
+import {
+  handleWaPollInboundOne,
+  handleWaPollInboundTick,
+} from './handlers/wa-poll-inbound';
+import { handleWaWebhookEvent } from './handlers/wa-webhooks';
 import { handleResendWebhook } from './handlers/webhooks';
 import { createRedisConnection } from './redis';
 
@@ -203,6 +208,45 @@ workers.push(
   ),
 );
 
+// wa-poll-inbound queue — Phase 4 M9 (webhook silence detector).
+//
+// Two job shapes:
+//   tick (every 5 min): finds CONNECTED WABAs and fans out.
+//   poll-waba: per WABA, checks recent activity vs. inbound silence
+//     and surfaces it as a Sentry warning. Active recovery deferred.
+workers.push(
+  new Worker(
+    QUEUE_NAMES.waPollInbound,
+    async (job) => {
+      if (job.name === 'tick') return handleWaPollInboundTick();
+      if (job.name === 'poll-waba') return handleWaPollInboundOne(job);
+      throw new Error(`Unknown wa-poll-inbound job: ${job.name}`);
+    },
+    {
+      connection,
+      concurrency: 4,
+      lockDuration: 60_000,
+    },
+  ),
+);
+
+// wa-webhooks queue — Phase 4 M9 (inbound + status webhook ingestion).
+//
+// One job shape: process-wa-event. Payload carries the persisted
+// WhatsAppWebhookEvent row id; the worker reads, dispatches, marks
+// processedAt. Concurrency 8 — webhook events are tiny + idempotent.
+workers.push(
+  new Worker(
+    QUEUE_NAMES.waWebhooks,
+    async (job) => handleWaWebhookEvent(job),
+    {
+      connection,
+      concurrency: 8,
+      lockDuration: 30_000,
+    },
+  ),
+);
+
 // Cron queue — repeatable maintenance jobs.
 //
 // Two repeatable jobs:
@@ -349,6 +393,20 @@ async function setupCronJobs(): Promise<void> {
     },
   );
   await waPollStatusQueue.close();
+
+  // Phase 4 M9 — wa-poll-inbound tick. Every 5 min, fans out per-WABA
+  // jobs that detect inbound webhook silence (lastOutboundAt fresh +
+  // lastInboundAt stale). Surfaces silence to Sentry; active replay
+  // deferred to Phase 4.5.
+  const waPollInboundQueue = new Queue(QUEUE_NAMES.waPollInbound, {
+    connection,
+  });
+  await waPollInboundQueue.add(
+    'tick',
+    {},
+    { repeat: { pattern: '*/5 * * * *', tz: 'UTC' } },
+  );
+  await waPollInboundQueue.close();
 
   console.info('[worker:cron] repeatable jobs registered');
 }
