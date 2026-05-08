@@ -242,7 +242,45 @@ workers.push(
 
 // Register repeatables on boot. BullMQ deduplicates by (name,
 // repeatPattern) so this is safe to call every boot.
+/**
+ * One-shot cleanup of stale repeatable jobs whose stored `jobId`
+ * contains a `:` (rejected by BullMQ's newer scheduler). Earlier
+ * Phase 4 deploys registered ticks with `jobId: 'cron:wa-...'` —
+ * those entries persist in Redis and keep firing failures even after
+ * the local code stopped setting jobId. We list the existing
+ * repeatables on boot and drop any colon-bearing keys for our wa-*
+ * queues. Safe to run repeatedly: clean repeatables stay, no-ops
+ * apply.
+ */
+async function flushBrokenRepeatables(): Promise<void> {
+  const queueNames = [
+    QUEUE_NAMES.waPhoneRefresh,
+    QUEUE_NAMES.waTemplateSync,
+    QUEUE_NAMES.waPollStatus,
+    QUEUE_NAMES.waSends,
+  ];
+  for (const name of queueNames) {
+    const q = new Queue(name, { connection });
+    try {
+      const repeatables = await q.getRepeatableJobs();
+      for (const r of repeatables) {
+        // r.id is the stored custom jobId (or null when unset). The
+        // legacy entries have `cron:wa-...` IDs with colons; drop them.
+        if (r.id && r.id.includes(':')) {
+          await q.removeRepeatableByKey(r.key);
+          console.info(
+            `[worker:cron] removed stale repeatable on ${name}: ${r.id}`,
+          );
+        }
+      }
+    } finally {
+      await q.close();
+    }
+  }
+}
+
 async function setupCronJobs(): Promise<void> {
+  await flushBrokenRepeatables();
   // 00:00 UTC daily.
   await cronQueue.add(
     'daily-reset',
