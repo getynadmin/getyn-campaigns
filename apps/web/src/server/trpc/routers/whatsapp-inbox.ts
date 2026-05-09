@@ -75,6 +75,26 @@ const assignSchema = z.object({
 });
 
 export const whatsAppInboxRouter = createTRPCRouter({
+  /**
+   * Single-number total unread count for the sidebar badge. Sums
+   * `unreadCount` across non-CLOSED conversations. Cheap (one
+   * aggregate query) so it's safe to refresh every 30s sidebar-wide.
+   */
+  unreadCount: tenantProcedure.query(async ({ ctx }) => {
+    const tenantId = ctx.tenantContext.tenant.id;
+    return withTenant(tenantId, async (tx) => {
+      const agg = await tx.whatsAppConversation.aggregate({
+        where: {
+          tenantId,
+          status: WAConversationStatus.OPEN,
+          unreadCount: { gt: 0 },
+        },
+        _sum: { unreadCount: true },
+      });
+      return { total: agg._sum.unreadCount ?? 0 };
+    });
+  }),
+
   listConversations: tenantProcedure
     .input(conversationListInputSchema)
     .query(async ({ ctx, input }) => {
