@@ -4,7 +4,9 @@ import { useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRight,
+  ChevronDown,
   Mail,
+  MessageSquare,
   Plus,
   Search,
 } from 'lucide-react';
@@ -13,6 +15,12 @@ import type { CampaignStatusValue } from '@getyn/types';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -81,12 +89,45 @@ export function CampaignsListClient({
           </SelectContent>
         </Select>
         {canCreate ? (
-          <Button asChild>
-            <Link href={`/t/${tenantSlug}/campaigns/new`}>
-              <Plus className="mr-2 size-4" />
-              New campaign
-            </Link>
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button>
+                <Plus className="mr-2 size-4" />
+                New campaign
+                <ChevronDown className="ml-2 size-4 opacity-70" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem asChild>
+                <Link
+                  href={`/t/${tenantSlug}/campaigns/new`}
+                  className="flex items-start gap-2"
+                >
+                  <Mail className="mt-0.5 size-4" />
+                  <div className="flex flex-col">
+                    <span>Email campaign</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      Drag-and-drop builder, A/B subject lines
+                    </span>
+                  </div>
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link
+                  href={`/t/${tenantSlug}/campaigns/whatsapp/new`}
+                  className="flex items-start gap-2"
+                >
+                  <MessageSquare className="mt-0.5 size-4" />
+                  <div className="flex flex-col">
+                    <span>WhatsApp campaign</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      APPROVED template + segment + variables
+                    </span>
+                  </div>
+                </Link>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         ) : null}
       </div>
 

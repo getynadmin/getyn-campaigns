@@ -54,7 +54,7 @@ const items: Item[] = [
   },
   {
     href: (s) => `/t/${s}/inbox`,
-    label: 'Inbox',
+    label: 'WhatsApp Inbox',
     icon: MessageSquare,
   },
   { href: (s) => `/t/${s}/sms`, label: 'SMS', icon: Phone, soon: true },
