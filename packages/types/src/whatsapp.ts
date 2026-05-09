@@ -649,3 +649,23 @@ export const whatsAppCampaignDeleteSchema = z.object({ id: cuidSchema });
  * UI's pre-send confirmation panel.
  */
 export const whatsAppCampaignPreviewSchema = z.object({ id: cuidSchema });
+
+// ------------------------------------------------------------------
+// Embedded Signup completion (Phase 4 M11)
+// ------------------------------------------------------------------
+
+/**
+ * Payload from the FB.login client callback. Meta returns a `code`
+ * suitable for `/oauth/access_token` exchange + the chosen WABA ID
+ * + the chosen phone_number_id (the phone the tenant attached
+ * during signup).
+ */
+export const whatsAppAccountCompleteEmbeddedSignupSchema = z.object({
+  code: z.string().min(20).max(4000),
+  wabaId: z.string().regex(/^\d{6,30}$/),
+  phoneNumberId: z.string().regex(/^\d{6,30}$/).optional(),
+  displayName: z.string().trim().min(1).max(120).optional(),
+});
+export type WhatsAppAccountCompleteEmbeddedSignupInput = z.infer<
+  typeof whatsAppAccountCompleteEmbeddedSignupSchema
+>;

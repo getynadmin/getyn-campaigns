@@ -139,6 +139,64 @@ export interface MetaMeResponse {
   name?: string;
 }
 
+// ------------------------------------------------------------------
+// /oauth/access_token — exchange the code returned by FB.login
+// (Phase 4 M11 Embedded Signup) for a long-lived system-user token.
+// ------------------------------------------------------------------
+
+export interface ExchangeCodeArgs {
+  code: string;
+  appId: string;
+  appSecret: string;
+  redirectUri?: string;
+}
+
+export interface ExchangeCodeResponse {
+  access_token: string;
+  token_type?: string;
+  expires_in?: number;
+}
+
+export async function exchangeCodeForToken(
+  args: ExchangeCodeArgs,
+  opts?: { fetchImpl?: typeof fetch; baseUrl?: string },
+): Promise<ExchangeCodeResponse> {
+  return metaFetch<ExchangeCodeResponse>('/oauth/access_token', {
+    // The exchange endpoint doesn't require a Bearer token — it's
+    // open and authenticates via app_id+app_secret in the query.
+    accessToken: args.appSecret,
+    query: {
+      client_id: args.appId,
+      client_secret: args.appSecret,
+      code: args.code,
+      ...(args.redirectUri ? { redirect_uri: args.redirectUri } : {}),
+    },
+    fetchImpl: opts?.fetchImpl,
+    baseUrl: opts?.baseUrl,
+  });
+}
+
+/**
+ * Subscribe a WABA to webhook events for our app. Required during
+ * Embedded Signup so the webhook receiver actually receives events
+ * for this tenant's account.
+ */
+export async function subscribeWabaToApp(
+  wabaId: string,
+  accessToken: string,
+  opts?: { fetchImpl?: typeof fetch; baseUrl?: string },
+): Promise<{ success?: boolean }> {
+  return metaFetch<{ success?: boolean }>(
+    `/${encodeURIComponent(wabaId)}/subscribed_apps`,
+    {
+      accessToken,
+      method: 'POST',
+      fetchImpl: opts?.fetchImpl,
+      baseUrl: opts?.baseUrl,
+    },
+  );
+}
+
 export async function getMe(
   accessToken: string,
   opts?: { fetchImpl?: typeof fetch; baseUrl?: string },

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { encrypt } from '@getyn/crypto';
 import { Role, WAStatus, withTenant, type Prisma } from '@getyn/db';
 import {
+  whatsAppAccountCompleteEmbeddedSignupSchema,
   whatsAppAccountConnectManuallySchema,
   whatsAppAccountDisconnectSchema,
   whatsAppAccountRefreshPhoneNumbersSchema,
@@ -11,6 +12,7 @@ import {
 
 import {
   MetaApiError,
+  exchangeCodeForToken,
   getMe,
   getWaba,
   listWabaPhoneNumbers,
@@ -18,6 +20,7 @@ import {
   mapQuality,
   mapTier,
   refreshPhoneNumbersForWaba,
+  subscribeWabaToApp,
   syncTemplatesForWaba,
   type MetaPhoneNumber,
 } from '@getyn/whatsapp';
@@ -347,5 +350,147 @@ export const whatsAppAccountsRouter = createTRPCRouter({
           metaCode: null,
         };
       }
+    }),
+
+  /**
+   * Complete Embedded Signup (Phase 4 M11).
+   *
+   * The client opens FB.login with our config_id; on success Meta
+   * returns a short-lived `code` + the chosen wabaId + phoneNumberId
+   * via the SDK callback. The client posts that here. We:
+   *   1. Exchange the code for a long-lived system-user token.
+   *   2. Verify the token via /me.
+   *   3. Pull WABA metadata + phone numbers.
+   *   4. Subscribe the WABA to webhooks for our app.
+   *   5. Encrypt and persist (same path as connectManually).
+   *   6. Kick a one-shot template sync.
+   *
+   * Errors from Meta propagate verbatim — same UX as the manual flow.
+   */
+  completeEmbeddedSignup: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN))
+    .input(whatsAppAccountCompleteEmbeddedSignupSchema)
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+
+      const appId = process.env.META_APP_ID;
+      const appSecret = process.env.META_APP_SECRET;
+      if (!appId || !appSecret) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message:
+            'Embedded Signup is not configured. Server is missing META_APP_ID or META_APP_SECRET.',
+        });
+      }
+
+      const existing = await withTenant(tenantId, (tx) =>
+        tx.whatsAppAccount.findUnique({ where: { tenantId } }),
+      );
+      if (existing) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message:
+            'A WhatsApp account is already connected. Disconnect it first to swap credentials.',
+        });
+      }
+
+      // 1. Exchange code → system-user access token.
+      let accessToken: string;
+      try {
+        const exchanged = await exchangeCodeForToken({
+          code: input.code,
+          appId,
+          appSecret,
+        });
+        accessToken = exchanged.access_token;
+      } catch (err) {
+        throw metaErrorToTRPC(err, 'Token exchange failed');
+      }
+
+      // 2. /me — sanity check.
+      try {
+        await getMe(accessToken);
+      } catch (err) {
+        throw metaErrorToTRPC(err, 'Token verification failed');
+      }
+
+      // 3. WABA metadata + phones.
+      let waba;
+      try {
+        waba = await getWaba(input.wabaId, accessToken);
+      } catch (err) {
+        throw metaErrorToTRPC(err, 'WABA lookup failed');
+      }
+      let metaPhones: MetaPhoneNumber[] = [];
+      try {
+        metaPhones = await listWabaPhoneNumbers(input.wabaId, accessToken);
+      } catch (err) {
+        throw metaErrorToTRPC(err, 'Phone number lookup failed');
+      }
+
+      // 4. Subscribe to webhooks. Failures aren't fatal — connect
+      //    succeeds; the polling fallback covers gaps. Surface a
+      //    Sentry warning-level event so ops can investigate.
+      try {
+        await subscribeWabaToApp(input.wabaId, accessToken);
+      } catch (err) {
+        console.warn(
+          '[whatsAppAccount.completeEmbeddedSignup] webhook subscribe failed:',
+          err instanceof Error ? err.message : err,
+        );
+      }
+
+      // 5. Encrypt + persist.
+      const encryptedToken = encrypt(accessToken, tenantId);
+      const account = await withTenant(tenantId, (tx) =>
+        tx.whatsAppAccount.create({
+          data: {
+            tenantId,
+            wabaId: input.wabaId,
+            displayName:
+              input.displayName && input.displayName.length > 0
+                ? input.displayName
+                : waba.name,
+            status: WAStatus.CONNECTED,
+            connectedAt: new Date(),
+            accessTokenEncrypted: encryptedToken as unknown as Prisma.JsonObject,
+            tokenExpiresAt: null,
+            appId,
+            metadata: {
+              currency: waba.currency ?? null,
+              timezone_id: waba.timezone_id ?? null,
+              message_template_namespace: waba.message_template_namespace ?? null,
+              connected_via: 'embedded_signup',
+            } satisfies Prisma.JsonObject,
+            phoneNumbers: {
+              create: metaPhones.map((p) => ({
+                tenantId,
+                phoneNumberId: p.id,
+                phoneNumber: p.display_phone_number,
+                verifiedName: p.verified_name,
+                qualityRating: mapQuality(p.quality_rating),
+                messagingTier: mapTier(p.messaging_limit),
+                displayPhoneNumberStatus: mapPhoneStatus(p.status),
+                pinSetAt: p.pin ? new Date() : null,
+              })),
+            },
+          },
+          include: { phoneNumbers: true },
+        }),
+      );
+
+      // 6. One-shot template sync (non-fatal).
+      try {
+        await withTenant(tenantId, (tx) =>
+          syncTemplatesForWaba(account, tx),
+        );
+      } catch (err) {
+        console.warn(
+          '[whatsAppAccount.completeEmbeddedSignup] post-connect sync failed:',
+          err instanceof Error ? err.message : err,
+        );
+      }
+
+      return redactAccount(account);
     }),
 });

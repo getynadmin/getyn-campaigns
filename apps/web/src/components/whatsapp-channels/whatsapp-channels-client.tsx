@@ -20,6 +20,7 @@ import {
   type WhatsAppAccountConnectManuallyInput,
 } from '@getyn/types';
 
+import { EmbeddedSignupButton } from '@/components/whatsapp-channels/embedded-signup-button';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -95,7 +96,13 @@ export function WhatsAppChannelsClient({
     <div className="space-y-6">
       {/* Connection card */}
       {!account ? (
-        <EmptyState canManage={canManage} onConnect={() => setConnectOpen(true)} />
+        <EmptyState
+          canManage={canManage}
+          onConnect={() => setConnectOpen(true)}
+          onEmbeddedSignupSuccess={() => {
+            void utils.whatsAppAccount.get.invalidate();
+          }}
+        />
       ) : (
         <ConnectedState
           account={account}
@@ -144,9 +151,11 @@ export function WhatsAppChannelsClient({
 function EmptyState({
   canManage,
   onConnect,
+  onEmbeddedSignupSuccess,
 }: {
   canManage: boolean;
   onConnect: () => void;
+  onEmbeddedSignupSuccess: () => void;
 }): JSX.Element {
   return (
     <div className="rounded-lg border border-dashed bg-card p-8 text-center">
@@ -159,9 +168,12 @@ function EmptyState({
         inbound messages from the inbox.
       </p>
       {canManage ? (
-        <Button className="mt-4" onClick={onConnect}>
-          <PlugZap className="mr-2 size-4" /> Connect manually
-        </Button>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+          <EmbeddedSignupButton onSuccess={onEmbeddedSignupSuccess} />
+          <Button variant="outline" onClick={onConnect}>
+            <PlugZap className="mr-2 size-4" /> Connect manually
+          </Button>
+        </div>
       ) : (
         <p className="mt-4 text-xs text-muted-foreground">
           An owner or admin can connect a WABA from this page.
