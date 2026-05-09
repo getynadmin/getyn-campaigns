@@ -1,12 +1,11 @@
 /* eslint-disable no-console */
-import { createHmac, timingSafeEqual } from 'crypto';
-
 import * as Sentry from '@sentry/nextjs';
 import { NextResponse, type NextRequest } from 'next/server';
 
 import { prisma } from '@getyn/db';
 
 import { enqueueWaWebhookEvent } from '@/server/queues';
+import { verifyMetaWebhookSignature } from '@/server/whatsapp/webhook-verify';
 
 /**
  * Meta WhatsApp webhook receiver — Phase 4 M9.
@@ -195,20 +194,7 @@ export async function POST(
     );
   }
 
-  // Header format: "sha256=<hex>"
-  const provided = sigHeader.startsWith('sha256=')
-    ? sigHeader.slice('sha256='.length)
-    : sigHeader;
-  const expected = createHmac('sha256', appSecret).update(rawBody).digest('hex');
-  let sigOk = false;
-  try {
-    const pBuf = Buffer.from(provided, 'hex');
-    const eBuf = Buffer.from(expected, 'hex');
-    sigOk = pBuf.length === eBuf.length && timingSafeEqual(pBuf, eBuf);
-  } catch {
-    sigOk = false;
-  }
-  if (!sigOk) {
+  if (!verifyMetaWebhookSignature(appSecret, rawBody, sigHeader)) {
     console.error('[webhook:wa] signature mismatch');
     Sentry.captureMessage('webhook:wa signature mismatch', {
       level: 'warning',
