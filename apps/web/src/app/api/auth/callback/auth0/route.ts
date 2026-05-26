@@ -131,10 +131,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // 5) Set session cookie, clear state cookie, redirect.
-  const sessionCookie = buildAuth0SessionCookie({
+  // 5) Set session cookie + insert UserSession row, clear state
+  //    cookie, redirect. The cookie itself carries the sessionToken
+  //    that the row holds, so revokes take effect on the next request.
+  const sessionCookie = await buildAuth0SessionCookie({
     userId: result.user.id,
     auth0Sub: claims.sub,
+    context: {
+      userAgent: req.headers.get('user-agent'),
+      ipAddress:
+        req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    },
   });
 
   const redirectUrl = new URL(result.redirectTo, req.url);

@@ -15,6 +15,7 @@ import { signupRouter } from './routers/signup';
 import { suppressionRouter } from './routers/suppression';
 import { tagsRouter } from './routers/tags';
 import { tenantRouter } from './routers/tenant';
+import { userSessionsRouter } from './routers/user-sessions';
 import { whatsAppAccountsRouter } from './routers/whatsapp-accounts';
 import { whatsAppCampaignsRouter } from './routers/whatsapp-campaigns';
 import { whatsAppInboxRouter } from './routers/whatsapp-inbox';
@@ -47,6 +48,8 @@ export const appRouter = createTRPCRouter({
   whatsAppInbox: whatsAppInboxRouter,
   // Phase 4 M7
   ai: aiRouter,
+  // Phase 5 M2 — per-device session management
+  userSessions: userSessionsRouter,
 });
 
 export type AppRouter = typeof appRouter;

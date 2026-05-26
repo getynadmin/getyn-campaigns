@@ -30,7 +30,7 @@ export async function getCurrentUser(): Promise<User | null> {
   if (sessionCookie?.value) {
     try {
       const session = await verifyAuth0SessionCookie(sessionCookie.value);
-      if (session?.userId) {
+      if (session) {
         const user = await prisma.user.findUnique({
           where: { id: session.userId },
         });

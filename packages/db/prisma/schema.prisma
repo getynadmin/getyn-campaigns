@@ -231,6 +231,10 @@ model User {
   whatsAppMessagesSent          WhatsAppMessage[]      @relation("WhatsAppMessagesSentBy")
   whatsAppConversationsAssigned WhatsAppConversation[] @relation("WhatsAppConversationsAssignedTo")
 
+  // Phase 5 M2 — per-device session store. Lets us list signed-in
+  // devices in user settings + revoke remote sessions.
+  sessions UserSession[]
+
   @@index([email])
 }
 
@@ -1346,4 +1350,47 @@ model StaffAuditLog {
   @@index([staffUserId, createdAt])
   @@index([targetTenantId, createdAt])
   @@index([action, createdAt])
+}
+
+// ==================================================================
+// Phase 5 M2 — per-device session store.
+//
+// Each issued auth cookie (Auth0 OR Supabase fallback) corresponds
+// to a row here. The cookie carries `sessionToken`; verification
+// looks the row up + checks `revokedAt IS NULL` + not expired.
+//
+// Why a session table when JWT-style cookies are stateless? Two
+// reasons:
+//   1. Revoke remote devices in real time. A stateless cookie
+//      can't be invalidated until it expires; a session-store row
+//      can be revokedAt-stamped and refused on the next request.
+//   2. List "your active sessions" in user settings — devices,
+//      locations, last-active. Hard to derive from a stateless
+//      cookie.
+//
+// Schema is provider-agnostic: stores `provider=AUTH0` or
+// `provider=SUPABASE`. Supabase sessions are tracked best-effort
+// (we don't own Supabase's cookie lifecycle, but we record what
+// we issue so the listing UI is consistent).
+// ==================================================================
+
+model UserSession {
+  id           String       @id @default(cuid())
+  userId       String
+  // Random opaque token embedded in the cookie payload. Used for
+  // lookup; never exposed in URLs or surfaces other than the cookie.
+  sessionToken String       @unique
+  provider     AuthProvider
+  deviceLabel  String? // best-effort from user agent
+  ipAddress    String?
+  userAgent    String?      @db.Text
+  issuedAt     DateTime     @default(now())
+  expiresAt    DateTime
+  lastSeenAt   DateTime     @default(now())
+  revokedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
 }
