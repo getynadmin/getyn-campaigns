@@ -13,10 +13,11 @@
     "clean": "rm -rf .next .turbo node_modules"
   },
   "dependencies": {
+    "@auth0/nextjs-auth0": "^4.21.0",
+    "@getyn/ai": "workspace:*",
     "@getyn/crypto": "workspace:*",
     "@getyn/db": "workspace:*",
     "@getyn/types": "workspace:*",
-    "@getyn/ai": "workspace:*",
     "@getyn/whatsapp": "workspace:*",
     "@hookform/resolvers": "^3.9.0",
     "@radix-ui/react-avatar": "^1.1.1",
@@ -41,6 +42,7 @@
     "clsx": "^2.1.1",
     "html-to-text": "^9.0.5",
     "ioredis": "^5.4.1",
+    "jose": "^6.2.3",
     "lucide-react": "^0.451.0",
     "next": "14.2.35",
     "papaparse": "^5.4.1",

@@ -201,13 +201,21 @@ enum ContactEventType {
 // ------------------------------------------------------------------
 
 model User {
-  id             String   @id @default(cuid())
-  email          String   @unique
+  id             String       @id @default(cuid())
+  email          String       @unique
   name           String?
   avatarUrl      String?
-  supabaseUserId String   @unique
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  // Phase 1: required when Supabase was the only auth provider.
+  // Phase 5 M1: now optional — Auth0-only users (SSO via G-Suite) have
+  // no Supabase row, only an auth0UserId. Existing rows keep their
+  // value; SSO-linked users have both populated.
+  supabaseUserId String?      @unique
+  // Phase 5 M1
+  auth0UserId    String?      @unique
+  authProvider   AuthProvider @default(SUPABASE)
+  lastSsoSyncAt  DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   memberships           Membership[]
   sentInvites           Invitation[]    @relation("InvitedBy")
@@ -217,29 +225,39 @@ model User {
   emailTemplatesCreated EmailTemplate[] @relation("EmailTemplatesCreatedBy")
 
   // Phase 4 backrelations
-  whatsAppTemplatesCreated WhatsAppTemplate[]     @relation("WhatsAppTemplatesCreatedBy")
-  assetsUploaded           Asset[]                @relation("AssetsUploadedBy")
-  aiGenerations            AiGeneration[]
-  whatsAppMessagesSent     WhatsAppMessage[]      @relation("WhatsAppMessagesSentBy")
+  whatsAppTemplatesCreated      WhatsAppTemplate[]     @relation("WhatsAppTemplatesCreatedBy")
+  assetsUploaded                Asset[]                @relation("AssetsUploadedBy")
+  aiGenerations                 AiGeneration[]
+  whatsAppMessagesSent          WhatsAppMessage[]      @relation("WhatsAppMessagesSentBy")
   whatsAppConversationsAssigned WhatsAppConversation[] @relation("WhatsAppConversationsAssignedTo")
 
   @@index([email])
 }
 
 model Tenant {
-  id                 String        @id @default(cuid())
-  slug               String        @unique
+  id                 String             @id @default(cuid())
+  slug               String             @unique
   name               String
-  plan               Plan          @default(TRIAL)
-  billingStatus      BillingStatus @default(TRIALING)
+  // Phase 1 coarse plan enum (used by the UI badge + legacy gating
+  // until Phase 5 M3's BillingSubscription becomes the source of
+  // truth for limits). Kept for backcompat; not removed.
+  plan               Plan               @default(TRIAL)
+  billingStatus      BillingStatus      @default(TRIALING)
   trialEndsAt        DateTime?
-  settings           Json          @default("{}")
+  settings           Json               @default("{}")
+  // Phase 5 M1 — G-Suite identity mapping. Tenants provisioned via
+  // SSO have gSuiteTenantId set; existing direct tenants (the demo +
+  // anything signed up pre-SSO) leave it null.
+  gSuiteTenantId     String?            @unique
+  gSuiteOrgName      String?
+  gSuiteSyncedAt     DateTime?
+  provisioningSource ProvisioningSource @default(DIRECT)
   // Phase 3 — used by the email send pipeline
   postalAddress      String? // CAN-SPAM-required physical address; M6 blocks sending if null
   companyDisplayName String? // shown in email footer
   defaultFromName    String? // pre-fills the campaign wizard "from name" field
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   memberships        Membership[]
   invitations        Invitation[]
@@ -269,6 +287,10 @@ model Tenant {
   whatsAppWebhookEvents WhatsAppWebhookEvent[]
   assets                Asset[]
   aiGenerations         AiGeneration[]
+
+  // Phase 5 M1+M3 — G-Suite identity + billing
+  billingSubscription BillingSubscription?
+  gSuiteWebhookEvents GSuiteWebhookEvent[]
 
   @@index([slug])
 }
@@ -342,11 +364,11 @@ model Contact {
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 
-  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  tags          ContactTag[]
-  events        ContactEvent[]
+  tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tags                  ContactTag[]
+  events                ContactEvent[]
   // Phase 3 — every send to this contact records here
-  campaignSends CampaignSend[]
+  campaignSends         CampaignSend[]
   // Phase 4 — WhatsApp campaign sends + inbox conversations
   whatsAppCampaignSends WhatsAppCampaignSend[]
   whatsAppConversations WhatsAppConversation[]
@@ -557,16 +579,16 @@ model Campaign {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
-  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  segment       Segment         @relation(fields: [segmentId], references: [id], onDelete: Restrict)
-  createdBy     User?           @relation("CampaignsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  emailCampaign EmailCampaign?
+  tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  segment               Segment                @relation(fields: [segmentId], references: [id], onDelete: Restrict)
+  createdBy             User?                  @relation("CampaignsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  emailCampaign         EmailCampaign?
   // Phase 4 — 1:1 sidecar for type=WHATSAPP campaigns
-  whatsAppCampaign WhatsAppCampaign?
+  whatsAppCampaign      WhatsAppCampaign?
   whatsAppCampaignSends WhatsAppCampaignSend[]
-  sends         CampaignSend[]
-  events        CampaignEvent[]
-  trackingLinks TrackingLink[]
+  sends                 CampaignSend[]
+  events                CampaignEvent[]
+  trackingLinks         TrackingLink[]
 
   @@index([tenantId, status, scheduledAt])
   @@index([tenantId, createdAt])
@@ -876,22 +898,22 @@ enum WAConversationStatus {
 model WhatsAppAccount {
   id                   String    @id @default(cuid())
   tenantId             String    @unique
-  wabaId               String    // Meta's Business Account ID
+  wabaId               String // Meta's Business Account ID
   displayName          String
   status               WAStatus  @default(PENDING)
   connectedAt          DateTime?
   disconnectedAt       DateTime?
-  accessTokenEncrypted Json      // EncryptedField from @getyn/crypto, AD=tenantId
+  accessTokenEncrypted Json // EncryptedField from @getyn/crypto, AD=tenantId
   tokenExpiresAt       DateTime? // null for system-user tokens that don't expire
-  appId                String    // Meta App ID used for connection (M3 manual or M11 embedded)
+  appId                String // Meta App ID used for connection (M3 manual or M11 embedded)
   metadata             Json      @default("{}") // business verification status, country, currency
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  tenant       Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  phoneNumbers WhatsAppPhoneNumber[]
-  templates    WhatsAppTemplate[]
-  campaigns    WhatsAppCampaign[]
+  tenant        Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phoneNumbers  WhatsAppPhoneNumber[]
+  templates     WhatsAppTemplate[]
+  campaigns     WhatsAppCampaign[]
   conversations WhatsAppConversation[]
 
   @@index([tenantId])
@@ -905,24 +927,24 @@ model WhatsAppAccount {
 // counters refreshed by the wa-phone-refresh cron from Meta's API
 // (M4). The 24h window starts at first send, NOT at midnight UTC.
 model WhatsAppPhoneNumber {
-  id                          String               @id @default(cuid())
-  tenantId                    String
-  whatsAppAccountId           String
-  phoneNumberId               String               // Meta's phone_number_id
-  phoneNumber                 String               // E.164 display, e.g. +14155551234
-  verifiedName                String
-  qualityRating               WAQualityRating      @default(UNKNOWN)
-  messagingTier               WAMessagingTier      @default(TIER_50)
-  currentTier24hUsage         Int                  @default(0)
-  tier24hWindowResetAt        DateTime?
-  displayPhoneNumberStatus    WADisplayPhoneStatus @default(PENDING_REVIEW)
-  pinSetAt                    DateTime?            // 2FA PIN required for sending
-  metadata                    Json                 @default("{}")
-  createdAt                   DateTime             @default(now())
-  updatedAt                   DateTime             @updatedAt
+  id                       String               @id @default(cuid())
+  tenantId                 String
+  whatsAppAccountId        String
+  phoneNumberId            String // Meta's phone_number_id
+  phoneNumber              String // E.164 display, e.g. +14155551234
+  verifiedName             String
+  qualityRating            WAQualityRating      @default(UNKNOWN)
+  messagingTier            WAMessagingTier      @default(TIER_50)
+  currentTier24hUsage      Int                  @default(0)
+  tier24hWindowResetAt     DateTime?
+  displayPhoneNumberStatus WADisplayPhoneStatus @default(PENDING_REVIEW)
+  pinSetAt                 DateTime? // 2FA PIN required for sending
+  metadata                 Json                 @default("{}")
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
 
-  tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  whatsAppAccount WhatsAppAccount     @relation(fields: [whatsAppAccountId], references: [id], onDelete: Cascade)
+  tenant          Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsAppAccount WhatsAppAccount        @relation(fields: [whatsAppAccountId], references: [id], onDelete: Cascade)
   campaigns       WhatsAppCampaign[]
   conversations   WhatsAppConversation[]
 
@@ -942,13 +964,13 @@ model WhatsAppTemplate {
   id                String             @id @default(cuid())
   tenantId          String
   whatsAppAccountId String
-  metaTemplateId    String?            // null until submitted to Meta
-  name              String             // slug, lowercase + underscores per Meta
-  language          String             // e.g. en_US, hi, es
+  metaTemplateId    String? // null until submitted to Meta
+  name              String // slug, lowercase + underscores per Meta
+  language          String // e.g. en_US, hi, es
   category          WATemplateCategory
   status            WATemplateStatus   @default(DRAFT)
   rejectionReason   String?            @db.Text
-  components        Json               // TemplateComponent[] — see @getyn/types
+  components        Json // TemplateComponent[] — see @getyn/types
   qualityRating     WAQualityRating    @default(UNKNOWN)
   lastSyncedAt      DateTime?
   submittedAt       DateTime?
@@ -975,14 +997,14 @@ model WhatsAppTemplate {
 // `templateVariables` is a Json array of { type, value | merge_tag }
 // resolved per-recipient at dispatch time.
 model WhatsAppCampaign {
-  id                  String  @id @default(cuid())
-  campaignId          String  @unique
-  whatsAppAccountId   String
-  phoneNumberId       String
-  templateId          String
-  templateLanguage    String
-  templateVariables   Json    // resolved per-recipient at dispatch
-  headerMediaAssetId  String?
+  id                 String  @id @default(cuid())
+  campaignId         String  @unique
+  whatsAppAccountId  String
+  phoneNumberId      String
+  templateId         String
+  templateLanguage   String
+  templateVariables  Json // resolved per-recipient at dispatch
+  headerMediaAssetId String?
 
   campaign         Campaign            @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   whatsAppAccount  WhatsAppAccount     @relation(fields: [whatsAppAccountId], references: [id], onDelete: Restrict)
@@ -996,23 +1018,23 @@ model WhatsAppCampaign {
 // row atomically so the inbox renders campaign messages alongside
 // free-form replies.
 model WhatsAppCampaignSend {
-  id                String             @id @default(cuid())
-  tenantId          String
-  campaignId        String
-  contactId         String
-  phone             String             // E.164 snapshot at queue time
-  metaMessageId     String?            // null until dispatched; unique per tenant once set
-  status            WASendStatus       @default(QUEUED)
-  pricingCategory   WAPricingCategory? // Meta's per-message pricing classification
-  conversationId    String?            // Meta's conversation ID (24h window grouping)
-  errorCode         String?
-  errorMessage      String?            @db.Text
-  sentAt            DateTime?
-  deliveredAt       DateTime?
-  readAt            DateTime?
-  lastEventAt       DateTime?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  id              String             @id @default(cuid())
+  tenantId        String
+  campaignId      String
+  contactId       String
+  phone           String // E.164 snapshot at queue time
+  metaMessageId   String? // null until dispatched; unique per tenant once set
+  status          WASendStatus       @default(QUEUED)
+  pricingCategory WAPricingCategory? // Meta's per-message pricing classification
+  conversationId  String? // Meta's conversation ID (24h window grouping)
+  errorCode       String?
+  errorMessage    String?            @db.Text
+  sentAt          DateTime?
+  deliveredAt     DateTime?
+  readAt          DateTime?
+  lastEventAt     DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -1028,22 +1050,22 @@ model WhatsAppCampaignSend {
 // (24h forward); outbound replies do NOT extend it (this is Meta's rule).
 // `unreadCount` updated atomically via SQL increment, never read-modify-write.
 model WhatsAppConversation {
-  id                     String              @id @default(cuid())
+  id                     String               @id @default(cuid())
   tenantId               String
   whatsAppAccountId      String
   phoneNumberId          String
-  contactId              String?             // null for inbound from unknown numbers, until matched
-  contactPhone           String              // E.164
+  contactId              String? // null for inbound from unknown numbers, until matched
+  contactPhone           String // E.164
   lastInboundAt          DateTime?
   lastOutboundAt         DateTime?
-  lastMessageAt          DateTime            @default(now())
-  lastMessagePreview     String              @default("") @db.Text
-  unreadCount            Int                 @default(0)
+  lastMessageAt          DateTime             @default(now())
+  lastMessagePreview     String               @default("") @db.Text
+  unreadCount            Int                  @default(0)
   assignedToUserId       String?
-  serviceWindowExpiresAt DateTime?           // null = window closed; only template messages allowed
+  serviceWindowExpiresAt DateTime? // null = window closed; only template messages allowed
   status                 WAConversationStatus @default(OPEN)
-  createdAt              DateTime            @default(now())
-  updatedAt              DateTime            @updatedAt
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
 
   tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   whatsAppAccount WhatsAppAccount     @relation(fields: [whatsAppAccountId], references: [id], onDelete: Cascade)
@@ -1065,36 +1087,36 @@ model WhatsAppConversation {
 // poll-status handlers to dedupe and update status. `replyToMessageId`
 // is a self-FK for quoted replies.
 model WhatsAppMessage {
-  id                String              @id @default(cuid())
+  id                String             @id @default(cuid())
   tenantId          String
   conversationId    String
   direction         WAMessageDirection
-  metaMessageId     String?             // unique per tenant once set
+  metaMessageId     String? // unique per tenant once set
   type              WAMessageType
-  body              String?             @db.Text // text body; caption for media; null for non-text
-  mediaAssetId      String?             // resolved Asset for media messages
-  mediaMetaId       String?             // Meta's media id, used for delayed download
-  templateId        String?             // for outbound TEMPLATE messages
-  templateVariables Json?               // resolved variables at send time
-  status            WASendStatus        @default(QUEUED)
+  body              String?            @db.Text // text body; caption for media; null for non-text
+  mediaAssetId      String? // resolved Asset for media messages
+  mediaMetaId       String? // Meta's media id, used for delayed download
+  templateId        String? // for outbound TEMPLATE messages
+  templateVariables Json? // resolved variables at send time
+  status            WASendStatus       @default(QUEUED)
   errorCode         String?
-  errorMessage      String?             @db.Text
+  errorMessage      String?            @db.Text
   sentAt            DateTime?
   deliveredAt       DateTime?
   readAt            DateTime?
   failedAt          DateTime?
-  sentByUserId      String?             // for free-form replies sent from inbox UI
-  replyToMessageId  String?             // self-FK
-  metadata          Json                @default("{}")
-  createdAt         DateTime            @default(now())
+  sentByUserId      String? // for free-form replies sent from inbox UI
+  replyToMessageId  String? // self-FK
+  metadata          Json               @default("{}")
+  createdAt         DateTime           @default(now())
 
-  tenant       Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  conversation WhatsAppConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  template     WhatsAppTemplate?     @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  mediaAsset   Asset?                @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
-  sentBy       User?                 @relation("WhatsAppMessagesSentBy", fields: [sentByUserId], references: [id], onDelete: SetNull)
-  replyTo      WhatsAppMessage?      @relation("WhatsAppMessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
-  replies      WhatsAppMessage[]     @relation("WhatsAppMessageReplies")
+  tenant       Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  template     WhatsAppTemplate?    @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  mediaAsset   Asset?               @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  sentBy       User?                @relation("WhatsAppMessagesSentBy", fields: [sentByUserId], references: [id], onDelete: SetNull)
+  replyTo      WhatsAppMessage?     @relation("WhatsAppMessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies      WhatsAppMessage[]    @relation("WhatsAppMessageReplies")
 
   @@index([conversationId, createdAt])
   @@index([tenantId, metaMessageId])
@@ -1106,9 +1128,9 @@ model WhatsAppMessage {
 // `processedAt`; failure stamps `processError` for retry.
 model WhatsAppWebhookEvent {
   id            String    @id @default(cuid())
-  tenantId      String?   // null until matched (e.g. unknown WABA hits us)
-  phoneNumberId String?   // null until matched
-  eventType     String    // 'inbound' | 'status:sent' | 'status:delivered' | etc.
+  tenantId      String? // null until matched (e.g. unknown WABA hits us)
+  phoneNumberId String? // null until matched
+  eventType     String // 'inbound' | 'status:sent' | 'status:delivered' | etc.
   dedupeKey     String    @unique
   rawPayload    Json
   processedAt   DateTime?
@@ -1126,20 +1148,20 @@ model WhatsAppWebhookEvent {
 // under tenants/<tenantId>/wa-assets/<id>.<ext> in the wa-assets
 // bucket (private, signed URLs only).
 model Asset {
-  id                  String   @id @default(cuid())
-  tenantId            String
-  fileName            String
-  mimeType            String
-  sizeBytes           Int
-  storagePath         String   // tenants/<tenantId>/wa-assets/<id>.<ext>
-  mediaMetaId         String?  // Meta's media id, populated after upload to Meta
-  uploadedByUserId    String?
-  createdAt           DateTime @default(now())
+  id               String   @id @default(cuid())
+  tenantId         String
+  fileName         String
+  mimeType         String
+  sizeBytes        Int
+  storagePath      String // tenants/<tenantId>/wa-assets/<id>.<ext>
+  mediaMetaId      String? // Meta's media id, populated after upload to Meta
+  uploadedByUserId String?
+  createdAt        DateTime @default(now())
 
-  tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  uploadedBy User?              @relation("AssetsUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
-  templateMessages   WhatsAppMessage[]
-  campaignsAsHeader  WhatsAppCampaign[]
+  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  uploadedBy        User?              @relation("AssetsUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  templateMessages  WhatsAppMessage[]
+  campaignsAsHeader WhatsAppCampaign[]
 
   @@index([tenantId, createdAt])
 }
@@ -1148,19 +1170,180 @@ model Asset {
 // (template drafting). Phase 5 will expand this with per-feature
 // rate limits / cost rollups.
 model AiGeneration {
-  id          String   @id @default(cuid())
-  tenantId    String
-  userId      String
-  feature     String   // 'wa_template_draft' for now; enum in Phase 5
-  prompt      String   @db.Text
-  response    String   @db.Text
-  tokensUsed  Int
-  cost        Decimal  @db.Decimal(10, 4) // USD; sub-cent precision for token-cost rollups
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  tenantId   String
+  userId     String
+  feature    String // 'wa_template_draft' for now; enum in Phase 5
+  prompt     String   @db.Text
+  response   String   @db.Text
+  tokensUsed Int
+  cost       Decimal  @db.Decimal(10, 4) // USD; sub-cent precision for token-cost rollups
+  createdAt  DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, createdAt])
   @@index([tenantId, feature, createdAt])
+}
+
+// ==================================================================
+// Phase 5 — G-Suite integration (M1, M3, M7)
+// ==================================================================
+
+enum AuthProvider {
+  SUPABASE
+  AUTH0
+}
+
+enum ProvisioningSource {
+  DIRECT
+  G_SUITE
+}
+
+// ------------------------------------------------------------------
+// Plan catalog — mirror of G-Suite's plans. Tenant-agnostic.
+// Service-role read-only; nothing in Campaigns mutates these except
+// the M3 plan-sync helper (and the seed script).
+// ------------------------------------------------------------------
+
+enum BillingPlanMetric {
+  CONTACTS
+  EMAILS_PER_MONTH
+  WA_MESSAGES_PER_MONTH
+  SMS_SEGMENTS_PER_MONTH
+  AI_CREDITS_PER_MONTH
+  CUSTOM_SENDING_DOMAINS
+  USER_SEATS
+}
+
+model BillingPlan {
+  id                String                @id @default(cuid())
+  slug              String                @unique
+  name              String
+  description       String?
+  priceMonthlyCents Int                   @default(0)
+  priceYearlyCents  Int                   @default(0)
+  currency          String                @default("USD")
+  isArchived        Boolean               @default(false)
+  gSuitePlanId      String?
+  metadata          Json                  @default("{}")
+  features          BillingPlanFeature[]
+  subscriptions     BillingSubscription[]
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+}
+
+model BillingPlanFeature {
+  id                String            @id @default(cuid())
+  planId            String
+  metric            BillingPlanMetric
+  // -1 marks unlimited.
+  included          Int               @default(0)
+  // Informational only — G-Suite handles billing of overages.
+  overageCentsPer1k Int?
+  plan              BillingPlan       @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, metric])
+}
+
+// ------------------------------------------------------------------
+// BillingSubscription — Campaigns' local mirror of G-Suite's
+// subscription record. Always one-per-tenant. M3 syncs this on
+// SSO sign-in + on G-Suite webhook + on a 6h drift-correct cron.
+// ------------------------------------------------------------------
+
+enum BillingSubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  SUSPENDED
+}
+
+model BillingSubscription {
+  id                   String                    @id @default(cuid())
+  tenantId             String                    @unique
+  gSuiteSubscriptionId String?                   @unique
+  planId               String
+  status               BillingSubscriptionStatus
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  cancelAt             DateTime?
+  lastSyncedAt         DateTime                  @default(now())
+  metadata             Json                      @default("{}")
+  tenant               Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan                 BillingPlan               @relation(fields: [planId], references: [id])
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+
+  @@index([status, lastSyncedAt])
+}
+
+// ------------------------------------------------------------------
+// G-Suite webhook ingestion (audit + idempotency).
+// dedupeKey approach mirrors WhatsAppWebhookEvent (Phase 4 M9).
+// ------------------------------------------------------------------
+
+model GSuiteWebhookEvent {
+  id            String    @id @default(cuid())
+  gSuiteEventId String    @unique
+  eventType     String
+  tenantId      String?
+  rawPayload    Json
+  processedAt   DateTime?
+  processError  String?   @db.Text
+  receivedAt    DateTime  @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@index([eventType, receivedAt])
+  @@index([tenantId])
+}
+
+// ------------------------------------------------------------------
+// Phase 5 M7 — staff (Getyn internal). Distinct from Tenant users:
+// staff have no Membership rows and can't reach /t/[slug]/* surfaces
+// through the staff session. The /admin/* surface checks this table.
+// ------------------------------------------------------------------
+
+enum StaffRole {
+  SUPPORT
+  SUPPORT_ADMIN
+}
+
+model StaffUser {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  role      StaffRole
+  createdAt DateTime  @default(now())
+  // StaffUser.id of the inviter. Null for bootstrapped INITIAL_STAFF_EMAILS.
+  createdBy String?
+
+  auditLogs StaffAuditLog[]
+
+  @@index([role])
+}
+
+model StaffAuditLog {
+  id             String   @id @default(cuid())
+  staffUserId    String
+  // Snapshot — survives StaffUser deletion so the audit log isn't
+  // weakened by tombstoning the actor row.
+  staffEmail     String
+  action         String
+  targetTenantId String?
+  targetEntityId String?
+  beforeSnapshot Json?
+  afterSnapshot  Json?
+  reason         String?  @db.Text
+  ipAddress      String?
+  userAgent      String?  @db.Text
+  createdAt      DateTime @default(now())
+
+  staffUser StaffUser @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+
+  @@index([staffUserId, createdAt])
+  @@index([targetTenantId, createdAt])
+  @@index([action, createdAt])
 }
