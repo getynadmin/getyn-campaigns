@@ -1,6 +1,5 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { LogOut, User as UserIcon } from 'lucide-react';
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -13,16 +12,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 import { api } from '@/lib/trpc';
 
 /**
  * Avatar + dropdown in the topbar. Shows the current user's name and
  * email, and offers a sign-out action.
  *
- * We sign out through the browser client (not the tRPC mutation) so the
- * cookies are cleared in the browser immediately; the server picks up
- * the cleared session on the next navigation.
+ * Sign-out routes through the server-side /api/auth/logout endpoint
+ * (Phase 5 M1) so both Supabase + Auth0 cookies clear in one round
+ * trip, then federates to the IdP logout when SSO is configured.
  */
 export function UserMenu({
   name,
@@ -33,7 +31,6 @@ export function UserMenu({
   email: string;
   avatarUrl: string | null;
 }): JSX.Element {
-  const router = useRouter();
   const utils = api.useUtils();
 
   const initials = (name ?? email)
@@ -43,12 +40,27 @@ export function UserMenu({
     .slice(0, 2)
     .toUpperCase();
 
-  const signOut = async (): Promise<void> => {
-    const supabase = createSupabaseBrowserClient();
-    await supabase.auth.signOut();
+  /**
+   * Sign-out via the server-side /api/auth/logout endpoint.
+   *
+   * Phase 5 M1 unified the logout path so it clears BOTH the
+   * Supabase HTTP-only cookie AND the new Auth0 session cookie,
+   * then federates upstream when SSO is configured.
+   *
+   * Previously this called supabase.auth.signOut() client-side
+   * which didn't reliably clear the HTTP-only cookie via the
+   * browser SDK — the server-side flow does.
+   *
+   * We use a real navigation (window.location) rather than
+   * router.push so the response's Set-Cookie headers actually
+   * apply to subsequent requests; a client-side router transition
+   * doesn't re-read cookies.
+   */
+  const signOut = (): void => {
+    // Invalidate React-Query caches before the navigation lands so
+    // the post-redirect state doesn't briefly flash stale data.
     utils.invalidate();
-    router.refresh();
-    router.push('/login');
+    window.location.href = '/api/auth/logout';
   };
 
   return (
