@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -33,7 +33,6 @@ type FormValues = z.infer<typeof schema>;
  * the middleware picks them up on the next navigation.
  */
 export function LoginForm(): JSX.Element {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get('next');
   const [submitting, setSubmitting] = useState(false);
@@ -55,10 +54,12 @@ export function LoginForm(): JSX.Element {
       toast.error(error.message);
       return;
     }
-    // Refresh so the server picks up the new session cookie, then bounce
-    // to the post-auth router (or the deep link the user came from).
-    router.refresh();
-    router.push(next && next.startsWith('/') ? next : '/');
+    // Hard navigation rather than router.push so the freshly-written
+    // Supabase cookies are actually re-read by the server on the next
+    // request. Previously router.refresh() could hang waiting for an
+    // RSC fetch that didn't see the new cookie under @supabase/ssr.
+    window.location.href =
+      next && next.startsWith('/') ? next : '/';
   };
 
   return (
