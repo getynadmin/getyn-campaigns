@@ -12,6 +12,13 @@ export const QUEUE_NAMES = {
   imports: 'imports',
   sends: 'sends',
   webhooks: 'webhooks',
+  // Phase 5 M4 — G-Suite lifecycle events (subscription / suspension /
+  // delete). One queue for both real-webhook ingestion and admin-side
+  // mock fires; the worker can't tell the difference.
+  gsuiteWebhooks: 'gsuite-webhooks',
+  // Phase 5 M4 — tenant data purge (destructive, requires confirmation
+  // and revokes external connections in order before DB row deletes).
+  tenantPurge: 'tenant-purge',
   // Phase 4 — WhatsApp Business background jobs
   waPhoneRefresh: 'wa-phone-refresh',
   waTemplateSync: 'wa-template-sync',
@@ -107,6 +114,13 @@ export type ResendWebhookPayload = z.infer<typeof resendWebhookPayloadSchema>;
 // -----------------------------------------------------------------------------
 
 export const JOB_NAMES = {
+  // Phase 5 M4
+  gsuiteWebhooks: {
+    process: 'process-gsuite-event',
+  },
+  tenantPurge: {
+    purge: 'purge-tenant',
+  },
   imports: {
     processImport: 'processImport',
   },
@@ -277,3 +291,50 @@ export const waWebhookProcessPayloadSchema = z.object({
 export type WaWebhookProcessPayload = z.infer<
   typeof waWebhookProcessPayloadSchema
 >;
+
+// ----------------------------------------------------------------------------
+// Phase 5 M4 — G-Suite lifecycle ingestion
+// ----------------------------------------------------------------------------
+
+/**
+ * Set of G-Suite event types we react to. Mirrors the kickoff M3
+ * contract assumptions (`subscription.updated` / `subscription.canceled`
+ * / `tenant.suspended` / `tenant.reactivated` / `tenant.deleted`).
+ * Until the G-Suite team confirms the spec, the dispatcher reads any
+ * eventType but only the known set has reactions; unknown types
+ * persist + audit but no-op.
+ */
+export const gsuiteEventTypeSchema = z.enum([
+  'subscription.updated',
+  'subscription.canceled',
+  'tenant.suspended',
+  'tenant.reactivated',
+  'tenant.deleted',
+]);
+export type GsuiteEventType = z.infer<typeof gsuiteEventTypeSchema>;
+
+/**
+ * Worker payload for processing a single G-Suite event row. The
+ * webhook receiver persists the raw payload to GSuiteWebhookEvent
+ * (idempotent on gSuiteEventId) and enqueues this id. The worker
+ * reads the row, dispatches by eventType, stamps processedAt.
+ */
+export const gsuiteWebhookPayloadSchema = z.object({
+  webhookEventId: cuidSchema,
+});
+export type GsuiteWebhookPayload = z.infer<typeof gsuiteWebhookPayloadSchema>;
+
+/**
+ * Tenant purge payload. Deliberately requires a non-trivial
+ * confirmation token (the deleteConfirmedAt timestamp from G-Suite
+ * OR a staff override) — guards against accidentally enqueuing a
+ * purge from misrouted code paths.
+ */
+export const tenantPurgePayloadSchema = z.object({
+  tenantId: cuidSchema,
+  /** ISO timestamp from G-Suite's confirmation OR staff-issued audit ref. */
+  deleteConfirmedAt: z.string().datetime(),
+  /** Which path triggered: 'gsuite' (webhook) or 'grace_expired' (cron). */
+  trigger: z.enum(['gsuite', 'grace_expired', 'staff_force']),
+});
+export type TenantPurgePayload = z.infer<typeof tenantPurgePayloadSchema>;

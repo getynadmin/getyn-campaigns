@@ -33,6 +33,7 @@ import {
   SegmentCompileError,
   type SegmentCustomFieldEntry,
 } from '@getyn/db';
+import { assertTenantActive } from '@/server/billing/assert-active';
 import { enqueuePrepareCampaign } from '@/server/queues';
 
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
@@ -461,6 +462,8 @@ export const campaignsRouter = createTRPCRouter({
     .use(enforceRole(Role.OWNER, Role.ADMIN))
     .input(campaignScheduleSchema)
     .mutation(async ({ ctx, input }) => {
+      // Phase 5 M4: block scheduling on READ_ONLY / SUSPENDED / PURGING.
+      await assertTenantActive(ctx.tenantContext.tenant.id);
       return runPreFlightAndTransition({
         tenantId: ctx.tenantContext.tenant.id,
         postalAddress: ctx.tenantContext.tenant.postalAddress,
@@ -478,6 +481,8 @@ export const campaignsRouter = createTRPCRouter({
     .use(enforceRole(Role.OWNER, Role.ADMIN))
     .input(campaignSendNowSchema)
     .mutation(async ({ ctx, input }) => {
+      // Phase 5 M4: block sends on READ_ONLY / SUSPENDED / PURGING.
+      await assertTenantActive(ctx.tenantContext.tenant.id);
       return runPreFlightAndTransition({
         tenantId: ctx.tenantContext.tenant.id,
         postalAddress: ctx.tenantContext.tenant.postalAddress,

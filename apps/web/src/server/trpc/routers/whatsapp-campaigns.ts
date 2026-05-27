@@ -19,6 +19,7 @@ import {
   whatsAppCampaignUpdateSchema,
 } from '@getyn/types';
 
+import { assertTenantActive } from '@/server/billing/assert-active';
 import { enqueuePrepareWaCampaign } from '@/server/queues';
 
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
@@ -270,6 +271,8 @@ export const whatsAppCampaignsRouter = createTRPCRouter({
     .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
     .input(whatsAppCampaignSendNowSchema)
     .mutation(async ({ ctx, input }) => {
+      // Phase 5 M4: block WA sends on READ_ONLY / SUSPENDED / PURGING.
+      await assertTenantActive(ctx.tenantContext.tenant.id);
       const tenantId = ctx.tenantContext.tenant.id;
       const updated = await withTenant(tenantId, async (tx) => {
         const camp = await tx.campaign.findFirst({

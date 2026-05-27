@@ -8,6 +8,8 @@ import {
 import { Role, prisma, withTenant } from '@getyn/db';
 import { aiDraftTemplateSchema } from '@getyn/types';
 
+import { assertTenantActive } from '@/server/billing/assert-active';
+
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
 
 /**
@@ -52,6 +54,9 @@ export const aiRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
       const userId = ctx.user.id;
+      // Phase 5 M4: AI generation is a paid surface — block under
+      // READ_ONLY / SUSPENDED / PURGING.
+      await assertTenantActive(tenantId);
 
       // Rate limit — count completed generations in the last hour.
       // Reads via withTenant so RLS keeps tenants isolated.

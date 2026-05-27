@@ -248,3 +248,68 @@ export async function enqueueWaWebhookEvent(payload: {
     jobId: `wa-webhook_${payload.webhookEventId}`,
   });
 }
+
+// ----------------------------------------------------------------------------
+// Phase 5 M4 — G-Suite webhook + tenant purge producers
+// ----------------------------------------------------------------------------
+
+let cachedGsuiteQueue: Queue | null = null;
+function getGsuiteQueue(): Queue {
+  if (cachedGsuiteQueue) return cachedGsuiteQueue;
+  cachedGsuiteQueue = new Queue(QUEUE_NAMES.gsuiteWebhooks, {
+    connection: getConnection(),
+    defaultJobOptions: {
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 2_000 },
+      removeOnComplete: { age: 60 * 60 * 24 * 7, count: 5000 },
+      removeOnFail: { age: 60 * 60 * 24 * 30 },
+    },
+  });
+  return cachedGsuiteQueue;
+}
+
+export async function enqueueGsuiteWebhookEvent(payload: {
+  webhookEventId: string;
+}): Promise<void> {
+  const queue = getGsuiteQueue();
+  await queue.add(JOB_NAMES.gsuiteWebhooks.process, payload, {
+    jobId: `gsuite-event_${payload.webhookEventId}`,
+  });
+}
+
+let cachedPurgeQueue: Queue | null = null;
+function getPurgeQueue(): Queue {
+  if (cachedPurgeQueue) return cachedPurgeQueue;
+  cachedPurgeQueue = new Queue(QUEUE_NAMES.tenantPurge, {
+    connection: getConnection(),
+    defaultJobOptions: {
+      // Purge is destructive — retry sparingly, don't loop forever.
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 60_000 },
+      removeOnComplete: { age: 60 * 60 * 24 * 90 },
+      removeOnFail: { age: 60 * 60 * 24 * 90 },
+    },
+  });
+  return cachedPurgeQueue;
+}
+
+export async function enqueueTenantPurge(payload: {
+  tenantId: string;
+  deleteConfirmedAt: string;
+  trigger: 'gsuite' | 'grace_expired' | 'staff_force';
+  delayMs?: number;
+}): Promise<void> {
+  const queue = getPurgeQueue();
+  await queue.add(
+    JOB_NAMES.tenantPurge.purge,
+    {
+      tenantId: payload.tenantId,
+      deleteConfirmedAt: payload.deleteConfirmedAt,
+      trigger: payload.trigger,
+    },
+    {
+      jobId: `purge_${payload.tenantId}`,
+      ...(payload.delayMs ? { delay: payload.delayMs } : {}),
+    },
+  );
+}

@@ -12,6 +12,7 @@ import {
 } from '@getyn/types';
 
 import { getSupabaseAdmin } from '@/server/auth/supabase-admin';
+import { assertTenantActive } from '@/server/billing/assert-active';
 import { enqueueImportJob } from '@/server/queues';
 
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
@@ -85,6 +86,8 @@ export const importsRouter = createTRPCRouter({
     .input(importStartSchema)
     .mutation(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
+      // Phase 5 M4: block new imports on READ_ONLY / SUSPENDED / PURGING.
+      await assertTenantActive(tenantId);
 
       // Storage path sanity — it must live under this tenant's folder.
       if (!input.storagePath.startsWith(`${tenantId}/`)) {

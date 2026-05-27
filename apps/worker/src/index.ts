@@ -34,6 +34,8 @@ import {
   handleWaPollInboundTick,
 } from './handlers/wa-poll-inbound';
 import { handleWaWebhookEvent } from './handlers/wa-webhooks';
+import { handleGsuiteWebhookEvent } from './handlers/gsuite-webhooks';
+import { handleTenantPurge } from './handlers/tenant-purge';
 import { handleResendWebhook } from './handlers/webhooks';
 import { createRedisConnection } from './redis';
 
@@ -243,6 +245,42 @@ workers.push(
       connection,
       concurrency: 8,
       lockDuration: 30_000,
+    },
+  ),
+);
+
+// gsuite-webhooks queue — Phase 5 M4 (lifecycle event ingestion).
+//
+// One job shape: process-gsuite-event. Payload carries the persisted
+// GSuiteWebhookEvent row id; the worker reads + dispatches by
+// eventType. Concurrency 4 — events are infrequent but per-event
+// work can touch multiple tables.
+workers.push(
+  new Worker(
+    QUEUE_NAMES.gsuiteWebhooks,
+    async (job) => handleGsuiteWebhookEvent(job),
+    {
+      connection,
+      concurrency: 4,
+      lockDuration: 60_000,
+    },
+  ),
+);
+
+// tenant-purge queue — Phase 5 M4 (destructive tenant deletion).
+//
+// Concurrency 1 — purges are rare + we never want two firing on the
+// same tenant simultaneously. The jobId already deduplicates but
+// belt-and-braces. lockDuration is long because cascades can take a
+// while on large tenants.
+workers.push(
+  new Worker(
+    QUEUE_NAMES.tenantPurge,
+    async (job) => handleTenantPurge(job),
+    {
+      connection,
+      concurrency: 1,
+      lockDuration: 600_000, // 10 min
     },
   ),
 );

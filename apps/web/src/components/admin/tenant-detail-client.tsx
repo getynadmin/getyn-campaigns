@@ -162,6 +162,19 @@ export function AdminTenantDetailClient({
           <ImpersonateAction tenantId={tenantId} tenantSlug={t.slug} />
         </div>
       </section>
+
+      <section className="rounded-lg border border-dashed border-amber-300 bg-amber-50/40 p-4 dark:border-amber-900/60 dark:bg-amber-950/20">
+        <h2 className="mb-1 text-sm font-semibold text-amber-900 dark:text-amber-200">
+          G-Suite mock events (M4 lifecycle testing)
+        </h2>
+        <p className="mb-3 text-xs text-amber-900/80 dark:text-amber-200/70">
+          Synthetic G-Suite webhook events. Same processing path as
+          real events — fires through the worker, writes audit. Use to
+          rehearse the deactivation lifecycle until M3&apos;s real
+          contract is wired.
+        </p>
+        <GsuiteMockActions tenantId={tenantId} onSuccess={() => refetch()} />
+      </section>
     </div>
   );
 }
@@ -426,5 +439,95 @@ function Row({
       </dt>
       <dd className="font-mono text-xs">{children}</dd>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// G-Suite mock fire (M4)
+// ----------------------------------------------------------------------------
+
+const MOCK_EVENTS = [
+  { type: 'subscription.canceled', label: 'Cancel subscription', destructive: false },
+  { type: 'tenant.suspended',      label: 'Suspend tenant',      destructive: false },
+  { type: 'tenant.reactivated',    label: 'Reactivate tenant',   destructive: false },
+  { type: 'tenant.deleted',        label: 'Delete tenant (PURGE)', destructive: true },
+] as const;
+
+function GsuiteMockActions({
+  tenantId,
+  onSuccess,
+}: {
+  tenantId: string;
+  onSuccess: () => void;
+}): JSX.Element {
+  const [open, setOpen] = useState<(typeof MOCK_EVENTS)[number] | null>(null);
+  const [reason, setReason] = useState('');
+  const fire = adminApi.gsuiteMock.fire.useMutation({
+    onSuccess: (res) => {
+      toast.success(`Fired ${open?.type} — event id ${res.eventId}`);
+      setOpen(null);
+      setReason('');
+      onSuccess();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <>
+      <div className="flex flex-wrap gap-2">
+        {MOCK_EVENTS.map((ev) => (
+          <Button
+            key={ev.type}
+            size="sm"
+            variant={ev.destructive ? 'destructive' : 'outline'}
+            onClick={() => setOpen(ev)}
+          >
+            {ev.label}
+          </Button>
+        ))}
+      </div>
+      <Dialog open={Boolean(open)} onOpenChange={(o) => !o && setOpen(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="size-4 text-rose-600" />
+              Fire {open?.type}?
+            </DialogTitle>
+            <DialogDescription>
+              Posts a synthetic G-Suite event onto the worker queue.
+              Same handler as a real webhook would invoke.
+              {open?.destructive &&
+                ' This will schedule the tenant purge job — irreversible.'}
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            placeholder="Reason (audit log)"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            maxLength={500}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant={open?.destructive ? 'destructive' : 'default'}
+              disabled={fire.isPending || reason.trim().length < 3 || !open}
+              onClick={() =>
+                open &&
+                fire.mutate({
+                  tenantId,
+                  eventType: open.type,
+                  reason,
+                })
+              }
+            >
+              {fire.isPending && <Loader2 className="mr-2 size-4 animate-spin" />}
+              Fire {open?.type}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

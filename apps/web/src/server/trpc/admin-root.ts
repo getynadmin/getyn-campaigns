@@ -1,4 +1,5 @@
 import { adminAuditLogRouter } from './routers/admin-audit-log';
+import { adminGsuiteMockRouter } from './routers/admin-gsuite-mock';
 import { adminImpersonationRouter } from './routers/admin-impersonation';
 import { adminStaffRouter } from './routers/admin-staff';
 import { adminTenantsRouter } from './routers/admin-tenants';
@@ -16,6 +17,9 @@ export const adminRouter = createAdminRouter({
   impersonation: adminImpersonationRouter,
   auditLog: adminAuditLogRouter,
   staff: adminStaffRouter,
+  // Phase 5 M4 — synthetic G-Suite event firing (development /
+  // pre-G-Suite-spec lifecycle exercise).
+  gsuiteMock: adminGsuiteMockRouter,
 });
 
 export type AdminRouter = typeof adminRouter;
