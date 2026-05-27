@@ -36,9 +36,16 @@ function roleLabel(role: Role): string {
 export function TeamTable({
   currentUserId,
   currentRole,
+  canEditMembers = true,
 }: {
   currentUserId: string;
   currentRole: Role;
+  /**
+   * Phase 5 M5 — false for SSO-managed tenants. Hides the per-row
+   * action dropdown (role edits + removal). The server router also
+   * blocks the mutations; this is the UI mirror.
+   */
+  canEditMembers?: boolean;
 }): JSX.Element {
   const utils = api.useUtils();
   const { data, isLoading } = api.membership.list.useQuery();
@@ -120,7 +127,7 @@ export function TeamTable({
                   {new Date(m.createdAt).toLocaleDateString()}
                 </TableCell>
                 <TableCell className="text-right">
-                  {canManage && !isSelf ? (
+                  {canManage && !isSelf && canEditMembers ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon" className="size-8">

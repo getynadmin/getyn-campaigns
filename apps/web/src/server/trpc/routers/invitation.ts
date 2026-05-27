@@ -10,6 +10,7 @@ import {
   inviteExpiryDate,
   inviteStatus,
 } from '@/server/invite-token';
+import { assertManagedDirectly } from '../tenant-management-guard';
 import {
   createTRPCRouter,
   enforceRole,
@@ -48,6 +49,9 @@ export const invitationRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      // Phase 5 M5: SSO-managed tenants block local invites.
+      assertManagedDirectly(ctx.tenantContext.tenant);
+
       // Prevent inviting existing members.
       const existingUser = await prisma.user.findUnique({
         where: { email: input.email },
@@ -99,6 +103,9 @@ export const invitationRouter = createTRPCRouter({
     .use(enforceRole(Role.OWNER, Role.ADMIN))
     .input(z.object({ invitationId: z.string().cuid() }))
     .mutation(async ({ ctx, input }) => {
+      // Phase 5 M5: SSO-managed tenants block local revokes too.
+      assertManagedDirectly(ctx.tenantContext.tenant);
+
       const target = await prisma.invitation.findUnique({
         where: { id: input.invitationId },
       });

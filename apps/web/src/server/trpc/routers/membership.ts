@@ -3,6 +3,7 @@ import { prisma, Role } from '@getyn/db';
 import { roleSchema, cuidSchema } from '@getyn/types';
 import { z } from 'zod';
 
+import { assertManagedDirectly } from '../tenant-management-guard';
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
 
 export const membershipRouter = createTRPCRouter({
@@ -25,6 +26,9 @@ export const membershipRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      // Phase 5 M5: SSO-managed tenants block local role edits.
+      assertManagedDirectly(ctx.tenantContext.tenant);
+
       const target = await prisma.membership.findUnique({
         where: { id: input.membershipId },
       });
@@ -71,6 +75,9 @@ export const membershipRouter = createTRPCRouter({
     .use(enforceRole(Role.OWNER, Role.ADMIN))
     .input(z.object({ membershipId: cuidSchema }))
     .mutation(async ({ ctx, input }) => {
+      // Phase 5 M5: SSO-managed tenants block local member removal.
+      assertManagedDirectly(ctx.tenantContext.tenant);
+
       const target = await prisma.membership.findUnique({
         where: { id: input.membershipId },
       });
