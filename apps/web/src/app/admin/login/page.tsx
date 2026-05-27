@@ -28,6 +28,11 @@ import { isAuth0Configured } from '@/server/auth/auth0';
 
 export const metadata = { title: 'Staff sign-in' };
 
+// Server-rendered conditional branches read env at request time, not
+// at build time — STAFF_PASSWORD_AUTH_ENABLED and AUTH0_* are toggled
+// in Vercel without code changes.
+export const dynamic = 'force-dynamic';
+
 export default function StaffLoginPage(): JSX.Element {
   const ssoAvailable = isAuth0Configured();
   const passwordEnabled =

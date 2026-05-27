@@ -21,6 +21,11 @@ export const metadata = {
   title: 'Log in',
 };
 
+// Read env at request time, not build time — STAFF_PASSWORD_AUTH_ENABLED
+// + AUTH0_* are mutable in Vercel without redeploying, so the rendered
+// branches need to reflect the latest values.
+export const dynamic = 'force-dynamic';
+
 /**
  * Phase 5 M1 — login page.
  *
