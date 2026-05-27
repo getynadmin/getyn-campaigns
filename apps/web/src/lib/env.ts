@@ -17,13 +17,47 @@ function optionalEnv(name: string): string | undefined {
   return value && value.length > 0 ? value : undefined;
 }
 
-/** Public env (safe for client bundle). */
+/**
+ * Public env (safe for client bundle).
+ *
+ * CRITICAL: every `NEXT_PUBLIC_*` access below MUST use the literal
+ * form `process.env.NEXT_PUBLIC_X`. Webpack's DefinePlugin only
+ * statically substitutes literal property accesses at build time —
+ * the dynamic form `process.env[name]` (which `requireEnv` uses)
+ * silently becomes `undefined` in the browser bundle even when the
+ * env var IS configured on Vercel. Phase 1's original `requireEnv`
+ * worked server-side because Node reads process.env at runtime; in
+ * the browser there's no process.env to read at runtime, so the
+ * dynamic path always fails.
+ *
+ * If you change a key, change BOTH the function name AND the
+ * literal access on the same line.
+ */
+function literalRequire(value: string | undefined, name: string): string {
+  if (!value || value.length === 0) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
 export const publicEnv = {
-  supabaseUrl: (): string => requireEnv('NEXT_PUBLIC_SUPABASE_URL'),
-  supabaseAnonKey: (): string => requireEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
+  supabaseUrl: (): string =>
+    literalRequire(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      'NEXT_PUBLIC_SUPABASE_URL',
+    ),
+  supabaseAnonKey: (): string =>
+    literalRequire(
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+    ),
   appUrl: (): string =>
     process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000',
-  posthogKey: (): string | undefined => optionalEnv('NEXT_PUBLIC_POSTHOG_KEY'),
+  posthogKey: (): string | undefined =>
+    process.env.NEXT_PUBLIC_POSTHOG_KEY &&
+    process.env.NEXT_PUBLIC_POSTHOG_KEY.length > 0
+      ? process.env.NEXT_PUBLIC_POSTHOG_KEY
+      : undefined,
   posthogHost: (): string =>
     process.env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://us.i.posthog.com',
 };
