@@ -2,7 +2,27 @@
 
 Multi-tenant B2B SaaS for email, WhatsApp, and SMS marketing campaigns with an AI copilot and drag-and-drop email template builder.
 
-> **Status:** Phase 3 shipped — Email Builder, Send Pipeline, Campaign Analytics. Phases 1 and 2 (foundations + audience) live. Phases 4-7 (WhatsApp, SMS, AI copilot, Stripe billing) up next.
+> **Status:** Phases 1–5.6 shipped. Phase 5.5 added local plan management + per-metric limit enforcement; Phase 5.6 added admin-side global integrations, system email templates, and site branding controls.
+
+## Phase 5.6 — Admin integrations + branding (latest)
+
+**Sidebar structure** — `Admin Central` with Tenants, **Plan Management** (Plans, Upgrade Requests), Reports & Analytics (group placeholder), **Settings** (Plan Settings, Site Settings, Staff Users), **Global Integrations** (WhatsApp, Email SMTP, Email Templates, Sending Servers, SMS Servers), Audit log / Webhooks / Queues, plus Back to App + Sign Out. Legacy `/admin/settings` and `/admin/staff` redirect to the new locations.
+
+**Secrets storage** — DB-first with env-var fallback. Every integration has a row in `IntegrationCredential`; non-secret config is JSON, secrets are AES-256-GCM via `@getyn/crypto` with AD `integration:{provider}`. When a row is missing or `enabled=false`, the resolver returns the env-var values, so the app keeps working before admins fill in the UI.
+
+| Provider slug    | UI path                                       | Env-var fallbacks                                                         |
+| ---------------- | --------------------------------------------- | ------------------------------------------------------------------------- |
+| `whatsapp_meta`  | `/admin/integrations/whatsapp`                | `META_APP_ID`, `META_APP_SECRET`, `META_CONFIG_ID`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN` |
+| `smtp_default`   | `/admin/integrations/smtp`                    | (none — pure DB)                                                          |
+| `resend`         | `/admin/integrations/sending-servers` (tab)   | `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_WEBHOOK_SECRET`            |
+| `railway_worker` | `/admin/integrations/sending-servers` (tab)   | `WORKER_HEALTH_URL`, `RAILWAY_PROJECT_TOKEN`                              |
+| `twilio`, `msg91`| `/admin/integrations/sms-servers`             | placeholders — UI shows "Coming soon"                                     |
+
+**System email templates** — 10 seeded templates (welcome, email verification, password reset, team invite, account activated/suspended, plan upgrade requested/approved/rejected, impersonation notice). Edited at `/admin/integrations/email-templates/[id]` with live preview and "Send test". The `sendSystemEmail()` helper renders `{{var}}` substitutions (HTML-escaping body, plain subject/text) and dispatches via SMTP when enabled, falling back to Resend transactional, then console (dev).
+
+**Site branding** — `SiteBrandingSettings` singleton with app name, four logo/favicon URLs, primary + accent colors, login tagline, footer text, and a custom-CSS override. Stored in the public `brand-assets` Supabase bucket; the root layout pulls them via `getSiteBranding()` (React cache, per-request) for `generateMetadata()`, the favicon `<link>`, and CSS variables injected at the document head. Hard-coded fallbacks mean the app never breaks on a clean install.
+
+**Worker note** — workers still read env vars today; a 60s in-memory cache + DB lookup is the M6 follow-up. Web reads via React `cache()` per-request.
 
 ## What ships today
 
