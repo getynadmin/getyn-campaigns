@@ -69,11 +69,21 @@ const items: Item[] = [
 ];
 
 /**
- * Tenant-scoped sidebar. Phase 1 only wires Dashboard and Settings; the
- * rest are visible-but-disabled so the product shape is obvious without
- * us over-promising on the empty routes.
+ * Tenant-scoped sidebar.
+ *
+ * Phase 5.6 M5: brand bar reads SiteBrandingSettings (passed as props
+ * from the tenant layout RSC). When `logoUrl` is set we render the
+ * uploaded image; otherwise we fall back to the lettermark + appName.
  */
-export function Sidebar({ tenantSlug }: { tenantSlug: string }): JSX.Element {
+export function Sidebar({
+  tenantSlug,
+  appName,
+  logoUrl,
+}: {
+  tenantSlug: string;
+  appName: string;
+  logoUrl: string | null;
+}): JSX.Element {
   const pathname = usePathname();
   // WhatsApp Inbox unread badge. Refreshes every 30s — cheap aggregate
   // query on a small per-tenant table, fine to poll.
@@ -84,18 +94,30 @@ export function Sidebar({ tenantSlug }: { tenantSlug: string }): JSX.Element {
     // returns 0 in those edge cases.
     retry: false,
   });
+  const firstLetter = (appName.trim()[0] ?? 'G').toUpperCase();
   return (
     <aside className="hidden h-dvh w-60 shrink-0 flex-col border-r bg-card px-3 py-4 md:flex">
       <Link
         href={`/t/${tenantSlug}/dashboard`}
         className="mb-6 flex items-center gap-2 px-3 py-2"
       >
-        <span className="grid h-7 w-7 place-items-center rounded-md bg-primary font-display text-sm font-bold text-primary-foreground">
-          G
-        </span>
-        <span className="font-display text-base font-semibold tracking-tight">
-          Getyn
-        </span>
+        {logoUrl ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={logoUrl}
+            alt={appName}
+            className="h-7 max-w-[10rem] object-contain"
+          />
+        ) : (
+          <>
+            <span className="grid h-7 w-7 place-items-center rounded-md bg-primary font-display text-sm font-bold text-primary-foreground">
+              {firstLetter}
+            </span>
+            <span className="font-display text-base font-semibold tracking-tight">
+              {appName}
+            </span>
+          </>
+        )}
       </Link>
 
       <nav className="flex flex-1 flex-col gap-1">

@@ -136,22 +136,37 @@ const SECTIONS: Section[] = [
 export interface AdminSidebarProps {
   staffEmail: string;
   staffRole: string;
+  appName: string;
+  logoUrl: string | null;
 }
 
 export function AdminSidebar({
   staffEmail,
   staffRole,
+  appName,
+  logoUrl,
 }: AdminSidebarProps): JSX.Element {
   const pathname = usePathname() ?? '';
   return (
     <aside className="hidden w-60 shrink-0 flex-col gap-1 border-r bg-card px-3 py-5 md:flex">
       <Link href="/admin" className="mb-6 flex items-center gap-2 px-3 py-2">
-        <span className="grid size-7 place-items-center rounded-md bg-rose-600 text-sm font-bold text-white">
-          A
-        </span>
-        <span className="font-display text-base font-semibold">
-          Admin Central
-        </span>
+        {logoUrl ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={logoUrl}
+            alt={appName}
+            className="h-7 max-w-[10rem] object-contain"
+          />
+        ) : (
+          <>
+            <span className="grid size-7 place-items-center rounded-md bg-rose-600 text-sm font-bold text-white">
+              A
+            </span>
+            <span className="font-display text-base font-semibold">
+              {appName}
+            </span>
+          </>
+        )}
       </Link>
       <nav className="flex-1 space-y-0.5 text-sm">
         {SECTIONS.map((s) =>

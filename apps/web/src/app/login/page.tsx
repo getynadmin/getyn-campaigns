@@ -5,6 +5,7 @@ import { GoogleButton } from '@/components/auth/google-button';
 import { LoginForm } from '@/components/auth/login-form';
 import { SsoButton } from '@/components/auth/sso-button';
 import { isAuth0Configured } from '@/server/auth/auth0';
+import { getSiteBranding } from '@/server/integrations/site-branding';
 import {
   Card,
   CardContent,
@@ -39,9 +40,6 @@ export const dynamic = 'force-dynamic';
 export default async function LoginPage(): Promise<JSX.Element> {
   const ssoAvailable = isAuth0Configured();
   // Phase 5.6 M5: pull login logo + tagline from SiteBrandingSettings.
-  const { getSiteBranding } = await import(
-    '@/server/integrations/site-branding'
-  );
   const branding = await getSiteBranding();
 
   return (

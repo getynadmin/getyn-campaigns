@@ -5,6 +5,7 @@ import { Providers } from '@/components/providers/providers';
 import { TenantStateBanner } from '@/components/billing/tenant-state-banner';
 import { getCurrentUser } from '@/server/auth/session';
 import { deriveTenantState } from '@/server/billing/tenant-state';
+import { getSiteBranding } from '@/server/integrations/site-branding';
 import { prisma } from '@getyn/db';
 
 /**
@@ -66,6 +67,8 @@ export default async function TenantLayout({
     slug: m.tenant.slug,
   }));
 
+  const branding = await getSiteBranding();
+
   return (
     <Providers tenantSlug={params.slug}>
       <AppShell
@@ -75,6 +78,11 @@ export default async function TenantLayout({
           name: user.name,
           email: user.email,
           avatarUrl: user.avatarUrl,
+        }}
+        branding={{
+          appName: branding.appName,
+          // Light-mode logo; dark resolves to light in the resolver.
+          sidebarLogoUrl: branding.defaultSidebarLogoLightUrl,
         }}
       >
         <TenantStateBanner state={operationalState} />

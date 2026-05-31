@@ -13,16 +13,22 @@ export function AppShell({
   currentSlug,
   tenants,
   user,
+  branding,
   children,
 }: {
   currentSlug: string;
   tenants: Tenant[];
   user: { name: string | null; email: string; avatarUrl: string | null };
+  branding: { appName: string; sidebarLogoUrl: string | null };
   children: React.ReactNode;
 }): JSX.Element {
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background">
-      <Sidebar tenantSlug={currentSlug} />
+      <Sidebar
+        tenantSlug={currentSlug}
+        appName={branding.appName}
+        logoUrl={branding.sidebarLogoUrl}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar currentSlug={currentSlug} tenants={tenants} user={user} />
         <main className="flex-1 overflow-y-auto">{children}</main>

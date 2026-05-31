@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { AdminSidebar } from '@/components/admin/admin-sidebar';
 import { AdminTrpcProvider } from '@/components/providers/admin-trpc-provider';
 import { resolveStaffSession } from '@/server/admin/staff-session';
+import { getSiteBranding } from '@/server/integrations/site-branding';
 
 /**
  * Admin layout + gate.
@@ -28,10 +29,16 @@ export default async function AdminLayout({
   if (!staff) {
     notFound();
   }
+  const branding = await getSiteBranding();
 
   return (
     <div className="flex min-h-dvh bg-muted/20">
-      <AdminSidebar staffEmail={staff.staffEmail} staffRole={staff.role} />
+      <AdminSidebar
+        staffEmail={staff.staffEmail}
+        staffRole={staff.role}
+        appName={branding.appName}
+        logoUrl={branding.defaultSidebarLogoLightUrl}
+      />
       <main className="flex-1 overflow-y-auto px-6 py-6 lg:px-10 lg:py-8">
         <AdminTrpcProvider>{children}</AdminTrpcProvider>
       </main>
