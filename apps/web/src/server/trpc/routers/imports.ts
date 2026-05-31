@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 
-import { ImportJobStatus, Role, withTenant } from '@getyn/db';
+import { ImportJobStatus, PlanMetric, Role, withTenant } from '@getyn/db';
 import type { Prisma } from '@getyn/db';
 import {
   cuidSchema,
@@ -13,6 +13,7 @@ import {
 
 import { getSupabaseAdmin } from '@/server/auth/supabase-admin';
 import { assertTenantActive } from '@/server/billing/assert-active';
+import { checkLimit } from '@/server/billing/assert-limit';
 import { enqueueImportJob } from '@/server/queues';
 
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
@@ -88,6 +89,20 @@ export const importsRouter = createTRPCRouter({
       const tenantId = ctx.tenantContext.tenant.id;
       // Phase 5 M4: block new imports on READ_ONLY / SUSPENDED / PURGING.
       await assertTenantActive(tenantId);
+      // Phase 5.5 M4: block imports when the tenant is already at the
+      // CONTACTS cap. Worker enforces per-row during ingest (out of
+      // scope here — landing as an M7.5 follow-up); this gate stops
+      // an obviously-doomed import from queuing at all.
+      const contacts = await checkLimit(tenantId, PlanMetric.CONTACTS, 0);
+      if (!contacts.allowed && contacts.limit !== -1) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message:
+            contacts.limit === 0
+              ? 'Your plan doesn\'t include contacts storage. Upgrade to import.'
+              : `You're at the contacts cap (${contacts.current}/${contacts.limit}). Upgrade or request a higher limit before importing.`,
+        });
+      }
 
       // Storage path sanity — it must live under this tenant's folder.
       if (!input.storagePath.startsWith(`${tenantId}/`)) {

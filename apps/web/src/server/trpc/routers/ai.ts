@@ -5,10 +5,11 @@ import {
   draftWhatsAppTemplate,
   isAiConfigured,
 } from '@getyn/ai';
-import { Role, prisma, withTenant } from '@getyn/db';
+import { PlanMetric, Role, prisma, withTenant } from '@getyn/db';
 import { aiDraftTemplateSchema } from '@getyn/types';
 
 import { assertTenantActive } from '@/server/billing/assert-active';
+import { assertWithinLimit } from '@/server/billing/assert-limit';
 
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
 
@@ -57,6 +58,9 @@ export const aiRouter = createTRPCRouter({
       // Phase 5 M4: AI generation is a paid surface — block under
       // READ_ONLY / SUSPENDED / PURGING.
       await assertTenantActive(tenantId);
+      // Phase 5.5 M4: monthly AI credit cap. One credit per
+      // generation today; tokens-based ledger is a future change.
+      await assertWithinLimit(tenantId, PlanMetric.AI_CREDITS_PER_MONTH, 1);
 
       // Rate limit — count completed generations in the last hour.
       // Reads via withTenant so RLS keeps tenants isolated.

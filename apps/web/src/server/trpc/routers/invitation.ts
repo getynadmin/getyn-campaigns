@@ -1,8 +1,9 @@
 import { TRPCError } from '@trpc/server';
-import { prisma, Role } from '@getyn/db';
+import { PlanMetric, prisma, Role } from '@getyn/db';
 import { emailSchema, roleSchema } from '@getyn/types';
 import { z } from 'zod';
 
+import { assertWithinLimit } from '@/server/billing/assert-limit';
 import { sendEmail } from '@/server/email/resend';
 import { buildInviteEmail } from '@/server/email/templates';
 import {
@@ -51,6 +52,29 @@ export const invitationRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       // Phase 5 M5: SSO-managed tenants block local invites.
       assertManagedDirectly(ctx.tenantContext.tenant);
+
+      // Phase 5.5 M4: seat cap. Counts existing memberships +
+      // non-expired pending invitations to prevent the "invite N
+      // people on a 10-seat plan and hope only some accept" exploit.
+      // Note: re-inviting the same email replaces the pending row
+      // below, so the count isn't double-charged for re-invites of
+      // the same address.
+      const alreadyPending = await prisma.invitation.count({
+        where: {
+          tenantId: ctx.tenantContext.tenant.id,
+          email: input.email,
+          acceptedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+      });
+      // Re-invite case: net delta is 0 (existing row will be
+      // deleted + recreated below). Fresh invite: delta is +1.
+      const delta = alreadyPending > 0 ? 0 : 1;
+      await assertWithinLimit(
+        ctx.tenantContext.tenant.id,
+        PlanMetric.USER_SEATS,
+        delta,
+      );
 
       // Prevent inviting existing members.
       const existingUser = await prisma.user.findUnique({

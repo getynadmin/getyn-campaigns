@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 
-import { LegacyPlanTier, Role, withTenant } from '@getyn/db';
+import { PlanMetric, Role, withTenant } from '@getyn/db';
 import {
   cuidSchema,
   sendingDomainCreateSchema,
@@ -9,6 +9,11 @@ import {
   sendingDomainVerifySchema,
 } from '@getyn/types';
 
+import { assertWithinLimit } from '@/server/billing/assert-limit';
+import {
+  countSendingDomains,
+} from '@/server/billing/measure-usage';
+import { resolveTenantLimit } from '@/server/billing/resolve-limits';
 import {
   createResendDomain,
   deleteResendDomain,
@@ -38,38 +43,42 @@ export const sendingDomainsRouter = createTRPCRouter({
     .input(sendingDomainListInputSchema)
     .query(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
-      return withTenant(tenantId, async (tx) => {
+      const rows = await withTenant(tenantId, async (tx) => {
         const where = {
           tenantId,
           ...(input.status ? { status: input.status } : {}),
         };
-        const rows = await tx.sendingDomain.findMany({
+        const items = await tx.sendingDomain.findMany({
           where,
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: input.limit + 1,
           ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
         });
         let nextCursor: string | null = null;
-        if (rows.length > input.limit) {
-          const next = rows.pop();
+        if (items.length > input.limit) {
+          const next = items.pop();
           nextCursor = next?.id ?? null;
         }
         const total = await tx.sendingDomain.count({ where });
-        return {
-          items: rows,
-          nextCursor,
-          total,
-          // Surface plan in the response so the UI can render the upgrade CTA
-          // without a separate fetch. STARTER + TRIAL are gated.
-          // NOTE: Phase 5.5 M4 will switch this gate to use the
-          // CUSTOM_SENDING_DOMAINS plan feature limit. Until then we
-          // keep the legacy enum gate (now via Tenant.legacyPlanTier).
-          plan: ctx.tenantContext.tenant.legacyPlanTier,
-          canManageDomains:
-            ctx.tenantContext.tenant.legacyPlanTier === LegacyPlanTier.GROWTH ||
-            ctx.tenantContext.tenant.legacyPlanTier === LegacyPlanTier.PRO,
-        };
+        return { items, nextCursor, total };
       });
+
+      // Phase 5.5 M4: gate on resolved CUSTOM_SENDING_DOMAINS limit
+      // (was: LegacyPlanTier GROWTH/PRO).  -1 = unlimited.
+      const [limit, current] = await Promise.all([
+        resolveTenantLimit(tenantId, PlanMetric.CUSTOM_SENDING_DOMAINS),
+        countSendingDomains(tenantId),
+      ]);
+      const canManageDomains = limit === -1 || current < limit;
+      return {
+        ...rows,
+        // Surface plan tier for legacy upgrade-CTA copy. M5 will rewrite
+        // the upgrade banner against the limit numbers directly.
+        plan: ctx.tenantContext.tenant.legacyPlanTier,
+        canManageDomains,
+        sendingDomainLimit: limit,
+        sendingDomainUsage: current,
+      };
     }),
 
   create: tenantProcedure
@@ -77,17 +86,14 @@ export const sendingDomainsRouter = createTRPCRouter({
     .input(sendingDomainCreateSchema)
     .mutation(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
-      const plan = ctx.tenantContext.tenant.legacyPlanTier;
 
-      // Plan gate (matches list-side `canManageDomains`).
-      // M4 will replace this with the CUSTOM_SENDING_DOMAINS limit check.
-      if (plan === LegacyPlanTier.TRIAL || plan === LegacyPlanTier.STARTER) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message:
-            'Custom sending domains require the Growth or Pro plan. Starter tenants send from the shared @getynmail.com domain.',
-        });
-      }
+      // Phase 5.5 M4: gate on resolved CUSTOM_SENDING_DOMAINS limit.
+      // Throws FORBIDDEN with customer-facing copy on overflow.
+      await assertWithinLimit(
+        tenantId,
+        PlanMetric.CUSTOM_SENDING_DOMAINS,
+        1,
+      );
 
       // Reject duplicates early so we don't create on Resend then fail at
       // the DB layer (which would orphan a Resend domain).

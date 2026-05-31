@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   CampaignStatus,
   Channel,
+  PlanMetric,
   Prisma,
   Role,
   ContactChannelStatus,
@@ -34,6 +35,7 @@ import {
   type SegmentCustomFieldEntry,
 } from '@getyn/db';
 import { assertTenantActive } from '@/server/billing/assert-active';
+import { assertWithinLimit } from '@/server/billing/assert-limit';
 import { enqueuePrepareCampaign } from '@/server/queues';
 
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
@@ -898,6 +900,15 @@ async function runPreFlightAndTransition(args: {
             : 'All segment members are suppressed — no one would receive this campaign.',
       });
     }
+
+    // Phase 5.5 M4: plan limit check. Delta is the recipient count
+    // after suppression — that's how many sends we'd actually queue.
+    // Resolver short-circuits on unlimited plans.
+    await assertWithinLimit(
+      tenantId,
+      PlanMetric.EMAILS_PER_MONTH,
+      recipients.afterSuppression,
+    );
 
     // Content scan must not have errors. Warnings are accepted at this
     // layer (the UI confirms them); only hard errors block.

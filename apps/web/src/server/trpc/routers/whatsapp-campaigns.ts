@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import {
   CampaignStatus,
   CampaignType,
+  PlanMetric,
   Role,
   WAStatus,
   WATemplateStatus,
@@ -20,6 +21,7 @@ import {
 } from '@getyn/types';
 
 import { assertTenantActive } from '@/server/billing/assert-active';
+import { assertWithinLimit } from '@/server/billing/assert-limit';
 import { enqueuePrepareWaCampaign } from '@/server/queues';
 
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
@@ -230,6 +232,10 @@ export const whatsAppCampaignsRouter = createTRPCRouter({
         });
       }
 
+      // Phase 5.5 M4: plan limit pre-check. See comment on sendNow.
+      await assertTenantActive(tenantId);
+      await assertWithinLimit(tenantId, PlanMetric.WA_MESSAGES_PER_MONTH, 1);
+
       const campaign = await withTenant(tenantId, async (tx) => {
         const camp = await tx.campaign.findFirst({
           where: { id: input.id, tenantId, type: CampaignType.WHATSAPP },
@@ -274,6 +280,13 @@ export const whatsAppCampaignsRouter = createTRPCRouter({
       // Phase 5 M4: block WA sends on READ_ONLY / SUSPENDED / PURGING.
       await assertTenantActive(ctx.tenantContext.tenant.id);
       const tenantId = ctx.tenantContext.tenant.id;
+      // Phase 5.5 M4: plan limit check. Delta is 1 here — recipient-
+      // count is not computed at the router layer for WA (segment
+      // compilation happens later in the prepare worker). This catches
+      // "plan doesn't include WA" + "already at cap" but lets a 5k-
+      // recipient campaign through at cap-1; per-send enforcement in
+      // the prepare worker is the M7.5 follow-up.
+      await assertWithinLimit(tenantId, PlanMetric.WA_MESSAGES_PER_MONTH, 1);
       const updated = await withTenant(tenantId, async (tx) => {
         const camp = await tx.campaign.findFirst({
           where: { id: input.id, tenantId, type: CampaignType.WHATSAPP },
