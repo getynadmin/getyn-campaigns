@@ -10,6 +10,7 @@ const tabs = [
   { key: 'team', label: 'Team' },
   { key: 'custom-fields', label: 'Custom fields' },
   { key: 'sending-domains', label: 'Sending domains' },
+  { key: 'subscription', label: 'Subscription' },
   { key: 'billing', label: 'Billing' },
   { key: 'channels', label: 'Channels' },
 ] as const;

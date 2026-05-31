@@ -12,6 +12,7 @@ import { onboardingRouter } from './routers/onboarding';
 import { segmentsRouter } from './routers/segments';
 import { sendingDomainsRouter } from './routers/sending-domains';
 import { signupRouter } from './routers/signup';
+import { subscriptionRouter } from './routers/subscription';
 import { suppressionRouter } from './routers/suppression';
 import { tagsRouter } from './routers/tags';
 import { tenantRouter } from './routers/tenant';
@@ -50,6 +51,8 @@ export const appRouter = createTRPCRouter({
   ai: aiRouter,
   // Phase 5 M2 — per-device session management
   userSessions: userSessionsRouter,
+  // Phase 5.5 M5 — tenant subscription view + upgrade requests
+  subscription: subscriptionRouter,
 });
 
 export type AppRouter = typeof appRouter;
