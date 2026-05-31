@@ -4,9 +4,11 @@ import {
   ClipboardList,
   Database,
   KeyRound,
+  Layers,
   LayoutDashboard,
   ScrollText,
   Server,
+  Settings,
   ShieldCheck,
   Users,
 } from 'lucide-react';
@@ -30,10 +32,12 @@ export const dynamic = 'force-dynamic';
 
 const NAV = [
   { href: '/admin/tenants', label: 'Tenants', icon: Database },
+  { href: '/admin/plans', label: 'Plans', icon: Layers },
   { href: '/admin/audit-log', label: 'Audit log', icon: ScrollText },
   { href: '/admin/webhook-log', label: 'Webhooks', icon: ClipboardList },
   { href: '/admin/queues', label: 'Queues', icon: Server },
   { href: '/admin/staff', label: 'Staff', icon: Users },
+  { href: '/admin/settings', label: 'Settings', icon: Settings },
 ];
 
 export default async function AdminLayout({
