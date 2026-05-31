@@ -5,6 +5,7 @@ import { adminImpersonationRouter } from './routers/admin-impersonation';
 import { adminPlansRouter } from './routers/admin-plans';
 import { adminStaffRouter } from './routers/admin-staff';
 import { adminTenantsRouter } from './routers/admin-tenants';
+import { adminUpgradeRequestsRouter } from './routers/admin-upgrade-requests';
 import { createAdminCallerFactory, createAdminRouter } from './admin-trpc';
 
 /**
@@ -25,6 +26,8 @@ export const adminRouter = createAdminRouter({
   // Phase 5.5 M2 — local plan management.
   plan: adminPlansRouter,
   appSettings: adminAppSettingsRouter,
+  // Phase 5.5 M6 — upgrade request review queue.
+  upgradeRequest: adminUpgradeRequestsRouter,
 });
 
 export type AdminRouter = typeof adminRouter;

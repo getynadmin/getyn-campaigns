@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
+  ArrowUpCircle,
   ClipboardList,
   Database,
   KeyRound,
@@ -33,6 +34,7 @@ export const dynamic = 'force-dynamic';
 const NAV = [
   { href: '/admin/tenants', label: 'Tenants', icon: Database },
   { href: '/admin/plans', label: 'Plans', icon: Layers },
+  { href: '/admin/upgrade-requests', label: 'Upgrade requests', icon: ArrowUpCircle },
   { href: '/admin/audit-log', label: 'Audit log', icon: ScrollText },
   { href: '/admin/webhook-log', label: 'Webhooks', icon: ClipboardList },
   { href: '/admin/queues', label: 'Queues', icon: Server },
