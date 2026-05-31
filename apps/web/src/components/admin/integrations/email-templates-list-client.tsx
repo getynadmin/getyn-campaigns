@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { Pencil } from 'lucide-react';
 
-import { SystemEmailTemplateCategory } from '@getyn/db';
+import type { SystemEmailTemplateCategory } from '@getyn/db';
 
 import {
   Select,

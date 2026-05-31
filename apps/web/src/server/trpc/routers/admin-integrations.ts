@@ -11,6 +11,18 @@ import {
   saveIntegration,
 } from '@/server/integrations/credential-store';
 import {
+  checkWorkerHealth,
+  getRailwayWorker,
+  type RailwayConfig,
+  type RailwaySecrets,
+} from '@/server/integrations/railway';
+import {
+  getResendCredentials,
+  testResendCredentials,
+  type ResendConfig,
+  type ResendSecrets,
+} from '@/server/integrations/resend';
+import {
   getSmtpCredentials,
   sendViaSmtp,
   type SmtpConfig,
@@ -380,6 +392,188 @@ const emailTemplateRouter = createAdminRouter({
 });
 
 // =====================================================================
+// Resend (tenant campaign email) — provider='resend'
+// =====================================================================
+
+const resendUpdateSchema = z.object({
+  apiKey: z.string().max(2_000).default(''),
+  defaultFromEmail: z.string().trim().email().or(z.literal('')).default(''),
+  webhookSigningSecret: z.string().max(2_000).default(''),
+  enabled: z.boolean(),
+});
+
+const resendRouter = createAdminRouter({
+  get: staffProcedure.query(async () => {
+    const row = await adminLoadIntegration<ResendConfig, ResendSecrets>(
+      'resend',
+    );
+    const live = await getResendCredentials();
+    return {
+      provider: 'resend' as const,
+      enabled: row?.enabled ?? false,
+      config: {
+        defaultFromEmail: row?.config.defaultFromEmail ?? '',
+      },
+      hasSecrets: row?.hasSecrets ?? false,
+      lastTestedAt: row?.lastTestedAt ?? null,
+      lastTestStatus: row?.lastTestStatus ?? ('UNTESTED' as const),
+      lastTestError: row?.lastTestError ?? null,
+      liveSource: live.source,
+    };
+  }),
+
+  update: supportAdminProcedure
+    .input(resendUpdateSchema)
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async () => {
+        const existing = await adminLoadIntegration<ResendConfig, ResendSecrets>(
+          'resend',
+        );
+        const config = { defaultFromEmail: input.defaultFromEmail };
+        const incomingKey = input.apiKey.trim();
+        const incomingHook = input.webhookSigningSecret.trim();
+        const keepBoth = incomingKey === '' && incomingHook === '';
+        const secretsPayload: Record<string, unknown> | null = keepBoth
+          ? null
+          : {
+              apiKey:
+                incomingKey !== ''
+                  ? incomingKey
+                  : (existing?.secrets?.apiKey ?? ''),
+              webhookSigningSecret:
+                incomingHook !== ''
+                  ? incomingHook
+                  : (existing?.secrets?.webhookSigningSecret ?? ''),
+            };
+        await saveIntegration({
+          provider: 'resend',
+          config: config as Record<string, unknown>,
+          secrets: secretsPayload,
+          enabled: input.enabled,
+          staffUserId: ctx.staff.staffUserId,
+        });
+        return {
+          result: { ok: true as const },
+          audit: {
+            action: 'admin.integration.resend.updated',
+            beforeSnapshot: existing
+              ? { enabled: existing.enabled, config: existing.config }
+              : null,
+            afterSnapshot: { enabled: input.enabled, config },
+          },
+        };
+      });
+    }),
+
+  test: supportAdminProcedure.mutation(async () => {
+    const creds = await getResendCredentials();
+    if (!creds.apiKey) {
+      const error = 'API key is required to test.';
+      await recordTestResult({ provider: 'resend', ok: false, error });
+      throw new TRPCError({ code: 'BAD_REQUEST', message: error });
+    }
+    const result = await testResendCredentials({ apiKey: creds.apiKey });
+    await recordTestResult({
+      provider: 'resend',
+      ok: result.ok,
+      error: result.error,
+    });
+    if (!result.ok) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: result.error ?? 'Test failed.',
+      });
+    }
+    return { ok: true as const };
+  }),
+});
+
+// =====================================================================
+// Railway Worker API — provider='railway_worker'
+// =====================================================================
+
+const railwayUpdateSchema = z.object({
+  workerUrl: z.string().trim().url().or(z.literal('')).default(''),
+  projectToken: z.string().max(2_000).default(''),
+  enabled: z.boolean(),
+});
+
+const railwayRouter = createAdminRouter({
+  get: staffProcedure.query(async () => {
+    const row = await adminLoadIntegration<RailwayConfig, RailwaySecrets>(
+      'railway_worker',
+    );
+    return {
+      provider: 'railway_worker' as const,
+      enabled: row?.enabled ?? false,
+      config: { workerUrl: row?.config.workerUrl ?? '' },
+      hasSecrets: row?.hasSecrets ?? false,
+      lastTestedAt: row?.lastTestedAt ?? null,
+      lastTestStatus: row?.lastTestStatus ?? ('UNTESTED' as const),
+      lastTestError: row?.lastTestError ?? null,
+    };
+  }),
+
+  update: supportAdminProcedure
+    .input(railwayUpdateSchema)
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async () => {
+        const existing = await adminLoadIntegration<
+          RailwayConfig,
+          RailwaySecrets
+        >('railway_worker');
+        const config = { workerUrl: input.workerUrl };
+        const incomingToken = input.projectToken.trim();
+        const secretsPayload: Record<string, unknown> | null =
+          incomingToken === '' ? null : { projectToken: incomingToken };
+        await saveIntegration({
+          provider: 'railway_worker',
+          config: config as Record<string, unknown>,
+          secrets: secretsPayload,
+          enabled: input.enabled,
+          staffUserId: ctx.staff.staffUserId,
+        });
+        return {
+          result: { ok: true as const },
+          audit: {
+            action: 'admin.integration.railway.updated',
+            beforeSnapshot: existing
+              ? { enabled: existing.enabled, config: existing.config }
+              : null,
+            afterSnapshot: { enabled: input.enabled, config },
+          },
+        };
+      });
+    }),
+
+  test: supportAdminProcedure.mutation(async () => {
+    const railway = await getRailwayWorker();
+    if (!railway.workerUrl) {
+      const error = 'Worker URL is required to test.';
+      await recordTestResult({
+        provider: 'railway_worker',
+        ok: false,
+        error,
+      });
+      throw new TRPCError({ code: 'BAD_REQUEST', message: error });
+    }
+    const result = await checkWorkerHealth({ workerUrl: railway.workerUrl });
+    await recordTestResult({
+      provider: 'railway_worker',
+      ok: result.ok,
+      error: result.error,
+    });
+    if (!result.ok) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: result.error ?? 'Health check failed.',
+      });
+    }
+    return { ok: true as const };
+  }),
+});
+
+// =====================================================================
 // Top-level admin.integrations router — fans out per provider.
 // =====================================================================
 
@@ -389,4 +583,6 @@ export const adminIntegrationsRouter = createAdminRouter({
   whatsApp: whatsAppRouter,
   smtp: smtpRouter,
   emailTemplate: emailTemplateRouter,
+  resend: resendRouter,
+  railway: railwayRouter,
 });

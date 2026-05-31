@@ -1,3 +1,5 @@
+import { SendingServersClient } from '@/components/admin/integrations/sending-servers-client';
+
 export const metadata = { title: 'Sending Servers · Integrations' };
 
 export default function AdminSendingServersPage(): JSX.Element {
@@ -6,12 +8,11 @@ export default function AdminSendingServersPage(): JSX.Element {
       <header>
         <h1 className="font-display text-xl font-semibold">Sending Servers</h1>
         <p className="text-sm text-muted-foreground">
-          Coming in Phase 5.6 M4a.
+          Providers for outbound traffic. Resend powers tenant campaigns;
+          Railway hosts the worker fleet.
         </p>
       </header>
-      <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-        Resend + Railway tabs land in M4.
-      </div>
+      <SendingServersClient />
     </div>
   );
 }

@@ -6,7 +6,7 @@ import type {
   SendingDomainStatusValue,
 } from '@getyn/types';
 
-import { serverEnv } from '@/lib/env';
+import { getResendCredentials } from '@/server/integrations/resend';
 
 /**
  * Resend domain operations wrapper. The send-email path lives in `./resend.ts`;
@@ -72,9 +72,9 @@ function mapRecord(r: unknown): SendingDomainDnsRecord {
   };
 }
 
-function client(): Resend | null {
-  const key = serverEnv.resendApiKey();
-  return key ? new Resend(key) : null;
+async function client(): Promise<Resend | null> {
+  const { apiKey } = await getResendCredentials();
+  return apiKey ? new Resend(apiKey) : null;
 }
 
 function stubRecords(domain: string): SendingDomainDnsRecord[] {
@@ -101,7 +101,7 @@ function stubRecords(domain: string): SendingDomainDnsRecord[] {
 export async function createResendDomain(
   domain: string,
 ): Promise<CreateDomainResult> {
-  const c = client();
+  const c = await client();
   if (!c) {
     console.info(`[resend:stub] createDomain(${domain}) — no API key, stubbing`);
     return {
@@ -127,7 +127,7 @@ export async function createResendDomain(
 export async function getResendDomain(
   resendDomainId: string,
 ): Promise<DomainStatusResult> {
-  const c = client();
+  const c = await client();
   if (!c) {
     console.info(
       `[resend:stub] getDomain(${resendDomainId}) — no API key, stubbing as PENDING`,
@@ -158,7 +158,7 @@ export async function getResendDomain(
 export async function verifyResendDomain(
   resendDomainId: string,
 ): Promise<DomainStatusResult> {
-  const c = client();
+  const c = await client();
   if (!c) {
     console.info(
       `[resend:stub] verifyDomain(${resendDomainId}) — flipping to VERIFIED in dev`,
@@ -180,7 +180,7 @@ export async function verifyResendDomain(
 export async function deleteResendDomain(
   resendDomainId: string,
 ): Promise<void> {
-  const c = client();
+  const c = await client();
   if (!c) {
     console.info(
       `[resend:stub] deleteDomain(${resendDomainId}) — no-op in dev`,

@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 import { Resend } from 'resend';
 
-import { serverEnv } from '@/lib/env';
+import { getResendCredentials } from '@/server/integrations/resend';
 
 export interface SendEmailArgs {
   to: string;
@@ -19,12 +19,16 @@ export interface SendEmailArgs {
  * needing a Resend account.
  */
 export async function sendEmail({ to, subject, html, text }: SendEmailArgs): Promise<void> {
-  const apiKey = serverEnv.resendApiKey();
+  // Phase 5.6 M4a: prefer DB-stored Resend credentials, env fallback
+  // preserved (RESEND_API_KEY + RESEND_FROM_EMAIL).
+  const creds = await getResendCredentials();
+  const apiKey = creds.apiKey;
+  const from = creds.defaultFromEmail ?? '';
 
   if (!apiKey) {
-    console.info('[email:stub] no RESEND_API_KEY — logging instead of sending');
+    console.info('[email:stub] no Resend API key — logging instead of sending');
     console.info(`[email:stub] to:      ${to}`);
-    console.info(`[email:stub] from:    ${serverEnv.resendFromEmail()}`);
+    console.info(`[email:stub] from:    ${from}`);
     console.info(`[email:stub] subject: ${subject}`);
     console.info('[email:stub] ----- text -----');
     console.info(text);
@@ -34,7 +38,7 @@ export async function sendEmail({ to, subject, html, text }: SendEmailArgs): Pro
 
   const resend = new Resend(apiKey);
   const { error } = await resend.emails.send({
-    from: serverEnv.resendFromEmail(),
+    from,
     to,
     subject,
     html,

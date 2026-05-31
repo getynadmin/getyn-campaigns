@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import * as Sentry from '@sentry/nextjs';
 import { NextResponse, type NextRequest } from 'next/server';
 
+import { getResendCredentials } from '@/server/integrations/resend';
 import { enqueueResendWebhookEvent } from '@/server/queues';
 
 /**
@@ -37,15 +38,14 @@ import { enqueueResendWebhookEvent } from '@/server/queues';
  * so the worker has the same signal.
  */
 
-const SECRET = process.env.RESEND_WEBHOOK_SECRET;
 const TIMESTAMP_TOLERANCE_S = 5 * 60;
 
-function getSigningKey(): Buffer | null {
-  if (!SECRET) return null;
+function getSigningKey(secret: string | null): Buffer | null {
+  if (!secret) return null;
   // Svix secret format: `whsec_<base64>`.
-  const stripped = SECRET.startsWith('whsec_')
-    ? SECRET.slice('whsec_'.length)
-    : SECRET;
+  const stripped = secret.startsWith('whsec_')
+    ? secret.slice('whsec_'.length)
+    : secret;
   try {
     return Buffer.from(stripped, 'base64');
   } catch {
@@ -54,12 +54,15 @@ function getSigningKey(): Buffer | null {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const key = getSigningKey();
+  // Phase 5.6 M4a: prefer DB-stored Resend webhook signing secret,
+  // fall back to RESEND_WEBHOOK_SECRET env.
+  const { webhookSigningSecret: SECRET } = await getResendCredentials();
+  const key = getSigningKey(SECRET);
   if (!SECRET || !key || key.length === 0) {
     // No secret set — refuse to process. Otherwise an attacker who
     // knew the URL could send arbitrary "events" that mutate our DB.
     console.error(
-      '[webhook:resend] RESEND_WEBHOOK_SECRET unset or unparseable; rejecting request',
+      '[webhook:resend] webhook signing secret unset or unparseable (DB + env); rejecting request',
     );
     return NextResponse.json(
       { error: 'Webhook receiver not configured.' },
