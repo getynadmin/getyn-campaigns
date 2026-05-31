@@ -82,3 +82,30 @@
     @apply font-display tracking-tight;
   }
 }
+
+/* Phase 5.7 — auth marketing panel animations.
+   Subtle float for the channel icons + a slow dash march on the
+   connector lines so the right column feels alive without being
+   distracting. */
+@keyframes auth-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes auth-dash-march {
+  to { stroke-dashoffset: -24; }
+}
+@keyframes auth-orb-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(8px, -10px, 0) scale(1.05); }
+}
+.auth-float { animation: auth-float 4s ease-in-out infinite; }
+.auth-dash { animation: auth-dash-march 3s linear infinite; }
+.auth-orb { animation: auth-orb-drift 9s ease-in-out infinite; }
+
+/* Faint grid texture for the dark left column. */
+.auth-grid {
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.04) 1px, transparent 1px);
+  background-size: 36px 36px;
+}

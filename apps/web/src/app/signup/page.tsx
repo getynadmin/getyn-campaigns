@@ -1,53 +1,49 @@
 import Link from 'next/link';
+import { Suspense } from 'react';
 
-import { GoogleButton } from '@/components/auth/google-button';
-import { SignupForm } from '@/components/auth/signup-form';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
+import { AuthLayout } from '@/components/auth/auth-layout';
+import { SignupFormLight } from '@/components/auth/signup-form-light';
 
 export const metadata = {
-  title: 'Create your workspace',
+  title: 'Create your account',
 };
 
-export default function SignupPage(): JSX.Element {
+export const dynamic = 'force-dynamic';
+
+/**
+ * Phase 5.7 — redesigned /signup.
+ *
+ * Two-column shell: light left (form), animated marketing panel right.
+ * Form logic untouched — calls trpc.signup.create, routes into the
+ * new workspace on success.
+ */
+export default async function SignupPage(): Promise<JSX.Element> {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-muted/30 px-6 py-12">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Create your workspace</CardTitle>
-          <CardDescription>
-            14-day free trial. No credit card required.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <GoogleButton label="Sign up with Google" />
-          <div className="relative">
-            <Separator />
-            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-xs uppercase tracking-wide text-muted-foreground">
-              or
-            </span>
-          </div>
-          <SignupForm />
-        </CardContent>
-        <CardFooter className="justify-center text-sm text-muted-foreground">
-          <span>
-            Already have a workspace?{' '}
-            <Link
-              href="/login"
-              className="font-medium text-foreground underline-offset-4 hover:underline"
-            >
-              Log in
-            </Link>
-          </span>
-        </CardFooter>
-      </Card>
-    </main>
+    <AuthLayout theme="light">
+      <div className="space-y-2">
+        <h1 className="font-display text-3xl font-semibold tracking-tight text-foreground">
+          Create your account
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Set up your workspace and start sending campaigns.
+        </p>
+      </div>
+
+      <div className="mt-8">
+        <Suspense>
+          <SignupFormLight />
+        </Suspense>
+      </div>
+
+      <p className="mt-8 text-center text-sm text-muted-foreground">
+        Already have an account?{' '}
+        <Link
+          href="/login"
+          className="font-medium text-foreground underline-offset-4 hover:underline"
+        >
+          Sign in
+        </Link>
+      </p>
+    </AuthLayout>
   );
 }
