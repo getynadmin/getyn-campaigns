@@ -84,19 +84,18 @@ describe('deriveTenantState', () => {
     });
   });
 
-  describe('without a BillingSubscription (Phase 1 fallback)', () => {
-    it('reports ACTIVE on TRIALING / ACTIVE', () => {
+  describe('without a Subscription (legacy or drift)', () => {
+    // Phase 5.5 M0 dropped the legacy `Tenant.billingStatus` fallback —
+    // when no Subscription is present we default to ACTIVE (the
+    // backfill gives every tenant one; this branch is defense-in-depth
+    // for pre-backfill drift only).
+    it('reports ACTIVE regardless of legacy billingStatus', () => {
       expect(deriveTenantState(tenant('TRIALING'), null).mode).toBe('ACTIVE');
       expect(deriveTenantState(tenant('ACTIVE'), null).mode).toBe('ACTIVE');
+      expect(deriveTenantState(tenant('CANCELED'), null).mode).toBe('ACTIVE');
     });
 
-    it('reports READ_ONLY when legacy enum says CANCELED', () => {
-      const state = deriveTenantState(tenant('CANCELED'), null);
-      expect(state.mode).toBe('READ_ONLY');
-      expect(state.blocksWrites).toBe(true);
-    });
-
-    it('reports PURGING when settings.purging=true', () => {
+    it('still reports PURGING when settings.purging=true', () => {
       const state = deriveTenantState(
         tenant('ACTIVE', { purging: true }),
         null,
@@ -107,20 +106,17 @@ describe('deriveTenantState', () => {
     });
   });
 
-  describe('BillingSubscription wins over legacy enum on conflict', () => {
-    // The subscription mirror is the source of truth post-M3. If
-    // legacy says CANCELED but the mirror says ACTIVE (re-activation
-    // mid-sync), trust the mirror.
-    it('mirror=ACTIVE overrides legacy=CANCELED', () => {
-      expect(
-        deriveTenantState(tenant('CANCELED'), sub('ACTIVE')).mode,
-      ).toBe('ACTIVE');
-    });
-
-    it('mirror=SUSPENDED overrides legacy=ACTIVE', () => {
+  describe('Subscription mirror is the only state source post-M0', () => {
+    it('mirror=SUSPENDED is SUSPENDED', () => {
       expect(
         deriveTenantState(tenant('ACTIVE'), sub('SUSPENDED')).mode,
       ).toBe('SUSPENDED');
+    });
+
+    it('mirror=ACTIVE is ACTIVE', () => {
+      expect(
+        deriveTenantState(tenant('CANCELED'), sub('ACTIVE')).mode,
+      ).toBe('ACTIVE');
     });
   });
 });

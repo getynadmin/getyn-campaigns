@@ -11,6 +11,7 @@
  * like product copy, not a stack trace.
  */
 import { TRPCError } from '@trpc/server';
+import * as Sentry from '@sentry/nextjs';
 
 import type { PlanMetric } from '@getyn/db';
 
@@ -70,5 +71,18 @@ export async function assertWithinLimit(
     result.limit === 0
       ? `Your plan doesn't include ${label}. Upgrade to unlock this feature.`
       : `You'd exceed your ${label} limit (${result.current}/${result.limit}). Upgrade your plan or request a higher limit.`;
+  // Phase 5.5 M8: observability hook so cap-hits land as breadcrumbs
+  // on the surrounding tRPC error trace AND we can grep Sentry by
+  // tenantId + metric to spot tenants chronically at-cap (upgrade
+  // pipeline signal).
+  Sentry.captureMessage('billing.limit.exceeded', {
+    level: 'warning',
+    tags: { metric, tenantId, kind: 'plan_limit' },
+    extra: {
+      limit: result.limit,
+      current: result.current,
+      delta: result.delta,
+    },
+  });
   throw new TRPCError({ code: 'FORBIDDEN', message });
 }
