@@ -1,13 +1,24 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
-import { CampaignStatus, WAStatus, prisma, type Prisma } from '@getyn/db';
+import {
+  CampaignStatus,
+  PlanMetric,
+  SubscriptionStatus,
+  WAStatus,
+  prisma,
+  type Prisma,
+} from '@getyn/db';
 
 import {
   auditStaffAccess,
   withAdminContext,
 } from '@/server/admin/with-admin-context';
-import { createAdminRouter, staffProcedure } from '../admin-trpc';
+import {
+  createAdminRouter,
+  staffProcedure,
+  supportAdminProcedure,
+} from '../admin-trpc';
 
 /**
  * Phase 5 M7 — admin.tenant.*
@@ -134,6 +145,9 @@ export const adminTenantsRouter = createAdminRouter({
           whatsAppAccount: { include: { phoneNumbers: true } },
           sendingDomains: true,
           sendingPolicy: true,
+          // Phase 5.5 M3: surface staff-set overrides on the detail
+          // page so support can see + manage them inline.
+          limitOverrides: { orderBy: { createdAt: 'desc' } },
           _count: {
             select: {
               contacts: true,
@@ -297,6 +311,215 @@ export const adminTenantsRouter = createAdminRouter({
             targetTenantId: input.id,
             beforeSnapshot: before,
             afterSnapshot: updated,
+            reason: input.reason,
+          },
+        };
+      });
+    }),
+
+  // -------------------------------------------------------------------
+  // Phase 5.5 M3 — plan assignment + limit overrides.
+  // -------------------------------------------------------------------
+
+  /**
+   * Assign or change a tenant's plan. Upsert semantics: creates the
+   * Subscription row when missing (first-time assignment from staff),
+   * otherwise updates planId / status / currentPeriodEnd.
+   *
+   * Archived plans are rejected so we don't accidentally park a paying
+   * tenant on a retired tier. Reason required for the audit log.
+   */
+  setSubscription: supportAdminProcedure
+    .input(
+      z.object({
+        tenantId: z.string().min(1).max(64),
+        planId: z.string().min(1).max(64),
+        status: z.nativeEnum(SubscriptionStatus).default(SubscriptionStatus.ACTIVE),
+        currentPeriodEnd: z.coerce.date().optional(),
+        reason: z.string().trim().min(3).max(500),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async (tx) => {
+        const [tenant, plan] = await Promise.all([
+          tx.tenant.findUnique({
+            where: { id: input.tenantId },
+            select: { id: true },
+          }),
+          tx.plan.findUnique({
+            where: { id: input.planId },
+            select: { id: true, isArchived: true },
+          }),
+        ]);
+        if (!tenant) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Tenant not found.' });
+        }
+        if (!plan) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Plan not found.' });
+        }
+        if (plan.isArchived) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Archived plans cannot be assigned.',
+          });
+        }
+        const before = await tx.subscription.findUnique({
+          where: { tenantId: input.tenantId },
+        });
+        const data = {
+          planId: input.planId,
+          status: input.status,
+          currentPeriodEnd: input.currentPeriodEnd ?? null,
+          assignedByStaffUserId: ctx.staff.staffUserId,
+          assignedAt: new Date(),
+          // Clearing cancelAt on re-assignment — staff is explicitly
+          // reactivating; the cancel grace window no longer applies.
+          cancelAt: null,
+        };
+        const updated = before
+          ? await tx.subscription.update({
+              where: { tenantId: input.tenantId },
+              data,
+            })
+          : await tx.subscription.create({
+              data: { tenantId: input.tenantId, ...data },
+            });
+        return {
+          result: updated,
+          audit: {
+            action: before
+              ? 'admin.tenant.subscription_updated'
+              : 'admin.tenant.subscription_assigned',
+            targetTenantId: input.tenantId,
+            targetEntityId: updated.id,
+            beforeSnapshot: before,
+            afterSnapshot: updated,
+            reason: input.reason,
+          },
+        };
+      });
+    }),
+
+  /**
+   * Cancel a tenant's subscription. Sets status=CANCELED + cancelAt=now.
+   * Doesn't delete the row — keeping it preserves the planId for
+   * historical reporting and lets a follow-up setSubscription reuse it.
+   */
+  cancelSubscription: supportAdminProcedure
+    .input(reasonSchema)
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async (tx) => {
+        const sub = await tx.subscription.findUnique({
+          where: { tenantId: input.id },
+        });
+        if (!sub) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: 'Tenant has no subscription to cancel.',
+          });
+        }
+        const before = { status: sub.status, cancelAt: sub.cancelAt };
+        const updated = await tx.subscription.update({
+          where: { tenantId: input.id },
+          data: {
+            status: SubscriptionStatus.CANCELED,
+            cancelAt: new Date(),
+          },
+          select: { status: true, cancelAt: true },
+        });
+        return {
+          result: updated,
+          audit: {
+            action: 'admin.tenant.subscription_canceled',
+            targetTenantId: input.id,
+            beforeSnapshot: before,
+            afterSnapshot: updated,
+            reason: input.reason,
+          },
+        };
+      });
+    }),
+
+  /**
+   * Add a per-tenant limit override. Stacks on top of plan features —
+   * the resolver picks the override over the plan default for the
+   * given metric. Optional `expiresAt` lets ops grant a temporary
+   * bump (e.g., during a launch). Multiple overrides on the same
+   * metric are allowed; the resolver picks the most recent non-expired.
+   */
+  addLimitOverride: supportAdminProcedure
+    .input(
+      z.object({
+        tenantId: z.string().min(1).max(64),
+        metric: z.nativeEnum(PlanMetric),
+        included: z.number().int().min(-1).max(1_000_000_000),
+        reason: z.string().trim().min(3).max(500),
+        expiresAt: z.coerce.date().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async (tx) => {
+        const tenant = await tx.tenant.findUnique({
+          where: { id: input.tenantId },
+          select: { id: true },
+        });
+        if (!tenant) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Tenant not found.' });
+        }
+        const created = await tx.tenantLimitOverride.create({
+          data: {
+            tenantId: input.tenantId,
+            metric: input.metric,
+            included: input.included,
+            reason: input.reason,
+            expiresAt: input.expiresAt ?? null,
+            createdByStaffUserId: ctx.staff.staffUserId,
+          },
+        });
+        return {
+          result: created,
+          audit: {
+            action: 'admin.tenant.limit_override_added',
+            targetTenantId: input.tenantId,
+            targetEntityId: created.id,
+            afterSnapshot: created,
+            reason: input.reason,
+          },
+        };
+      });
+    }),
+
+  /**
+   * Remove an override row by id (hard delete — there's no history
+   * to preserve beyond the audit row).
+   */
+  removeLimitOverride: supportAdminProcedure
+    .input(
+      z.object({
+        tenantId: z.string().min(1).max(64),
+        overrideId: z.string().min(1).max(64),
+        reason: z.string().trim().min(3).max(500),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async (tx) => {
+        const row = await tx.tenantLimitOverride.findUnique({
+          where: { id: input.overrideId },
+        });
+        if (!row || row.tenantId !== input.tenantId) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: 'Override not found on this tenant.',
+          });
+        }
+        await tx.tenantLimitOverride.delete({ where: { id: row.id } });
+        return {
+          result: { ok: true as const },
+          audit: {
+            action: 'admin.tenant.limit_override_removed',
+            targetTenantId: input.tenantId,
+            targetEntityId: row.id,
+            beforeSnapshot: row,
             reason: input.reason,
           },
         };
