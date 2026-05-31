@@ -1,3 +1,5 @@
+import { EmailTemplatesListClient } from '@/components/admin/integrations/email-templates-list-client';
+
 export const metadata = { title: 'Email Templates · Integrations' };
 
 export default function AdminEmailTemplatesPage(): JSX.Element {
@@ -6,12 +8,12 @@ export default function AdminEmailTemplatesPage(): JSX.Element {
       <header>
         <h1 className="font-display text-xl font-semibold">Email Templates</h1>
         <p className="text-sm text-muted-foreground">
-          Coming in Phase 5.6 M3b.
+          System notification templates (welcome, password reset, plan upgrades,
+          impersonation notices, …). Edit copy, subject lines, and variables;
+          system templates can&apos;t be deleted.
         </p>
       </header>
-      <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-        Template list + editor lands in M3.
-      </div>
+      <EmailTemplatesListClient />
     </div>
   );
 }
