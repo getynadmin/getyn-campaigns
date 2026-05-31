@@ -18,7 +18,6 @@ import {
   XCircle,
 } from 'lucide-react';
 
-import type { LegacyPlanTier } from '@getyn/db';
 import {
   sendingDomainCreateSchema,
   type SendingDomainCreateInput,
@@ -81,15 +80,17 @@ function StatusIcon({ status }: { status: SendingDomainStatusValue }): JSX.Eleme
 
 export function SendingDomainsClient({
   canManage,
-  planAllowsDomains,
-  plan,
 }: {
   canManage: boolean;
-  planAllowsDomains: boolean;
-  plan: LegacyPlanTier;
 }): JSX.Element {
   const utils = api.useUtils();
   const { data, isLoading } = api.sendingDomain.list.useQuery({});
+  // Phase 5.5 M7: drive plan-gating from the list response (which
+  // resolves the CUSTOM_SENDING_DOMAINS limit against the tenant's
+  // subscription + overrides). Was: legacy LegacyPlanTier prop.
+  const planAllowsDomains = data?.canManageDomains ?? false;
+  const limit = data?.sendingDomainLimit ?? 0;
+  const usage = data?.sendingDomainUsage ?? 0;
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -120,7 +121,7 @@ export function SendingDomainsClient({
     onError: (err) => toast.error(err.message ?? 'Could not remove domain.'),
   });
 
-  const showUpgradeBanner = !planAllowsDomains;
+  const showUpgradeBanner = data ? !planAllowsDomains : false;
 
   return (
     <div className="space-y-4">
@@ -128,12 +129,16 @@ export function SendingDomainsClient({
         <div className="flex items-start gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
           <Sparkles className="mt-0.5 size-5 shrink-0 text-primary" />
           <div className="flex-1">
-            <p className="font-medium">Custom domains are on Growth and Pro</p>
+            <p className="font-medium">
+              {limit === 0
+                ? 'Custom domains require an upgrade'
+                : `You're at your sending-domain limit (${usage}/${limit})`}
+            </p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Your workspace is on{' '}
-              <span className="font-medium">{plan}</span>. Custom sending
-              domains improve deliverability — switch to Growth or Pro to add
-              one. Until then, campaigns send from{' '}
+              {limit === 0
+                ? 'Your plan doesn\'t include custom sending domains. Upgrade to add one — your campaigns will send from a domain you own.'
+                : 'Upgrade your plan or request a higher limit to add another sending domain.'}{' '}
+              Until then, campaigns send from{' '}
               <code className="rounded bg-muted px-1 py-0.5 text-xs">
                 @getynmail.com
               </code>

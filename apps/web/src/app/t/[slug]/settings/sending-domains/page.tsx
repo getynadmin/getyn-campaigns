@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 
-import { LegacyPlanTier, Role, prisma } from '@getyn/db';
+import { Role, prisma } from '@getyn/db';
 
 import { SendingDomainsClient } from '@/components/sending-domains/sending-domains-client';
 import { getCurrentUser } from '@/server/auth/session';
@@ -11,13 +11,9 @@ export const metadata = { title: 'Sending domains' };
  * Tenant settings → Sending domains.
  *
  * Browse is open to all members; create/verify/delete are gated to
- * OWNER/ADMIN at the tRPC layer. STARTER + TRIAL plans see an upgrade
- * banner instead of the "Add domain" button — explicit gating, not just
- * hidden UI.
- *
- * The page is a server component so we can resolve the user/tenant once
- * and hand a tight props payload to the client component. The list +
- * mutations happen via tRPC from there.
+ * OWNER/ADMIN at the tRPC layer. The plan-based upgrade banner is
+ * driven by the list response (Phase 5.5 M4 surfaces
+ * sendingDomainLimit / canManageDomains there).
  */
 export default async function SendingDomainsPage({
   params,
@@ -37,9 +33,6 @@ export default async function SendingDomainsPage({
 
   const canManage =
     membership.role === Role.OWNER || membership.role === Role.ADMIN;
-  const planAllowsDomains =
-    tenant.legacyPlanTier === LegacyPlanTier.GROWTH ||
-    tenant.legacyPlanTier === LegacyPlanTier.PRO;
 
   return (
     <div className="space-y-6">
@@ -58,11 +51,7 @@ export default async function SendingDomainsPage({
         </p>
       </div>
 
-      <SendingDomainsClient
-        canManage={canManage}
-        planAllowsDomains={planAllowsDomains}
-        plan={tenant.legacyPlanTier}
-      />
+      <SendingDomainsClient canManage={canManage} />
     </div>
   );
 }
