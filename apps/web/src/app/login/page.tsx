@@ -36,15 +36,30 @@ export const dynamic = 'force-dynamic';
  * STAFF_PASSWORD_AUTH_ENABLED was abandoned when G-Suite integration
  * was paused; password is first-class now.)
  */
-export default function LoginPage(): JSX.Element {
+export default async function LoginPage(): Promise<JSX.Element> {
   const ssoAvailable = isAuth0Configured();
+  // Phase 5.6 M5: pull login logo + tagline from SiteBrandingSettings.
+  const { getSiteBranding } = await import(
+    '@/server/integrations/site-branding'
+  );
+  const branding = await getSiteBranding();
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/30 px-6 py-12">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
+          {branding.loginPageLogoUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={branding.loginPageLogoUrl}
+              alt={branding.appName}
+              className="mx-auto mb-3 max-h-12 w-auto"
+            />
+          )}
           <CardTitle className="text-2xl">Welcome back</CardTitle>
-          <CardDescription>Sign in to your Getyn workspace.</CardDescription>
+          <CardDescription>
+            {branding.loginPageTagline ?? `Sign in to your ${branding.appName} workspace.`}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {ssoAvailable && (

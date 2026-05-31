@@ -4,6 +4,7 @@ import { adminGsuiteMockRouter } from './routers/admin-gsuite-mock';
 import { adminImpersonationRouter } from './routers/admin-impersonation';
 import { adminIntegrationsRouter } from './routers/admin-integrations';
 import { adminPlansRouter } from './routers/admin-plans';
+import { adminSiteBrandingRouter } from './routers/admin-site-branding';
 import { adminStaffRouter } from './routers/admin-staff';
 import { adminTenantsRouter } from './routers/admin-tenants';
 import { adminUpgradeRequestsRouter } from './routers/admin-upgrade-requests';
@@ -31,6 +32,8 @@ export const adminRouter = createAdminRouter({
   upgradeRequest: adminUpgradeRequestsRouter,
   // Phase 5.6 — platform integrations (WhatsApp, SMTP, Resend, ...)
   integrations: adminIntegrationsRouter,
+  // Phase 5.6 M5 — site branding (logos, colors, custom CSS).
+  siteBranding: adminSiteBrandingRouter,
 });
 
 export type AdminRouter = typeof adminRouter;
