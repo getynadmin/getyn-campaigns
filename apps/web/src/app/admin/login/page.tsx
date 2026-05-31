@@ -1,17 +1,17 @@
 /**
- * Phase 5 M7 — /admin/login.
+ * Phase 5.5 M1 — /admin/login.
  *
  * Two paths to a staff session:
- *   - Auth0 with `is_getyn_staff: true` claim (preferred). The
- *     callback issues a staff cookie when it sees that claim AND
+ *   - Auth0 with `is_getyn_staff: true` claim (when SSO is wired up).
+ *     The callback issues a staff cookie when it sees that claim AND
  *     finds a matching StaffUser row.
- *   - Phase 1 password fallback (kept off in prod by default — gated
- *     by STAFF_PASSWORD_AUTH_ENABLED). Useful when Auth0 is down or
- *     for development.
+ *   - Email/password via the main customer /login. The same callback
+ *     grants a staff cookie when the email matches a StaffUser row.
+ *     This is no longer gated — it's the primary path now that
+ *     G-Suite integration is paused.
  *
- * The page is intentionally simple — no marketing, no copy, just the
- * two buttons. Staff should never reach this page from a public link;
- * unauthenticated probes get 404 from the layout above.
+ * Staff should never reach this page from a public link; unauthenticated
+ * probes get 404 from the layout above.
  */
 import Link from 'next/link';
 import { ShieldCheck } from 'lucide-react';
@@ -28,15 +28,12 @@ import { isAuth0Configured } from '@/server/auth/auth0';
 
 export const metadata = { title: 'Staff sign-in' };
 
-// Server-rendered conditional branches read env at request time, not
-// at build time — STAFF_PASSWORD_AUTH_ENABLED and AUTH0_* are toggled
-// in Vercel without code changes.
+// Read env at request time — AUTH0_* are toggled in Vercel without
+// code changes.
 export const dynamic = 'force-dynamic';
 
 export default function StaffLoginPage(): JSX.Element {
   const ssoAvailable = isAuth0Configured();
-  const passwordEnabled =
-    process.env.STAFF_PASSWORD_AUTH_ENABLED === 'true';
 
   return (
     <main className="grid min-h-dvh place-items-center bg-muted/30 px-6 py-12">
@@ -62,26 +59,14 @@ export default function StaffLoginPage(): JSX.Element {
               </a>
             </Button>
           )}
-          {passwordEnabled && (
-            <div className="rounded-md border border-dashed bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-              Password fallback is enabled in this environment. Use the
-              main <Link href="/login" className="underline">customer login</Link>
-              {' '}with a staff-eligible email; the callback grants a staff
-              cookie when it finds your email in <code>StaffUser</code>.
-            </div>
-          )}
-          {!ssoAvailable && !passwordEnabled && (
-            <div className="rounded-md border border-dashed p-4 text-center text-sm">
-              <p className="font-medium">No staff sign-in path is configured.</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Set Auth0 credentials or{' '}
-                <code className="rounded bg-muted px-1">
-                  STAFF_PASSWORD_AUTH_ENABLED=true
-                </code>
-                .
-              </p>
-            </div>
-          )}
+          <div className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            Or use the main{' '}
+            <Link href="/login" className="underline">
+              customer login
+            </Link>{' '}
+            with a staff-eligible email — the callback grants a staff cookie
+            when it finds your email in <code>StaffUser</code>.
+          </div>
         </CardContent>
       </Card>
     </main>

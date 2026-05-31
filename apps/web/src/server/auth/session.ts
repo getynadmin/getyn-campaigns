@@ -13,10 +13,11 @@ import { verifyAuth0SessionCookie } from './auth0-session';
  * sufficient. Returns `null` when neither path lands a user row.
  *
  * # Why Auth0 first
- * SSO is the future-default path; Supabase email/password is staff-
- * fallback in prod (`STAFF_PASSWORD_AUTH_ENABLED=false`) and dev-only
- * otherwise. Probing the SSO cookie first means we don't pay the
- * Supabase-server round trip on every authenticated SSO request.
+ * SSO sessions short-circuit before the Supabase round-trip when the
+ * cookie is present. Both providers are first-class as of Phase 5.5
+ * (G-Suite integration is paused — email/password is no longer a
+ * "staff fallback"), so order is a performance choice, not a policy
+ * one.
  *
  * # Stale-user case
  * Either session can point at a `User` row that's since been deleted
