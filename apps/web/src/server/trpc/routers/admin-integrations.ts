@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { SystemEmailTemplateCategory, prisma } from '@getyn/db';
 
 import { withAdminContext } from '@/server/admin/with-admin-context';
+import { appBaseUrl } from '@/server/auth/auth0';
 import { sendSystemEmail } from '@/server/email/system-email';
 import {
   adminLoadIntegration,
@@ -91,7 +92,7 @@ const whatsAppRouter = createAdminRouter({
       liveSource: live.source,
       webhookUrlHint: new URL(
         '/api/webhooks/whatsapp',
-        process.env.APP_BASE_URL ?? 'https://example.com',
+        appBaseUrl(),
       ).toString(),
     };
   }),
@@ -419,6 +420,7 @@ const resendRouter = createAdminRouter({
       lastTestStatus: row?.lastTestStatus ?? ('UNTESTED' as const),
       lastTestError: row?.lastTestError ?? null,
       liveSource: live.source,
+      webhookUrlHint: new URL('/api/webhooks/resend', appBaseUrl()).toString(),
     };
   }),
 
