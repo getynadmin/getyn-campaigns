@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 
-import { Plan, Role, prisma } from '@getyn/db';
+import { LegacyPlanTier, Role, prisma } from '@getyn/db';
 
 import { SendingDomainsClient } from '@/components/sending-domains/sending-domains-client';
 import { getCurrentUser } from '@/server/auth/session';
@@ -38,7 +38,8 @@ export default async function SendingDomainsPage({
   const canManage =
     membership.role === Role.OWNER || membership.role === Role.ADMIN;
   const planAllowsDomains =
-    tenant.plan === Plan.GROWTH || tenant.plan === Plan.PRO;
+    tenant.legacyPlanTier === LegacyPlanTier.GROWTH ||
+    tenant.legacyPlanTier === LegacyPlanTier.PRO;
 
   return (
     <div className="space-y-6">
@@ -60,7 +61,7 @@ export default async function SendingDomainsPage({
       <SendingDomainsClient
         canManage={canManage}
         planAllowsDomains={planAllowsDomains}
-        plan={tenant.plan}
+        plan={tenant.legacyPlanTier}
       />
     </div>
   );

@@ -7,9 +7,9 @@
  *
  *   await assertTenantActive(tenantId);
  *
- * The check costs one indexed SELECT (Tenant + BillingSubscription
- * join). Cheap enough to call on every paid mutation; cache it in
- * tRPC context if a heavily-hit mutation surfaces in profiling.
+ * The check costs one indexed SELECT (Tenant + Subscription join).
+ * Cheap enough to call on every paid mutation; cache it in tRPC
+ * context if a heavily-hit mutation surfaces in profiling.
  */
 import { TRPCError } from '@trpc/server';
 
@@ -21,9 +21,8 @@ export async function assertTenantActive(tenantId: string): Promise<void> {
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
     select: {
-      billingStatus: true,
       settings: true,
-      billingSubscription: {
+      subscription: {
         select: {
           status: true,
           cancelAt: true,
@@ -34,8 +33,8 @@ export async function assertTenantActive(tenantId: string): Promise<void> {
   });
   if (!tenant) return; // tenantProcedure already handled missing tenant
   const state = deriveTenantState(
-    { billingStatus: tenant.billingStatus, settings: tenant.settings },
-    tenant.billingSubscription,
+    { settings: tenant.settings },
+    tenant.subscription,
   );
   try {
     assertWritable(state);

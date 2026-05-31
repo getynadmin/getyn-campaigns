@@ -32,7 +32,7 @@ export default async function TenantLayout({
   const tenant = await prisma.tenant.findUnique({
     where: { slug: params.slug },
     include: {
-      billingSubscription: {
+      subscription: {
         select: {
           status: true,
           cancelAt: true,
@@ -46,8 +46,8 @@ export default async function TenantLayout({
   // Phase 5 M4: derive operational state for the banner. Cheap (we
   // already loaded the tenant + subscription join).
   const operationalState = deriveTenantState(
-    { billingStatus: tenant.billingStatus, settings: tenant.settings },
-    tenant.billingSubscription,
+    { settings: tenant.settings },
+    tenant.subscription,
   );
 
   const membership = await prisma.membership.findUnique({

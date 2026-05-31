@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 
-import { Plan, Role, withTenant } from '@getyn/db';
+import { LegacyPlanTier, Role, withTenant } from '@getyn/db';
 import {
   cuidSchema,
   sendingDomainCreateSchema,
@@ -61,10 +61,13 @@ export const sendingDomainsRouter = createTRPCRouter({
           total,
           // Surface plan in the response so the UI can render the upgrade CTA
           // without a separate fetch. STARTER + TRIAL are gated.
-          plan: ctx.tenantContext.tenant.plan,
+          // NOTE: Phase 5.5 M4 will switch this gate to use the
+          // CUSTOM_SENDING_DOMAINS plan feature limit. Until then we
+          // keep the legacy enum gate (now via Tenant.legacyPlanTier).
+          plan: ctx.tenantContext.tenant.legacyPlanTier,
           canManageDomains:
-            ctx.tenantContext.tenant.plan === Plan.GROWTH ||
-            ctx.tenantContext.tenant.plan === Plan.PRO,
+            ctx.tenantContext.tenant.legacyPlanTier === LegacyPlanTier.GROWTH ||
+            ctx.tenantContext.tenant.legacyPlanTier === LegacyPlanTier.PRO,
         };
       });
     }),
@@ -74,10 +77,11 @@ export const sendingDomainsRouter = createTRPCRouter({
     .input(sendingDomainCreateSchema)
     .mutation(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
-      const plan = ctx.tenantContext.tenant.plan;
+      const plan = ctx.tenantContext.tenant.legacyPlanTier;
 
       // Plan gate (matches list-side `canManageDomains`).
-      if (plan === Plan.TRIAL || plan === Plan.STARTER) {
+      // M4 will replace this with the CUSTOM_SENDING_DOMAINS limit check.
+      if (plan === LegacyPlanTier.TRIAL || plan === LegacyPlanTier.STARTER) {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message:

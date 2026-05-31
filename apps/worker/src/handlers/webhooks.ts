@@ -6,7 +6,7 @@ import {
   CampaignSendStatus,
   Channel,
   ContactEventType,
-  SubscriptionStatus,
+  ContactChannelStatus,
   SuppressionReason,
   emitContactEvent,
   prisma,
@@ -155,7 +155,7 @@ async function markBounced(
     if (isHardBounce && send.contact?.email) {
       await tx.contact.update({
         where: { id: send.contact.id },
-        data: { emailStatus: SubscriptionStatus.BOUNCED },
+        data: { emailStatus: ContactChannelStatus.BOUNCED },
       });
       await upsertSuppressionEntry(tx, {
         tenantId: send.tenantId,
@@ -217,7 +217,7 @@ async function markComplained(
     if (send.contact?.email) {
       await tx.contact.update({
         where: { id: send.contact.id },
-        data: { emailStatus: SubscriptionStatus.COMPLAINED },
+        data: { emailStatus: ContactChannelStatus.COMPLAINED },
       });
       await upsertSuppressionEntry(tx, {
         tenantId: send.tenantId,

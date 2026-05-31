@@ -2,7 +2,7 @@
 import {
   Channel,
   ContactEventType,
-  SubscriptionStatus,
+  ContactChannelStatus,
   SuppressionReason,
   emitContactEvent,
   prisma,
@@ -84,7 +84,7 @@ export default async function UnsubscribePage({
   // Idempotent: if already unsubscribed, just render the confirmation —
   // no DB writes.
   const alreadyUnsubscribed =
-    send.contact?.emailStatus === SubscriptionStatus.UNSUBSCRIBED;
+    send.contact?.emailStatus === ContactChannelStatus.UNSUBSCRIBED;
 
   if (!alreadyUnsubscribed) {
     try {
@@ -92,7 +92,7 @@ export default async function UnsubscribePage({
         if (send.contact) {
           await tx.contact.update({
             where: { id: send.contact.id },
-            data: { emailStatus: SubscriptionStatus.UNSUBSCRIBED },
+            data: { emailStatus: ContactChannelStatus.UNSUBSCRIBED },
           });
         }
         if (send.contact?.email) {

@@ -6,7 +6,7 @@ import {
   Channel,
   Prisma,
   Role,
-  SubscriptionStatus,
+  ContactChannelStatus,
   withTenant,
 } from '@getyn/db';
 import {
@@ -120,7 +120,7 @@ async function previewRecipientsForSegment(
     AND: [
       { tenantId, deletedAt: null },
       { email: { not: null } },
-      { emailStatus: SubscriptionStatus.SUBSCRIBED },
+      { emailStatus: ContactChannelStatus.SUBSCRIBED },
       compiled,
     ],
   };

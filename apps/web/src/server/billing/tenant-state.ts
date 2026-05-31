@@ -1,5 +1,5 @@
 /**
- * Phase 5 M4 — tenant operational state.
+ * Phase 5 M4 + Phase 5.5 M0 — tenant operational state.
  *
  * Single source of truth for "what is this tenant allowed to do
  * right now?". Every mutation that touches paid surfaces (campaign
@@ -11,28 +11,28 @@
  *                  Existing data accessible; no new campaigns/
  *                  sends/imports/AI/WhatsApp outbound. Inbox
  *                  inbound continues (customers still ping).
- *   SUSPENDED    — G-Suite suspended the tenant (abuse / billing
+ *   SUSPENDED    — admin suspended the tenant (abuse / payment
  *                  failure / manual ops action). Same writes as
  *                  READ_ONLY blocked + inbound webhook processing
  *                  also paused (the worker checks state).
  *   PURGING      — tenant.deleted received OR grace period
  *                  expired. Purge job in flight. Everything blocked.
- *   ACTIVE_TRIAL — subscription is TRIALING in BillingSubscription
+ *   ACTIVE_TRIAL — subscription is TRIALING in Subscription
  *                  (treated identically to ACTIVE for guards;
  *                  surface as a banner separately).
  *
  * # Derivation
- * Reads `Tenant.billingStatus` (Phase 1 legacy enum) AND
- * `BillingSubscription.status` (Phase 5 source of truth) and resolves
- * conflicts: BillingSubscription wins when it exists. Tenants
- * without a BillingSubscription row fall back to the legacy enum
- * (DIRECT-provisioned tenants in the pre-M3 world).
+ * Phase 5.5 M0 swapped the source of truth from `Tenant.billingStatus`
+ * (legacy enum, now @deprecated and unread) to `Subscription.status`.
+ * Tenants without a Subscription row (impossible after M0's backfill,
+ * but the migration handles re-applies idempotently) fall back to
+ * an ACTIVE default.
  *
  * # Grace period
  * 30 days from `cancelAt` (or status-flip time) before the purge
  * job is scheduled. Reactivation during the window restores ACTIVE.
  */
-import type { BillingSubscription, Tenant } from '@getyn/db';
+import type { Subscription, Tenant } from '@getyn/db';
 
 export type TenantOperationalMode =
   | 'ACTIVE'
@@ -55,13 +55,13 @@ export interface TenantOperationalState {
 const GRACE_PERIOD_DAYS = 30;
 
 export function deriveTenantState(
-  tenant: Pick<Tenant, 'billingStatus' | 'settings'>,
+  tenant: Pick<Tenant, 'settings'>,
   subscription: Pick<
-    BillingSubscription,
+    Subscription,
     'status' | 'cancelAt' | 'currentPeriodEnd'
   > | null,
 ): TenantOperationalState {
-  // BillingSubscription wins when present.
+  // Subscription is the canonical source of truth in Phase 5.5.
   if (subscription) {
     switch (subscription.status) {
       case 'SUSPENDED':
@@ -100,24 +100,10 @@ export function deriveTenantState(
     }
   }
 
-  // Tenants without a BillingSubscription row (pre-M3 / DIRECT) fall
-  // back to the legacy Tenant.billingStatus enum.
-  if (tenant.billingStatus === 'CANCELED') {
-    return {
-      mode: 'READ_ONLY',
-      reason: 'Subscription canceled.',
-      blocksWrites: true,
-      blocksInboundProcessing: false,
-    };
-  }
-  if (tenant.billingStatus === 'PAST_DUE') {
-    return {
-      mode: 'ACTIVE',
-      reason: 'Payment past due.',
-      blocksWrites: false,
-      blocksInboundProcessing: false,
-    };
-  }
+  // No Subscription row: shouldn't happen after Phase 5.5 M0's backfill,
+  // but during the migration window we treat null as ACTIVE so existing
+  // tenants don't get locked out before their Subscription row lands.
+  // Tenant.billingStatus is @deprecated and intentionally NOT read here.
 
   // Settings.purging flag (set by gsuite handler when scheduling purge).
   const settings = (tenant.settings ?? {}) as { purging?: boolean };

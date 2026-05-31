@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import {
   Channel,
   ContactEventType,
-  SubscriptionStatus,
+  ContactChannelStatus,
   SuppressionReason,
   emitContactEvent,
   prisma,
@@ -70,14 +70,14 @@ export async function POST(
   }
 
   if (
-    send.contact?.emailStatus !== SubscriptionStatus.UNSUBSCRIBED &&
+    send.contact?.emailStatus !== ContactChannelStatus.UNSUBSCRIBED &&
     send.contact
   ) {
     try {
       await withTenant(send.tenantId, async (tx) => {
         await tx.contact.update({
           where: { id: send.contact!.id },
-          data: { emailStatus: SubscriptionStatus.UNSUBSCRIBED },
+          data: { emailStatus: ContactChannelStatus.UNSUBSCRIBED },
         });
         if (send.contact!.email) {
           await upsertSuppressionEntry(tx, {

@@ -25,7 +25,11 @@ datasource db {
 // Enums — Phase 1
 // ------------------------------------------------------------------
 
-enum Plan {
+// Phase 1 coarse tier label, kept for the legacy `Tenant.legacyPlanTier`
+// column. Renamed from `Plan` in Phase 5.5 M0 because the unprefixed
+// `Plan` is now the local plan catalog model. Pure display copy; no
+// behaviour depends on the value.
+enum LegacyPlanTier {
   TRIAL
   STARTER
   GROWTH
@@ -57,7 +61,12 @@ enum ContactSource {
   FORM
 }
 
-enum SubscriptionStatus {
+// Per-contact per-channel subscribe / unsubscribe state. Renamed from
+// `SubscriptionStatus` in Phase 5.5 M0 because that name now belongs
+// to the tenant ↔ plan Subscription model (TRIALING/ACTIVE/CANCELED…).
+// Field name `Contact.emailStatus / smsStatus / whatsappStatus`
+// unchanged.
+enum ContactChannelStatus {
   SUBSCRIBED
   UNSUBSCRIBED
   BOUNCED
@@ -235,6 +244,9 @@ model User {
   // devices in user settings + revoke remote sessions.
   sessions UserSession[]
 
+  // Phase 5.5 — upgrade requests submitted by this user (their tenant).
+  planUpgradeRequests PlanUpgradeRequest[] @relation("PlanUpgradeRequestedBy")
+
   @@index([email])
 }
 
@@ -242,10 +254,11 @@ model Tenant {
   id                 String             @id @default(cuid())
   slug               String             @unique
   name               String
-  // Phase 1 coarse plan enum (used by the UI badge + legacy gating
-  // until Phase 5 M3's BillingSubscription becomes the source of
-  // truth for limits). Kept for backcompat; not removed.
-  plan               Plan               @default(TRIAL)
+  // Phase 1 coarse plan enum. DEPRECATED in Phase 5.5: source of
+  // truth is now Subscription.status. Column kept to avoid a
+  // backfill migration; no code reads it after Phase 5.5 M0.
+  // Drop in a future phase once we're certain it's unused.
+  legacyPlanTier     LegacyPlanTier     @default(TRIAL) @map("plan")
   billingStatus      BillingStatus      @default(TRIALING)
   trialEndsAt        DateTime?
   settings           Json               @default("{}")
@@ -293,7 +306,11 @@ model Tenant {
   aiGenerations         AiGeneration[]
 
   // Phase 5 M1+M3 — G-Suite identity + billing
-  billingSubscription BillingSubscription?
+  // Phase 5.5 — local plan + override + upgrade-request backrelations.
+  // Replaces the Phase 5 M1 `billingSubscription BillingSubscription?`.
+  subscription        Subscription?
+  limitOverrides      TenantLimitOverride[]
+  planUpgradeRequests PlanUpgradeRequest[]
   gSuiteWebhookEvents GSuiteWebhookEvent[]
 
   @@index([slug])
@@ -351,22 +368,22 @@ model Invitation {
 // and (tenantId, phone) — see `0002_phase2_audience/migration.sql` — exclude
 // soft-deleted rows so a deleted email can be re-added later.
 model Contact {
-  id             String             @id @default(cuid())
+  id             String               @id @default(cuid())
   tenantId       String
   email          String? // lowercase-normalized at write time
   phone          String? // E.164-normalized at write time
   firstName      String?
   lastName       String?
-  customFields   Json               @default("{}")
-  source         ContactSource      @default(MANUAL)
-  emailStatus    SubscriptionStatus @default(SUBSCRIBED)
-  smsStatus      SubscriptionStatus @default(SUBSCRIBED)
-  whatsappStatus SubscriptionStatus @default(SUBSCRIBED)
-  language       String             @default("en")
+  customFields   Json                 @default("{}")
+  source         ContactSource        @default(MANUAL)
+  emailStatus    ContactChannelStatus @default(SUBSCRIBED)
+  smsStatus      ContactChannelStatus @default(SUBSCRIBED)
+  whatsappStatus ContactChannelStatus @default(SUBSCRIBED)
+  language       String               @default("en")
   timezone       String?
   deletedAt      DateTime?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
 
   tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tags                  ContactTag[]
@@ -468,9 +485,9 @@ model ImportJob {
   errors                Json                 @default("[]") // capped at 100 entries + { truncated: boolean }
   mapping               Json // { [csvColumn]: { kind: 'field'|'custom_field'|'skip', field?: string, customFieldId?: string } }
   tagIds                String[]
-  defaultEmailStatus    SubscriptionStatus   @default(SUBSCRIBED)
-  defaultSmsStatus      SubscriptionStatus   @default(SUBSCRIBED)
-  defaultWhatsappStatus SubscriptionStatus   @default(SUBSCRIBED)
+  defaultEmailStatus    ContactChannelStatus @default(SUBSCRIBED)
+  defaultSmsStatus      ContactChannelStatus @default(SUBSCRIBED)
+  defaultWhatsappStatus ContactChannelStatus @default(SUBSCRIBED)
   dedupeBy              ImportDedupeStrategy @default(EMAIL_OR_PHONE)
   createdByUserId       String?
   startedAt             DateTime?
@@ -1211,7 +1228,14 @@ enum ProvisioningSource {
 // the M3 plan-sync helper (and the seed script).
 // ------------------------------------------------------------------
 
-enum BillingPlanMetric {
+// ------------------------------------------------------------------
+// Plans — local plans managed in admin. Phase 5.5 replaces the
+// Phase 5 M1 BillingPlan/BillingPlanFeature/BillingSubscription
+// tables (renamed without the prefix) because Campaigns no longer
+// mirrors G-Suite billing — plans are local-only.
+// ------------------------------------------------------------------
+
+enum PlanMetric {
   CONTACTS
   EMAILS_PER_MONTH
   WA_MESSAGES_PER_MONTH
@@ -1221,43 +1245,63 @@ enum BillingPlanMetric {
   USER_SEATS
 }
 
-model BillingPlan {
-  id                String                @id @default(cuid())
-  slug              String                @unique
-  name              String
-  description       String?
-  priceMonthlyCents Int                   @default(0)
-  priceYearlyCents  Int                   @default(0)
-  currency          String                @default("USD")
-  isArchived        Boolean               @default(false)
-  gSuitePlanId      String?
-  metadata          Json                  @default("{}")
-  features          BillingPlanFeature[]
-  subscriptions     BillingSubscription[]
-  createdAt         DateTime              @default(now())
-  updatedAt         DateTime              @updatedAt
+model Plan {
+  id                   String   @id @default(cuid())
+  slug                 String   @unique
+  name                 String
+  description          String?  @db.Text
+  // Display-only. Campaigns doesn't bill — these surface in admin +
+  // tenant subscription pages as "what your plan costs" UI copy.
+  priceMonthlyCents    Int?
+  priceYearlyCents     Int?
+  currency             String   @default("USD")
+  isArchived           Boolean  @default(false)
+  // Enforced "at most one default" via partial unique index in the
+  // migration: CREATE UNIQUE INDEX ON "Plan"("isDefault") WHERE
+  // "isDefault" = true.
+  isDefault            Boolean  @default(false)
+  metadata             Json     @default("{}")
+  // Audit-trail only — not a FK; deleted staff users don't cascade-
+  // delete plans.
+  createdByStaffUserId String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  features                     PlanFeature[]
+  subscriptions                Subscription[]
+  // Default-plan back-relation (AppSettings.defaultPlanId).
+  appSettings                  AppSettings[]
+  currentPlanUpgradeRequests   PlanUpgradeRequest[] @relation("currentPlanForUpgradeRequest")
+  requestedPlanUpgradeRequests PlanUpgradeRequest[] @relation("requestedPlanForUpgradeRequest")
+
+  @@index([isArchived, isDefault])
 }
 
-model BillingPlanFeature {
-  id                String            @id @default(cuid())
+model PlanFeature {
+  id                String     @id @default(cuid())
   planId            String
-  metric            BillingPlanMetric
+  metric            PlanMetric
   // -1 marks unlimited.
-  included          Int               @default(0)
-  // Informational only — G-Suite handles billing of overages.
+  included          Int        @default(0)
+  // Informational only — Campaigns doesn't bill overages today.
   overageCentsPer1k Int?
-  plan              BillingPlan       @relation(fields: [planId], references: [id], onDelete: Cascade)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   @@unique([planId, metric])
 }
 
 // ------------------------------------------------------------------
-// BillingSubscription — Campaigns' local mirror of G-Suite's
-// subscription record. Always one-per-tenant. M3 syncs this on
-// SSO sign-in + on G-Suite webhook + on a 6h drift-correct cron.
+// Subscription — tenant ↔ plan assignment, one per tenant.
+// Phase 5.5 replaces BillingSubscription. deriveTenantState reads
+// from this table; the legacy Tenant.billingStatus column is kept
+// for backcompat (no longer read) and will be dropped in a future
+// migration once no code references it.
 // ------------------------------------------------------------------
 
-enum BillingSubscriptionStatus {
+enum SubscriptionStatus {
   TRIALING
   ACTIVE
   PAST_DUE
@@ -1265,23 +1309,103 @@ enum BillingSubscriptionStatus {
   SUSPENDED
 }
 
-model BillingSubscription {
-  id                   String                    @id @default(cuid())
-  tenantId             String                    @unique
-  gSuiteSubscriptionId String?                   @unique
-  planId               String
-  status               BillingSubscriptionStatus
-  currentPeriodStart   DateTime
-  currentPeriodEnd     DateTime
-  cancelAt             DateTime?
-  lastSyncedAt         DateTime                  @default(now())
-  metadata             Json                      @default("{}")
-  tenant               Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  plan                 BillingPlan               @relation(fields: [planId], references: [id])
-  createdAt            DateTime                  @default(now())
-  updatedAt            DateTime                  @updatedAt
+model Subscription {
+  id                    String             @id @default(cuid())
+  tenantId              String             @unique
+  planId                String
+  status                SubscriptionStatus @default(ACTIVE)
+  // Audit-trail only. null = backfill from migration OR auto-assign
+  // on tenant creation (when AppSettings.defaultPlanAutoAssign=true).
+  assignedByStaffUserId String?
+  assignedAt            DateTime           @default(now())
+  // Display-only since Campaigns doesn't bill. Drives the period-
+  // reset cron: when currentPeriodEnd < now we advance both by 1
+  // month (UTC) and reset period-bound counters. null = rolling
+  // calendar month (defaults to 1st-of-month UTC).
+  currentPeriodStart    DateTime?
+  currentPeriodEnd      DateTime?
+  cancelAt              DateTime?
+  metadata              Json               @default("{}")
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
 
-  @@index([status, lastSyncedAt])
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan   Plan   @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@index([status])
+  @@index([currentPeriodEnd]) // for the period-reset cron
+}
+
+// ------------------------------------------------------------------
+// TenantLimitOverride — per-tenant overrides on top of plan limits.
+// resolveTenantLimits() merges these on top of PlanFeature rows.
+// ------------------------------------------------------------------
+
+model TenantLimitOverride {
+  id                   String     @id @default(cuid())
+  tenantId             String
+  metric               PlanMetric
+  included             Int // -1 = unlimited
+  reason               String     @db.Text
+  expiresAt            DateTime? // null = permanent
+  createdByStaffUserId String?
+  createdAt            DateTime   @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, metric, expiresAt])
+}
+
+// ------------------------------------------------------------------
+// PlanUpgradeRequest — tenant-initiated upgrade flow.
+// ------------------------------------------------------------------
+
+enum PlanUpgradeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+model PlanUpgradeRequest {
+  id                    String                   @id @default(cuid())
+  tenantId              String
+  requestedByUserId     String
+  // Snapshot at request time. SetNull because deleting an archived
+  // plan shouldn't break the audit trail.
+  currentPlanId         String?
+  requestedPlanId       String
+  status                PlanUpgradeRequestStatus @default(PENDING)
+  reason                String?                  @db.Text
+  reviewedByStaffUserId String?
+  reviewedAt            DateTime?
+  reviewerNote          String?                  @db.Text
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requestedBy   User   @relation("PlanUpgradeRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  currentPlan   Plan?  @relation("currentPlanForUpgradeRequest", fields: [currentPlanId], references: [id], onDelete: SetNull)
+  requestedPlan Plan   @relation("requestedPlanForUpgradeRequest", fields: [requestedPlanId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([tenantId, createdAt(sort: Desc)])
+}
+
+// ------------------------------------------------------------------
+// AppSettings — singleton config row, enforced via CHECK constraint
+// (id = 'singleton') in the migration SQL.
+// ------------------------------------------------------------------
+
+model AppSettings {
+  id                    String   @id @default("singleton")
+  defaultPlanId         String?
+  defaultPlanAutoAssign Boolean  @default(false)
+  allowUpgradeRequests  Boolean  @default(true)
+  updatedByStaffUserId  String?
+  updatedAt             DateTime @updatedAt
+
+  defaultPlan Plan? @relation(fields: [defaultPlanId], references: [id], onDelete: SetNull)
 }
 
 // ------------------------------------------------------------------

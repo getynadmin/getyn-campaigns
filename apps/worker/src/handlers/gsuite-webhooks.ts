@@ -10,10 +10,10 @@
  * # Branches
  *   subscription.updated  → re-pull plan (M3 stub; replaced when
  *                           the G-Suite spec is firm)
- *   subscription.canceled → set BillingSubscription.status=CANCELED,
+ *   subscription.canceled → set Subscription.status=CANCELED,
  *                           stamp cancelAt, transition tenant to
  *                           read-only mode via Tenant.billingStatus
- *   tenant.suspended      → BillingSubscription.status=SUSPENDED,
+ *   tenant.suspended      → Subscription.status=SUSPENDED,
  *                           halt queues for this tenant (workers
  *                           re-check state per job)
  *   tenant.reactivated    → reverse suspension/cancellation
@@ -29,7 +29,7 @@ import type { Job } from 'bullmq';
 
 import {
   BillingStatus,
-  BillingSubscriptionStatus,
+  SubscriptionStatus,
   prisma,
   type Prisma,
 } from '@getyn/db';
@@ -130,13 +130,12 @@ async function handleSubscriptionCanceled(event: WebhookRow): Promise<void> {
     : new Date();
 
   await prisma.$transaction(async (tx) => {
-    // Update BillingSubscription mirror (if present).
-    await tx.billingSubscription.updateMany({
+    // Update Subscription mirror (if present).
+    await tx.subscription.updateMany({
       where: { tenantId: event.tenantId! },
       data: {
-        status: BillingSubscriptionStatus.CANCELED,
+        status: SubscriptionStatus.CANCELED,
         cancelAt,
-        lastSyncedAt: new Date(),
       },
     });
     // Bump the legacy Tenant.billingStatus too so older code paths
@@ -154,15 +153,14 @@ async function handleSubscriptionCanceled(event: WebhookRow): Promise<void> {
 
 async function handleTenantSuspended(event: WebhookRow): Promise<void> {
   if (!event.tenantId) return;
-  await prisma.billingSubscription.updateMany({
+  await prisma.subscription.updateMany({
     where: { tenantId: event.tenantId },
     data: {
-      status: BillingSubscriptionStatus.SUSPENDED,
-      lastSyncedAt: new Date(),
+      status: SubscriptionStatus.SUSPENDED,
     },
   });
   // No legacy enum value for SUSPENDED — Tenant.billingStatus stays
-  // as-is. deriveTenantState reads BillingSubscription as primary.
+  // as-is. deriveTenantState reads Subscription as primary.
   Sentry.captureMessage('gsuite tenant.suspended', {
     level: 'warning',
     tags: {
@@ -177,12 +175,11 @@ async function handleTenantSuspended(event: WebhookRow): Promise<void> {
 async function handleTenantReactivated(event: WebhookRow): Promise<void> {
   if (!event.tenantId) return;
   await prisma.$transaction(async (tx) => {
-    await tx.billingSubscription.updateMany({
+    await tx.subscription.updateMany({
       where: { tenantId: event.tenantId! },
       data: {
-        status: BillingSubscriptionStatus.ACTIVE,
+        status: SubscriptionStatus.ACTIVE,
         cancelAt: null,
-        lastSyncedAt: new Date(),
       },
     });
     await tx.tenant.update({

@@ -102,9 +102,9 @@ export async function handleTenantPurge(job: Job): Promise<void> {
       },
     });
 
-    // BillingSubscription explicit delete so we capture the count
+    // Subscription explicit delete so we capture the count
     // in the audit row.
-    const subDel = await tx.billingSubscription.deleteMany({
+    const subDel = await tx.subscription.deleteMany({
       where: { tenantId: payload.tenantId },
     });
 

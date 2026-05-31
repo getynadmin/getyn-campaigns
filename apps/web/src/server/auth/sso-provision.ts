@@ -33,7 +33,7 @@ import { createHash } from 'crypto';
 
 import {
   AuthProvider,
-  Plan,
+  LegacyPlanTier,
   ProvisioningSource,
   prisma,
   type Membership,
@@ -185,7 +185,7 @@ async function resolveTenant(
       data: {
         slug,
         name: n.gSuiteOrgName ?? 'New workspace',
-        plan: Plan.TRIAL, // M3 syncs real plan within ~1.5s
+        legacyPlanTier: LegacyPlanTier.TRIAL, // legacy display field; real plan via Subscription
         gSuiteTenantId: n.gSuiteTenantId,
         gSuiteOrgName: n.gSuiteOrgName ?? null,
         gSuiteSyncedAt: null,
@@ -261,7 +261,7 @@ function delayReject(ms: number, reason: string): Promise<never> {
  * Phase 5 M3 stub. M3 swaps in `pullPlanFromGSuite` from a new
  * `@/server/billing/sync.ts`. For now we report 'pending' so the
  * sign-in proceeds; a background cron will populate the
- * BillingSubscription mirror when it runs.
+ * Subscription mirror when it runs.
  */
 async function pullPlanFromGSuiteStub(
   _campaignsTenantId: string,

@@ -41,7 +41,7 @@ export default async function BillingSettingsPage({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <Tile label="Plan" value={tenant.plan} />
+          <Tile label="Plan" value={tenant.legacyPlanTier} />
           <Tile label="Status" value={tenant.billingStatus.replace('_', ' ')} />
           <Tile
             label="Trial"

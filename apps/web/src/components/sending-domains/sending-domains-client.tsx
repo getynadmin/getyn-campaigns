@@ -18,7 +18,7 @@ import {
   XCircle,
 } from 'lucide-react';
 
-import type { Plan } from '@getyn/db';
+import type { LegacyPlanTier } from '@getyn/db';
 import {
   sendingDomainCreateSchema,
   type SendingDomainCreateInput,
@@ -86,7 +86,7 @@ export function SendingDomainsClient({
 }: {
   canManage: boolean;
   planAllowsDomains: boolean;
-  plan: Plan;
+  plan: LegacyPlanTier;
 }): JSX.Element {
   const utils = api.useUtils();
   const { data, isLoading } = api.sendingDomain.list.useQuery({});

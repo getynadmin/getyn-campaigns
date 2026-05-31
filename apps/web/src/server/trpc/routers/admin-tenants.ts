@@ -1,13 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
-import {
-  CampaignStatus,
-  Plan,
-  WAStatus,
-  prisma,
-  type Prisma,
-} from '@getyn/db';
+import { CampaignStatus, WAStatus, prisma, type Prisma } from '@getyn/db';
 
 import {
   auditStaffAccess,
@@ -88,7 +82,7 @@ export const adminTenantsRouter = createAdminRouter({
           id: true,
           slug: true,
           name: true,
-          plan: true,
+          legacyPlanTier: true,
           billingStatus: true,
           provisioningSource: true,
           gSuiteTenantId: true,
@@ -103,8 +97,8 @@ export const adminTenantsRouter = createAdminRouter({
               campaigns: true,
             },
           },
-          billingSubscription: {
-            select: { status: true, lastSyncedAt: true },
+          subscription: {
+            select: { status: true, assignedAt: true, plan: { select: { slug: true, name: true } } },
           },
           sendingPolicy: {
             select: { suspendedAt: true, suspensionReason: true },
@@ -136,7 +130,7 @@ export const adminTenantsRouter = createAdminRouter({
       const tenant = await prisma.tenant.findUnique({
         where: { id: input.id },
         include: {
-          billingSubscription: { include: { plan: true } },
+          subscription: { include: { plan: true } },
           whatsAppAccount: { include: { phoneNumbers: true } },
           sendingDomains: true,
           sendingPolicy: true,
@@ -310,4 +304,3 @@ export const adminTenantsRouter = createAdminRouter({
     }),
 });
 
-void Plan; // satisfies the unused-import lint when plan logic is moved out

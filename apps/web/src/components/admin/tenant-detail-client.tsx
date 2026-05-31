@@ -93,16 +93,18 @@ export function AdminTenantDetailClient({
       <section className="rounded-lg border bg-card p-4">
         <h2 className="mb-3 text-sm font-semibold">Subscription</h2>
         <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-          <Row label="Plan (legacy enum)">{t.plan}</Row>
+          <Row label="Plan (legacy enum)">{t.legacyPlanTier}</Row>
           <Row label="Billing status">{t.billingStatus}</Row>
           <Row label="Provisioning">{t.provisioningSource}</Row>
-          {t.billingSubscription && (
+          {t.subscription && (
             <>
-              <Row label="Billing plan">{t.billingSubscription.plan.name}</Row>
-              <Row label="Subscription">{t.billingSubscription.status}</Row>
-              <Row label="Renews">
-                {new Date(t.billingSubscription.currentPeriodEnd).toLocaleDateString()}
-              </Row>
+              <Row label="Billing plan">{t.subscription.plan.name}</Row>
+              <Row label="Subscription">{t.subscription.status}</Row>
+              {t.subscription.currentPeriodEnd && (
+                <Row label="Renews">
+                  {new Date(t.subscription.currentPeriodEnd).toLocaleDateString()}
+                </Row>
+              )}
             </>
           )}
           {t.gSuiteSyncedAt && (

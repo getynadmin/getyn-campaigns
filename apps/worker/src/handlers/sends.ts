@@ -8,7 +8,7 @@ import {
   CampaignSendStatus,
   Channel,
   ContactEventType,
-  SubscriptionStatus,
+  ContactChannelStatus,
   checkAndApplySuspension,
   compileSegmentRules,
   emitContactEvent,
@@ -147,7 +147,7 @@ async function handlePrepareCampaign(job: Job): Promise<void> {
             AND: [
               { tenantId, deletedAt: null },
               { email: { not: null } },
-              { emailStatus: SubscriptionStatus.SUBSCRIBED },
+              { emailStatus: ContactChannelStatus.SUBSCRIBED },
               compiled,
             ],
           },
