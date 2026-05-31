@@ -25,6 +25,8 @@ import {
   type MetaPhoneNumber,
 } from '@getyn/whatsapp';
 
+import { getWhatsAppCredentials } from '@/server/integrations/whatsapp';
+
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
 
 /**
@@ -373,13 +375,14 @@ export const whatsAppAccountsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
 
-      const appId = process.env.META_APP_ID;
-      const appSecret = process.env.META_APP_SECRET;
+      // Phase 5.6 M2: prefer DB-stored Meta credentials, fall back
+      // to env vars when the IntegrationCredential row isn't enabled.
+      const { appId, appSecret } = await getWhatsAppCredentials();
       if (!appId || !appSecret) {
         throw new TRPCError({
           code: 'PRECONDITION_FAILED',
           message:
-            'Embedded Signup is not configured. Server is missing META_APP_ID or META_APP_SECRET.',
+            'Embedded Signup is not configured. Configure WhatsApp credentials in Admin → Integrations → WhatsApp.',
         });
       }
 

@@ -2,6 +2,7 @@ import { adminAppSettingsRouter } from './routers/admin-app-settings';
 import { adminAuditLogRouter } from './routers/admin-audit-log';
 import { adminGsuiteMockRouter } from './routers/admin-gsuite-mock';
 import { adminImpersonationRouter } from './routers/admin-impersonation';
+import { adminIntegrationsRouter } from './routers/admin-integrations';
 import { adminPlansRouter } from './routers/admin-plans';
 import { adminStaffRouter } from './routers/admin-staff';
 import { adminTenantsRouter } from './routers/admin-tenants';
@@ -28,6 +29,8 @@ export const adminRouter = createAdminRouter({
   appSettings: adminAppSettingsRouter,
   // Phase 5.5 M6 — upgrade request review queue.
   upgradeRequest: adminUpgradeRequestsRouter,
+  // Phase 5.6 — platform integrations (WhatsApp, SMTP, Resend, ...)
+  integrations: adminIntegrationsRouter,
 });
 
 export type AdminRouter = typeof adminRouter;

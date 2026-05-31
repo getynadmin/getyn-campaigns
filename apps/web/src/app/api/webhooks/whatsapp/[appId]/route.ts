@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 import { prisma } from '@getyn/db';
 
+import { getWhatsAppCredentials } from '@/server/integrations/whatsapp';
 import { enqueueWaWebhookEvent } from '@/server/queues';
 import { verifyMetaWebhookSignature } from '@/server/whatsapp/webhook-verify';
 
@@ -48,9 +49,11 @@ export async function GET(
   const token = url.searchParams.get('hub.verify_token');
   const challenge = url.searchParams.get('hub.challenge');
 
-  const expected = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+  // Phase 5.6 M2: prefer DB-stored Meta credentials, fall back to
+  // env vars when the IntegrationCredential row isn't enabled.
+  const { webhookVerifyToken: expected } = await getWhatsAppCredentials();
   if (!expected) {
-    console.error('[webhook:wa] WHATSAPP_WEBHOOK_VERIFY_TOKEN unset');
+    console.error('[webhook:wa] webhook verify token unset (DB + env)');
     return new NextResponse('Server not configured', { status: 503 });
   }
   if (mode === 'subscribe' && token === expected && challenge) {
@@ -176,9 +179,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { appId: string } },
 ): Promise<NextResponse> {
-  const appSecret = process.env.META_APP_SECRET;
+  const { appSecret } = await getWhatsAppCredentials();
   if (!appSecret) {
-    console.error('[webhook:wa] META_APP_SECRET unset; rejecting');
+    console.error('[webhook:wa] Meta app secret unset (DB + env); rejecting');
     return NextResponse.json(
       { error: 'Webhook receiver not configured.' },
       { status: 503 },
