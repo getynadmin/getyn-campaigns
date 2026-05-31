@@ -1518,3 +1518,96 @@ model UserSession {
   @@index([userId, revokedAt])
   @@index([expiresAt])
 }
+
+// ==================================================================
+// Phase 5.6 — Platform-level integrations + system email templates +
+// site branding. All admin-only (RLS denies authenticated tenant
+// traffic; access flows through withAdminContext()).
+// ==================================================================
+
+enum IntegrationTestStatus {
+  UNTESTED
+  OK
+  FAILED
+}
+
+enum SystemEmailTemplateCategory {
+  TRANSACTIONAL
+  NOTIFICATION
+  MARKETING
+}
+
+/// One row per platform integration (whatsapp_meta, smtp_default,
+/// resend, railway_worker, twilio, msg91...). Non-secret config is
+/// stored as JSON for forward compatibility; `secrets` carries an
+/// AES-256-GCM envelope from @getyn/crypto with AD =
+/// "integration:{provider}" so ciphertexts can't be swapped between
+/// rows.
+///
+/// Resolution helpers (`getWhatsAppCredentials()` etc.) prefer this
+/// row when `enabled=true`, falling back to env vars otherwise so
+/// the app stays functional during migration.
+model IntegrationCredential {
+  id                       String                @id @default(cuid())
+  provider                 String                @unique
+  displayName              String
+  enabled                  Boolean               @default(false)
+  config                   Json                  @default("{}")
+  secrets                  Json?
+  lastUpdatedByStaffUserId String?
+  lastTestedAt             DateTime?
+  lastTestStatus           IntegrationTestStatus @default(UNTESTED)
+  lastTestError            String?
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+
+  @@index([enabled])
+}
+
+/// System notification templates (welcome, password reset, invite,
+/// plan-upgrade-*, impersonation notice, etc.). isSystem=true rows
+/// are edit-only — no delete in the admin UI.
+///
+/// `variables` is a JSON string[] of substitution names available to
+/// the template author; the renderer (Phase 5.6 M3) accepts a
+/// superset and ignores unknowns.
+model SystemEmailTemplate {
+  id                       String                      @id @default(cuid())
+  slug                     String                      @unique
+  name                     String
+  description              String?                     @db.Text
+  subject                  String
+  bodyHtml                 String                      @db.Text
+  bodyText                 String                      @db.Text
+  variables                Json                        @default("[]")
+  category                 SystemEmailTemplateCategory
+  isSystem                 Boolean                     @default(true)
+  enabled                  Boolean                     @default(true)
+  lastUpdatedByStaffUserId String?
+  createdAt                DateTime                    @default(now())
+  updatedAt                DateTime                    @updatedAt
+
+  @@index([category])
+  @@index([enabled])
+}
+
+/// Singleton (id='singleton' CHECK-enforced in migration). All
+/// branding fields are nullable — `getSiteBranding()` substitutes
+/// hard-coded defaults so the app never breaks on a clean install.
+/// Per-tenant overrides are deferred (would land as
+/// TenantBrandingOverride).
+model SiteBrandingSettings {
+  id                         String   @id @default("singleton")
+  appName                    String   @default("Getyn Campaigns")
+  defaultSidebarLogoLightUrl String?
+  defaultSidebarLogoDarkUrl  String?
+  loginPageLogoUrl           String?
+  faviconUrl                 String?
+  primaryColor               String?
+  accentColor                String?
+  loginPageTagline           String?
+  footerText                 String?
+  customCss                  String?  @db.Text
+  updatedByStaffUserId       String?
+  updatedAt                  DateTime @updatedAt
+}
