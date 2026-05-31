@@ -51,7 +51,7 @@ repeatable jobs registered on worker boot:
 | `PORT` | no (default 8080) | Health endpoint port. Railway injects this automatically. |
 | `RESEND_API_KEY` | yes for Phase 3 sends | Resend's REST API key. When unset, the dispatch handler logs intended sends and stamps `messageId="stub-{sendId}"` so dev exercises the full pipeline without burning Resend quota. |
 | `EMAIL_TOKEN_SECRET` | yes for Phase 3 | 32+ char random string. HMAC secret for `/u/{token}` and `/v/{token}` URLs in every email. Rotating invalidates all outstanding tokens — treat as a database password. |
-| `NEXT_PUBLIC_APP_URL` | yes for Phase 3 | Used by the render pipeline to absolute-URL the unsubscribe / web-view / tracking-pixel / `/r/` redirector links. |
+| `NEXT_PUBLIC_APP_URL` | yes for Phase 3 | Public origin used by the render pipeline to absolute-URL the unsubscribe / web-view / tracking-pixel / `/r/` redirector links. Prod: `https://campaigns.getyn.com`. Dev: `http://localhost:3000`. |
 
 ## Health endpoint
 

@@ -112,7 +112,7 @@ Reference list — full descriptions in `.env.example`.
 | `DATABASE_URL` / `DIRECT_URL` | Supabase Postgres | Always |
 | `NEXT_PUBLIC_SUPABASE_URL` + anon | Auth | Always |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-side privileged DB | Always |
-| `NEXT_PUBLIC_APP_URL` | Origin for absolute URLs | Always |
+| `NEXT_PUBLIC_APP_URL` | Public origin for absolute URLs. Prod: `https://campaigns.getyn.com`. Dev: `http://localhost:3000`. | Always |
 | `RESEND_API_KEY` + `RESEND_FROM_EMAIL` + `RESEND_WEBHOOK_SECRET` | Email send + webhook (Phase 3) | Required to send email |
 | `EMAIL_TOKEN_SECRET` | HMAC for `/u/<token>` + `/v/<token>` (Phase 3) | Required to send email |
 | `REDIS_URL` | BullMQ (Upstash) | Required to enqueue jobs |
