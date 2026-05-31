@@ -6,6 +6,23 @@ import { SystemEmailTemplateCategory, prisma } from '@getyn/db';
 import { withAdminContext } from '@/server/admin/with-admin-context';
 import { appBaseUrl } from '@/server/auth/auth0';
 import { sendSystemEmail } from '@/server/email/system-email';
+
+/**
+ * Resolve the admin app's public origin for webhook-URL hints.
+ *
+ * Reads x-forwarded-host + x-forwarded-proto from the incoming
+ * request (set by Vercel's edge to the actual public domain), so
+ * admins always see the URL that matches the domain they're
+ * browsing — campaigns.getyn.com on prod, localhost in dev — without
+ * depending on NEXT_PUBLIC_APP_URL being set at runtime. Falls back
+ * to the env-based resolver when the headers are missing.
+ */
+function adminOrigin(headers: Headers): string {
+  const proto = headers.get('x-forwarded-proto');
+  const host = headers.get('x-forwarded-host') ?? headers.get('host');
+  if (host) return `${proto ?? 'https'}://${host}`;
+  return appBaseUrl();
+}
 import {
   adminLoadIntegration,
   recordTestResult,
@@ -71,7 +88,7 @@ const whatsAppUpdateSchema = z.object({
 });
 
 const whatsAppRouter = createAdminRouter({
-  get: staffProcedure.query(async () => {
+  get: staffProcedure.query(async ({ ctx }) => {
     const row = await adminLoadIntegration<WhatsAppConfig, WhatsAppSecrets>(
       'whatsapp_meta',
     );
@@ -92,7 +109,7 @@ const whatsAppRouter = createAdminRouter({
       liveSource: live.source,
       webhookUrlHint: new URL(
         '/api/webhooks/whatsapp',
-        appBaseUrl(),
+        adminOrigin(ctx.headers),
       ).toString(),
     };
   }),
@@ -404,7 +421,7 @@ const resendUpdateSchema = z.object({
 });
 
 const resendRouter = createAdminRouter({
-  get: staffProcedure.query(async () => {
+  get: staffProcedure.query(async ({ ctx }) => {
     const row = await adminLoadIntegration<ResendConfig, ResendSecrets>(
       'resend',
     );
@@ -420,7 +437,10 @@ const resendRouter = createAdminRouter({
       lastTestStatus: row?.lastTestStatus ?? ('UNTESTED' as const),
       lastTestError: row?.lastTestError ?? null,
       liveSource: live.source,
-      webhookUrlHint: new URL('/api/webhooks/resend', appBaseUrl()).toString(),
+      webhookUrlHint: new URL(
+        '/api/webhooks/resend',
+        adminOrigin(ctx.headers),
+      ).toString(),
     };
   }),
 
