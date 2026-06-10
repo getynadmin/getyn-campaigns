@@ -133,12 +133,22 @@ export function buildAuth0LoginUrl(options: {
    * hidden-iframe silent SSO check on the /login page.
    */
   silent?: boolean;
+  /**
+   * Explicit origin (no trailing slash) for the redirect_uri. When
+   * omitted, falls back to appBaseUrl() — which depends on env vars
+   * Vercel doesn't always inject. Callers running inside a Next.js
+   * route handler should derive the origin from x-forwarded-host
+   * + x-forwarded-proto and pass it here so the redirect_uri
+   * matches the actual incoming domain.
+   */
+  origin?: string;
 }): string {
   const clientId = process.env.AUTH0_CLIENT_ID;
   if (!clientId) throw new Error('AUTH0_CLIENT_ID unset');
   const audience = process.env.AUTH0_AUDIENCE ?? clientId;
   const scope = process.env.AUTH0_SCOPE ?? 'openid profile email';
-  const redirectUri = `${appBaseUrl()}/api/auth/callback/auth0`;
+  const base = options.origin ?? appBaseUrl();
+  const redirectUri = `${base}/api/auth/callback/auth0`;
 
   const u = new URL(`${auth0BaseUrl()}/authorize`);
   u.searchParams.set('response_type', 'code');
