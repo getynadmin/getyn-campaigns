@@ -96,9 +96,25 @@ export function EmailBuilder({
       // Hand the parent a stable ref to the editor.
       editorRef.current = unlayer;
 
-      // Replay the initial design once Unlayer is ready. (Unlayer doesn't
-      // accept design via props — it's an imperative API.)
-      if (initialDesign) {
+      // Replay the initial design once Unlayer is ready. (Unlayer
+      // doesn't accept design via props — it's an imperative API.)
+      //
+      // Skip loadDesign for empty/placeholder payloads — calling
+      // loadDesign({}) makes Unlayer sit forever at its internal
+      // "Loading, please wait..." screen. New campaigns are seeded
+      // with designJson: {} on create, and templates that never had
+      // a design saved match the same shape. Letting Unlayer fall
+      // through to its blank-canvas default is the right behaviour
+      // for both.
+      const hasRealDesign =
+        initialDesign &&
+        typeof initialDesign === 'object' &&
+        // Unlayer designs always include `body` (the schemaVersion
+        // and counters keys come along but body is the load-bearing
+        // marker — its presence proves this is a real Unlayer
+        // payload, not the {} placeholder we save on create).
+        'body' in initialDesign;
+      if (hasRealDesign) {
         try {
           unlayer.loadDesign(initialDesign);
         } catch (e) {
