@@ -32,51 +32,109 @@ import {
 
 const STATE_COOKIE = 'getyn_sso_state';
 
-export async function GET(req: NextRequest): Promise<NextResponse> {
-  if (!isAuth0Configured()) {
-    return NextResponse.redirect(new URL('/login?error=sso_disabled', req.url));
-  }
+type StateBlob = {
+  state: string;
+  nonce: string;
+  returnTo: string | null;
+  silent?: boolean;
+};
 
+/**
+ * Return either a 302 redirect (regular login flow) or a tiny HTML
+ * document with a postMessage payload (silent SSO flow inside a
+ * hidden iframe).
+ */
+function failure(req: NextRequest, silent: boolean, code: string): NextResponse {
+  if (silent) {
+    return silentHtml({ ok: false, reason: code });
+  }
+  return NextResponse.redirect(
+    new URL(`/login?error=${encodeURIComponent(code)}`, req.url),
+  );
+}
+
+function silentHtml(args: {
+  ok: boolean;
+  reason?: string;
+  redirectTo?: string;
+}): NextResponse {
+  const body = `<!doctype html><meta charset="utf-8"><title>SSO</title><script>(function(){try{window.parent.postMessage(${JSON.stringify(
+    {
+      type: 'getyn-silent-sso',
+      ok: args.ok,
+      reason: args.reason ?? null,
+      redirectTo: args.redirectTo ?? null,
+    },
+  )}, '*');}catch(e){}})();</script>`;
+  return new NextResponse(body, {
+    status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+  });
+}
+
+export async function GET(req: NextRequest): Promise<NextResponse> {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
   const returnedState = url.searchParams.get('state');
   const errorParam = url.searchParams.get('error');
   const errorDescription = url.searchParams.get('error_description');
 
+  // Best-effort silent flag detection BEFORE we trust the state
+  // cookie — Auth0 errors out before our state round-trip on
+  // login_required, but we still want to render HTML if this was
+  // a silent probe. The state cookie carries the authoritative flag.
+  const stateCookieRaw = req.cookies.get(STATE_COOKIE)?.value;
+  let stateBlob: StateBlob | null = null;
+  if (stateCookieRaw) {
+    try {
+      stateBlob = JSON.parse(
+        Buffer.from(stateCookieRaw, 'base64url').toString('utf8'),
+      );
+    } catch {
+      stateBlob = null;
+    }
+  }
+  const silent = stateBlob?.silent === true;
+
+  if (!isAuth0Configured()) {
+    return failure(req, silent, 'sso_disabled');
+  }
+
   if (errorParam) {
-    Sentry.captureMessage('sso callback returned error param', {
-      level: 'warning',
-      tags: { sso: 'auth0', failure: 'oauth_error' },
-      extra: { errorParam, errorDescription },
-    });
-    return NextResponse.redirect(
-      new URL(`/login?error=${encodeURIComponent(errorParam)}`, req.url),
-    );
+    // login_required / consent_required / interaction_required all
+    // mean "no IdP session" — exactly the expected outcome of a
+    // silent probe with no session. Don't log to Sentry in that
+    // case; log only when something genuinely went wrong.
+    const expectedSilent =
+      silent &&
+      (errorParam === 'login_required' ||
+        errorParam === 'consent_required' ||
+        errorParam === 'interaction_required');
+    if (!expectedSilent) {
+      Sentry.captureMessage('sso callback returned error param', {
+        level: 'warning',
+        tags: { sso: 'auth0', failure: 'oauth_error', silent: String(silent) },
+        extra: { errorParam, errorDescription },
+      });
+    }
+    const res = failure(req, silent, errorParam);
+    res.cookies.delete(STATE_COOKIE);
+    return res;
   }
 
   if (!code || !returnedState) {
-    return NextResponse.redirect(new URL('/login?error=sso_missing_code', req.url));
+    return failure(req, silent, 'sso_missing_code');
   }
 
-  // State cookie must be present + must round-trip the same value.
-  const stateCookie = req.cookies.get(STATE_COOKIE)?.value;
-  if (!stateCookie) {
-    return NextResponse.redirect(new URL('/login?error=sso_state_missing', req.url));
-  }
-  let stateBlob: { state: string; nonce: string; returnTo: string | null };
-  try {
-    stateBlob = JSON.parse(
-      Buffer.from(stateCookie, 'base64url').toString('utf8'),
-    );
-  } catch {
-    return NextResponse.redirect(new URL('/login?error=sso_state_malformed', req.url));
+  if (!stateBlob) {
+    return failure(req, silent, 'sso_state_missing');
   }
   if (stateBlob.state !== returnedState) {
     Sentry.captureMessage('sso state mismatch', {
       level: 'warning',
       tags: { sso: 'auth0', failure: 'state_mismatch' },
     });
-    return NextResponse.redirect(new URL('/login?error=sso_state_mismatch', req.url));
+    return failure(req, silent, 'sso_state_mismatch');
   }
 
   // 2) Token exchange.
@@ -87,9 +145,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     Sentry.captureException(err, {
       tags: { sso: 'auth0', failure: 'token_exchange' },
     });
-    return NextResponse.redirect(
-      new URL('/login?error=sso_token_exchange', req.url),
-    );
+    return failure(req, silent, 'sso_token_exchange');
   }
 
   // 3) Verify ID token.
@@ -100,9 +156,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     Sentry.captureException(err, {
       tags: { sso: 'auth0', failure: 'id_token_invalid' },
     });
-    return NextResponse.redirect(
-      new URL('/login?error=sso_id_token_invalid', req.url),
-    );
+    return failure(req, silent, 'sso_id_token_invalid');
   }
 
   // 4) Provision User + Tenant + Membership; best-effort plan sync.
@@ -118,17 +172,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         tags: { sso: 'auth0', failure: 'identity_conflict' },
         extra: { email: claims.email },
       });
-      return NextResponse.redirect(
-        new URL('/login?error=sso_identity_conflict', req.url),
-      );
+      return failure(req, silent, 'sso_identity_conflict');
     }
     Sentry.captureException(err, {
       tags: { sso: 'auth0', failure: 'provisioning' },
       extra: { email: claims.email },
     });
-    return NextResponse.redirect(
-      new URL('/login?error=sso_provisioning', req.url),
-    );
+    return failure(req, silent, 'sso_provisioning');
   }
 
   // 5) Set session cookie + insert UserSession row, clear state
@@ -148,7 +198,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (result.planSyncPending) {
     redirectUrl.searchParams.set('plan_sync', 'pending');
   }
-  const res = NextResponse.redirect(redirectUrl);
+
+  // Silent success: write the cookie + return HTML that tells the
+  // parent page to navigate. Same-Site=Lax means the cookie WILL
+  // be sent on the next top-level navigation, so the parent picks
+  // it up when window.parent.location is set.
+  const res = silent
+    ? silentHtml({ ok: true, redirectTo: redirectUrl.toString() })
+    : NextResponse.redirect(redirectUrl);
   res.cookies.set({
     name: sessionCookie.name,
     value: sessionCookie.value,

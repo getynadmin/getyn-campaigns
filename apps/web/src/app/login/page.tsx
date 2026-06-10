@@ -3,6 +3,7 @@ import { Suspense } from 'react';
 
 import { AuthLayout } from '@/components/auth/auth-layout';
 import { LoginFormDark } from '@/components/auth/login-form-dark';
+import { SilentSsoProbe } from '@/components/auth/silent-sso-probe';
 import { SsoButtonGradient } from '@/components/auth/sso-button-gradient';
 import { isAuth0Configured } from '@/server/auth/auth0';
 
@@ -22,10 +23,22 @@ export const dynamic = 'force-dynamic';
  * gradient CTA when AUTH0_DOMAIN is set. Logic is unchanged from
  * Phase 5.5 M1 — only visuals.
  */
-export default async function LoginPage(): Promise<JSX.Element> {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: { error?: string; logged_out?: string; next?: string };
+}): Promise<JSX.Element> {
   const ssoAvailable = isAuth0Configured();
+  // Skip the silent probe when the user just signed out (or hit an
+  // SSO error) — otherwise we'd loop them straight back in.
+  const silentEligible =
+    ssoAvailable && !searchParams.logged_out && !searchParams.error;
   return (
     <AuthLayout theme="dark">
+      <SilentSsoProbe
+        enabled={silentEligible}
+        returnTo={searchParams.next ?? null}
+      />
       <div className="space-y-2">
         <h1 className="font-display text-3xl font-semibold tracking-tight">
           Welcome back

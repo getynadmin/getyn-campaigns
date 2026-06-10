@@ -125,6 +125,14 @@ export async function verifyIdToken(idToken: string): Promise<SsoClaims> {
 export function buildAuth0LoginUrl(options: {
   state: string;
   nonce?: string;
+  /**
+   * Phase 5.9 — silent (prompt=none) probe. When true, Auth0 returns
+   * immediately with an authorization code if a session exists on
+   * the IdP, otherwise responds with `error=login_required` (or
+   * `consent_required` / `interaction_required`). Used by the
+   * hidden-iframe silent SSO check on the /login page.
+   */
+  silent?: boolean;
 }): string {
   const clientId = process.env.AUTH0_CLIENT_ID;
   if (!clientId) throw new Error('AUTH0_CLIENT_ID unset');
@@ -140,6 +148,7 @@ export function buildAuth0LoginUrl(options: {
   u.searchParams.set('audience', audience);
   u.searchParams.set('state', options.state);
   if (options.nonce) u.searchParams.set('nonce', options.nonce);
+  if (options.silent) u.searchParams.set('prompt', 'none');
   return u.toString();
 }
 

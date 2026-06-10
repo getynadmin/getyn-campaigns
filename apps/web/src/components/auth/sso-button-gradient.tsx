@@ -25,7 +25,7 @@ export function SsoButtonGradient(): JSX.Element {
         className="absolute inset-0 translate-x-[-100%] bg-gradient-to-r from-transparent via-white/25 to-transparent transition-transform duration-700 group-hover:translate-x-[100%]"
       />
       <Sparkles className="size-4" />
-      Continue with Getyn SSO
+      Sign in with Getyn
     </a>
   );
 }
