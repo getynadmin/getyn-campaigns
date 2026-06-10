@@ -145,7 +145,6 @@ export function buildAuth0LoginUrl(options: {
 }): string {
   const clientId = process.env.AUTH0_CLIENT_ID;
   if (!clientId) throw new Error('AUTH0_CLIENT_ID unset');
-  const audience = process.env.AUTH0_AUDIENCE ?? clientId;
   const scope = process.env.AUTH0_SCOPE ?? 'openid profile email';
   const base = options.origin ?? appBaseUrl();
   const redirectUri = `${base}/api/auth/callback/auth0`;
@@ -155,7 +154,16 @@ export function buildAuth0LoginUrl(options: {
   u.searchParams.set('client_id', clientId);
   u.searchParams.set('redirect_uri', redirectUri);
   u.searchParams.set('scope', scope);
-  u.searchParams.set('audience', audience);
+  // `audience` is only meaningful when calling an Auth0-registered
+  // API for access tokens. For pure OIDC sign-in we want the ID
+  // token only, and sending an audience that isn't a registered API
+  // (e.g. the client_id) makes Auth0 reject the whole flow with
+  // access_denied before the user ever sees a password prompt.
+  // Only forward it when the operator has explicitly set
+  // AUTH0_AUDIENCE.
+  if (process.env.AUTH0_AUDIENCE) {
+    u.searchParams.set('audience', process.env.AUTH0_AUDIENCE);
+  }
   u.searchParams.set('state', options.state);
   if (options.nonce) u.searchParams.set('nonce', options.nonce);
   if (options.silent) u.searchParams.set('prompt', 'none');
