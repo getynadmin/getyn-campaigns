@@ -28,6 +28,7 @@ export function AppShell({
         tenantSlug={currentSlug}
         appName={branding.appName}
         logoUrl={branding.sidebarLogoUrl}
+        user={user}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar currentSlug={currentSlug} tenants={tenants} user={user} />

@@ -3,6 +3,7 @@ import { Inter, Inter_Tight } from 'next/font/google';
 
 import { Providers } from '@/components/providers/providers';
 import { getSiteBranding } from '@/server/integrations/site-branding';
+import { THEME_BOOT_SCRIPT } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 import './globals.css';
 
@@ -60,12 +61,18 @@ export default async function RootLayout({
     .join('\n');
   return (
     <html lang="en" suppressHydrationWarning>
-      {customCss && (
-        // eslint-disable-next-line react/no-danger
-        <head>
+      <head>
+        {/* Theme boot — must run before paint to avoid a flash of the
+            wrong colour scheme. Self-contained, idempotent. */}
+        <script
+          // eslint-disable-next-line react/no-danger
+          dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }}
+        />
+        {customCss && (
+          // eslint-disable-next-line react/no-danger
           <style dangerouslySetInnerHTML={{ __html: customCss }} />
-        </head>
-      )}
+        )}
+      </head>
       <body
         className={cn(
           'min-h-screen bg-background font-sans antialiased',
