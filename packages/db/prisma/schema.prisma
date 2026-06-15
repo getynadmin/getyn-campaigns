@@ -319,6 +319,8 @@ model Tenant {
   // Phase 7 — AI Campaign Agents
   brandProfile        TenantBrandProfile?
   agentConversations  AgentConversation[]
+  agentAttachments    AgentAttachment[]
+  proposedImportPlans ProposedImportPlan[]
 
   @@index([slug])
 }
@@ -503,6 +505,9 @@ model ImportJob {
 
   tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdBy User?  @relation("ImportsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  // Phase 7.1 — Audience Agent that produced this job (if any).
+  producedFromPlan ProposedImportPlan?
 
   @@index([tenantId, createdAt])
   @@index([tenantId, status])
@@ -1197,6 +1202,10 @@ model Asset {
   // Phase 7 — brand-profile logos referencing assets
   brandProfilesAsLogo TenantBrandProfile[] @relation("BrandProfileLogo")
 
+  // Phase 7.1 — back-refs from agent attachments + import plans
+  agentAttachments    AgentAttachment[]
+  proposedImportPlans ProposedImportPlan[]
+
   @@index([tenantId, createdAt])
 }
 
@@ -1687,7 +1696,7 @@ model TenantBrandProfile {
   brandName               String
   brandTagline            String?
   brandDescription        String    @db.Text
-  primaryColor            String    // #RRGGBB
+  primaryColor            String // #RRGGBB
   secondaryColor          String?
   accentColor             String?
   logoAssetId             String?
@@ -1717,7 +1726,14 @@ model AgentConversation {
   id                 String                  @id @default(cuid())
   tenantId           String
   createdByUserId    String
-  channel            AgentChannel
+  /// Which agent surface produced this conversation. Phase 7 had only
+  /// CAMPAIGN_EMAIL + CAMPAIGN_WHATSAPP; Phase 7.1 adds AUDIENCE.
+  agentKind          AgentKind               @default(CAMPAIGN_EMAIL)
+  /// Channel is only meaningful for CAMPAIGN_* kinds. AUDIENCE rows
+  /// MUST have channel = NULL. Invariant is enforced at write time in
+  /// the tRPC layer (no DB CHECK constraint — kept light so a future
+  /// agent kind doesn't need a migration to add to the allowed set).
+  channel            AgentChannel?
   status             AgentConversationStatus @default(ACTIVE)
   goal               String?
   producedCampaignId String?                 @unique
@@ -1734,8 +1750,13 @@ model AgentConversation {
   producedCampaign Campaign?      @relation(fields: [producedCampaignId], references: [id], onDelete: SetNull)
   messages         AgentMessage[]
 
+  // Phase 7.1
+  attachments        AgentConversationAttachment[]
+  proposedImportPlan ProposedImportPlan?
+
   @@index([tenantId, status, lastMessageAt(sort: Desc)])
   @@index([createdByUserId, lastMessageAt(sort: Desc)])
+  @@index([tenantId, agentKind, lastMessageAt(sort: Desc)])
 }
 
 /// Every turn of every conversation. `tenantId` denormalised so the
@@ -1756,6 +1777,9 @@ model AgentMessage {
   createdAt      DateTime         @default(now())
 
   conversation AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  // Phase 7.1 — first time an attachment is referenced in this message
+  referencingAttachments AgentConversationAttachment[]
 
   @@index([conversationId, createdAt])
 }
@@ -1779,4 +1803,146 @@ model EmailBlockTemplate {
   updatedAt                 DateTime           @updatedAt
 
   @@index([category])
+}
+
+// =====================================================================
+// Phase 7.1 — Attachments + Audience Agent
+// =====================================================================
+
+/// Which agent surface produced this conversation. The campaign-side
+/// kinds carry a non-null `AgentConversation.channel`; AUDIENCE rows
+/// always have channel = NULL.
+enum AgentKind {
+  CAMPAIGN_EMAIL
+  CAMPAIGN_WHATSAPP
+  AUDIENCE
+}
+
+/// Coarse type used to route the parser pipeline + the summarizer
+/// prompt template. Each upload is classified once at insert time
+/// from the MIME type (after magic-byte verification).
+enum AttachmentType {
+  IMAGE
+  PDF
+  SPREADSHEET
+  DOCUMENT
+}
+
+/// Audience Agent's import plan, before user approval.
+enum ProposedImportPlanStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+  IMPORTED
+  FAILED
+}
+
+/// One row per file uploaded into an agent conversation. The underlying
+/// Storage object + Asset row are wrapped here so cleanup semantics are
+/// scoped to agent use only — the Asset library used by email blocks /
+/// WhatsApp media is untouched.
+///
+/// Lifecycle: created with `expiresAt = createdAt + 30 days`; bumped to
+/// NULL when the attachment is referenced in a finalized plan (campaign
+/// draft or ProposedImportPlan). The daily cleanup cron deletes rows
+/// whose `expiresAt < now` and whose conversation is no longer active.
+model AgentAttachment {
+  id                   String         @id @default(cuid())
+  tenantId             String
+  /// Underlying storage row. We do NOT cascade — the cleanup worker
+  /// deletes the Storage object first, then this row, then the Asset,
+  /// in that order, so a partial failure never orphans either side.
+  assetId              String
+  attachmentType       AttachmentType
+  /// Structured representation written by the attachment-parse worker.
+  /// Shape varies by type — see worker handler for the canonical
+  /// shapes (spreadsheet: { columns, rowCount, sampleRows,
+  /// columnTypeGuesses }; pdf: { pageCount, textContent, pageImages };
+  /// docx: { text, wordCount, headings, truncated }; image: { width,
+  /// height, thumbnailPath }).
+  parsedContent        Json?
+  parsedAt             DateTime?
+  /// Claude-generated 2–5 sentence summary, included in conversation
+  /// system context. Capped at $0.05 per attachment; falls back to a
+  /// deterministic stub if Claude is unavailable.
+  aiSummary            String?        @db.Text
+  aiSummaryGeneratedAt DateTime?
+  aiSummaryModel       String?
+  /// 30-day default; NULL means "pinned — referenced in a finalized
+  /// plan, do not auto-delete".
+  expiresAt            DateTime?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  tenant        Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  asset         Asset                         @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  conversations AgentConversationAttachment[]
+
+  @@unique([tenantId, assetId])
+  @@index([tenantId, expiresAt])
+  @@index([tenantId, createdAt])
+}
+
+/// Join table — an attachment can be referenced in more than one
+/// conversation (rare but legal: user uploads brand guidelines once,
+/// agent reuses across campaigns). `referencedAtMessageId` records the
+/// first message that introduced the attachment into the conversation;
+/// the UI uses it to render the attachment inline at that point in the
+/// transcript.
+model AgentConversationAttachment {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  conversationId        String
+  agentAttachmentId     String
+  referencedAtMessageId String?
+  createdAt             DateTime @default(now())
+
+  conversation        AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachment          AgentAttachment   @relation(fields: [agentAttachmentId], references: [id], onDelete: Cascade)
+  referencedAtMessage AgentMessage?     @relation(fields: [referencedAtMessageId], references: [id], onDelete: SetNull)
+
+  @@unique([conversationId, agentAttachmentId])
+  @@index([tenantId, conversationId])
+}
+
+/// Audience Agent's output before user approval. Exactly one per
+/// conversation. Status DRAFT until the user clicks Approve in the
+/// review card; flips to APPROVED, which creates an ImportJob via the
+/// existing Phase 2 worker and stamps `producedImportJobId`. We never
+/// write to Contact directly from the agent — handoff goes through the
+/// existing import pipeline so dedupe / RLS / progress all match.
+model ProposedImportPlan {
+  id                  String                   @id @default(cuid())
+  tenantId            String
+  conversationId      String                   @unique
+  sourceAssetId       String
+  /// { [csvColumn]: { kind: 'field', field: 'email' } | { kind: 'custom_field', key: 'state' } | { kind: 'skip' } }
+  columnMapping       Json                     @default("{}")
+  /// Array of { column, operator, value } expressions the agent built
+  /// during the conversation (e.g. State IN [California, Texas]).
+  filters             Json                     @default("[]")
+  dedupeStrategy      ImportDedupeStrategy     @default(EMAIL)
+  tagsToApply         String[]                 @default([])
+  /// Channel-specific opt-in status applied to all imported contacts.
+  /// Audience Agent prompt forces explicit user confirmation before
+  /// setting SUBSCRIBED.
+  defaultEmailStatus  ContactChannelStatus     @default(PENDING)
+  estimatedRows       Int?
+  /// 10 sample rows showing how they'd be imported — fed to the
+  /// review card.
+  previewRows         Json                     @default("[]")
+  /// Array of { severity: 'warning'|'error', message, affectedRows? }.
+  validationIssues    Json                     @default("[]")
+  status              ProposedImportPlanStatus @default(DRAFT)
+  approvedAt          DateTime?
+  producedImportJobId String?                  @unique
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation      AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sourceAsset       Asset             @relation(fields: [sourceAssetId], references: [id], onDelete: Restrict)
+  producedImportJob ImportJob?        @relation(fields: [producedImportJobId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
 }
