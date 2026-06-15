@@ -40,7 +40,7 @@ export function getAnthropicClient(apiKey?: string): Anthropic {
  * doesn't shift under us between deploys. Bump explicitly when we
  * validate a new model against the prompt suites.
  */
-export const ACTIVE_MODEL = 'claude-3-5-sonnet-20241022' as const;
+export const ACTIVE_MODEL = 'claude-sonnet-4-6' as const;
 
 /**
  * Per-million-token rates for the active model (USD). Update alongside

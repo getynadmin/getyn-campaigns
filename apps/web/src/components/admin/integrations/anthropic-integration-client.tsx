@@ -140,7 +140,7 @@ export function AnthropicIntegrationClient(): JSX.Element {
             <Input
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              placeholder="claude-3-5-sonnet-20241022 (default)"
+              placeholder="claude-sonnet-4-6 (default)"
             />
             <p className="text-xs text-muted-foreground">
               Leave blank to use the package default. Pin a specific Claude
