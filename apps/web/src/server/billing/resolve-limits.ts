@@ -27,6 +27,7 @@ const ALL_METRICS: PlanMetric[] = [
   PlanMetric.AI_CREDITS_PER_MONTH,
   PlanMetric.CUSTOM_SENDING_DOMAINS,
   PlanMetric.USER_SEATS,
+  PlanMetric.AI_AGENT_CONVERSATIONS_PER_MONTH,
 ];
 
 export type ResolvedLimits = Record<PlanMetric, number>;

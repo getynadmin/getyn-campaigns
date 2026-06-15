@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowRight, Mail } from 'lucide-react';
+import { ArrowRight, Mail, Sparkles } from 'lucide-react';
 
 import {
   CampaignSendStatus,
@@ -42,7 +42,10 @@ export default async function DashboardPage({
 }): Promise<JSX.Element> {
   const tenant = await prisma.tenant.findUnique({
     where: { slug: params.slug },
-    include: { _count: { select: { memberships: true } } },
+    include: {
+      _count: { select: { memberships: true } },
+      brandProfile: { select: { completedAt: true } },
+    },
   });
   if (!tenant) notFound();
 
@@ -135,6 +138,29 @@ export default async function DashboardPage({
           </div>
         ) : null}
       </div>
+
+      {tenant.brandProfile?.completedAt == null && (
+        <Link
+          href={`/t/${params.slug}/settings/brand`}
+          className="group block rounded-xl border border-violet-300 bg-gradient-to-r from-violet-50 via-fuchsia-50 to-orange-50 p-4 transition-shadow hover:shadow-md dark:border-violet-800/60 dark:from-violet-950/40 dark:via-fuchsia-950/30 dark:to-orange-950/20"
+        >
+          <div className="flex items-center gap-4">
+            <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-violet-600 via-fuchsia-500 to-orange-400 text-white shadow-sm">
+              <Sparkles className="size-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">
+                Set up your brand profile to use AI Campaign Agent
+              </p>
+              <p className="text-xs text-muted-foreground">
+                The agent reads your brand voice + colors when drafting
+                campaigns. Takes about 2 minutes.
+              </p>
+            </div>
+            <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+          </div>
+        </Link>
+      )}
 
       <OnboardingChecklist
         tenantSlug={params.slug}

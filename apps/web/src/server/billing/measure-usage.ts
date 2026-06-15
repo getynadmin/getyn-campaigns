@@ -122,6 +122,24 @@ export async function countSendingDomains(tenantId: string): Promise<number> {
  * invites prevents the "invite 50 emails before any accepts" exploit
  * on a 10-seat plan.
  */
+/**
+ * Phase 7 — count agent conversations started in the current calendar
+ * month UTC. Any non-ABANDONED status counts (we don't refund a
+ * conversation that ended up in the FAILED bucket; the token spend
+ * already happened). Only conversations created by this tenant.
+ */
+export async function countAgentConversationsThisMonth(
+  tenantId: string,
+): Promise<number> {
+  return prisma.agentConversation.count({
+    where: {
+      tenantId,
+      createdAt: { gte: startOfCalendarMonthUTC() },
+      status: { not: 'ABANDONED' },
+    },
+  });
+}
+
 export async function countSeatsConsumed(tenantId: string): Promise<number> {
   const now = new Date();
   const [members, pending] = await Promise.all([
@@ -161,6 +179,8 @@ export async function getCurrentUsage(
       return countSendingDomains(tenantId);
     case PlanMetric.USER_SEATS:
       return countSeatsConsumed(tenantId);
+    case PlanMetric.AI_AGENT_CONVERSATIONS_PER_MONTH:
+      return countAgentConversationsThisMonth(tenantId);
   }
 }
 
@@ -179,6 +199,7 @@ export async function getAllCurrentUsage(
     PlanMetric.AI_CREDITS_PER_MONTH,
     PlanMetric.CUSTOM_SENDING_DOMAINS,
     PlanMetric.USER_SEATS,
+    PlanMetric.AI_AGENT_CONVERSATIONS_PER_MONTH,
   ];
   const values = await Promise.all(
     metrics.map((m) => getCurrentUsage(tenantId, m)),

@@ -12,3 +12,4 @@ export * from './suppression';
 export * from './campaigns';
 export * from './whatsapp';
 export * from './sso';
+export * from './brand';

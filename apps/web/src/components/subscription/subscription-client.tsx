@@ -39,12 +39,14 @@ const METRIC_LABEL: Record<PlanMetric, string> = {
   AI_CREDITS_PER_MONTH: 'AI credits / month',
   CUSTOM_SENDING_DOMAINS: 'Sending domains',
   USER_SEATS: 'User seats',
+  AI_AGENT_CONVERSATIONS_PER_MONTH: 'AI agent conversations / month',
 };
 
 const ORDERED_METRICS: PlanMetric[] = [
   PlanMetric.EMAILS_PER_MONTH,
   PlanMetric.WA_MESSAGES_PER_MONTH,
   PlanMetric.AI_CREDITS_PER_MONTH,
+  PlanMetric.AI_AGENT_CONVERSATIONS_PER_MONTH,
   PlanMetric.CONTACTS,
   PlanMetric.USER_SEATS,
   PlanMetric.CUSTOM_SENDING_DOMAINS,

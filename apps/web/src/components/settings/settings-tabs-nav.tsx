@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 
 const tabs = [
   { key: 'workspace', label: 'Workspace' },
+  { key: 'brand', label: 'Brand' },
   { key: 'team', label: 'Team' },
   { key: 'custom-fields', label: 'Custom fields' },
   { key: 'sending-domains', label: 'Sending domains' },

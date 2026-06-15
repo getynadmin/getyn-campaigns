@@ -16,6 +16,7 @@ import { subscriptionRouter } from './routers/subscription';
 import { suppressionRouter } from './routers/suppression';
 import { tagsRouter } from './routers/tags';
 import { tenantRouter } from './routers/tenant';
+import { tenantBrandRouter } from './routers/tenant-brand';
 import { userSessionsRouter } from './routers/user-sessions';
 import { whatsAppAccountsRouter } from './routers/whatsapp-accounts';
 import { whatsAppCampaignsRouter } from './routers/whatsapp-campaigns';
@@ -53,6 +54,8 @@ export const appRouter = createTRPCRouter({
   userSessions: userSessionsRouter,
   // Phase 5.5 M5 — tenant subscription view + upgrade requests
   subscription: subscriptionRouter,
+  // Phase 7 — AI Campaign Agents: brand profile (M1).
+  tenantBrand: tenantBrandRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -26,6 +26,7 @@ const METRIC_LABEL: Record<PlanMetric, string> = {
   AI_CREDITS_PER_MONTH: 'AI credits this month',
   CUSTOM_SENDING_DOMAINS: 'sending domains',
   USER_SEATS: 'user seats',
+  AI_AGENT_CONVERSATIONS_PER_MONTH: 'AI agent conversations this month',
 };
 
 export interface LimitCheckResult {

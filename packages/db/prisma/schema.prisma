@@ -244,6 +244,9 @@ model User {
   // devices in user settings + revoke remote sessions.
   sessions UserSession[]
 
+  // Phase 7 — AI Campaign Agents
+  agentConversationsStarted AgentConversation[] @relation("AgentConversationsStartedBy")
+
   // Phase 5.5 — upgrade requests submitted by this user (their tenant).
   planUpgradeRequests PlanUpgradeRequest[] @relation("PlanUpgradeRequestedBy")
 
@@ -312,6 +315,10 @@ model Tenant {
   limitOverrides      TenantLimitOverride[]
   planUpgradeRequests PlanUpgradeRequest[]
   gSuiteWebhookEvents GSuiteWebhookEvent[]
+
+  // Phase 7 — AI Campaign Agents
+  brandProfile        TenantBrandProfile?
+  agentConversations  AgentConversation[]
 
   @@index([slug])
 }
@@ -610,6 +617,9 @@ model Campaign {
   sends                 CampaignSend[]
   events                CampaignEvent[]
   trackingLinks         TrackingLink[]
+
+  // Phase 7 — when a campaign was produced by an agent
+  sourceAgentConversation AgentConversation?
 
   @@index([tenantId, status, scheduledAt])
   @@index([tenantId, createdAt])
@@ -1184,6 +1194,9 @@ model Asset {
   templateMessages  WhatsAppMessage[]
   campaignsAsHeader WhatsAppCampaign[]
 
+  // Phase 7 — brand-profile logos referencing assets
+  brandProfilesAsLogo TenantBrandProfile[] @relation("BrandProfileLogo")
+
   @@index([tenantId, createdAt])
 }
 
@@ -1243,6 +1256,8 @@ enum PlanMetric {
   AI_CREDITS_PER_MONTH
   CUSTOM_SENDING_DOMAINS
   USER_SEATS
+  // Phase 7 — AI Campaign Agents conversation cap.
+  AI_AGENT_CONVERSATIONS_PER_MONTH
 }
 
 model Plan {
@@ -1610,4 +1625,158 @@ model SiteBrandingSettings {
   customCss                  String?  @db.Text
   updatedByStaffUserId       String?
   updatedAt                  DateTime @updatedAt
+}
+
+// ==================================================================
+// Phase 7 — AI Campaign Agents.
+//
+// TenantBrandProfile (1:1 per tenant) carries the brand context every
+// agent reads at conversation start. AgentConversation is one chat
+// session that produces at most one DRAFT campaign. AgentMessage
+// stores every turn (user / assistant / tool-call / tool-result /
+// system) for resume + audit. EmailBlockTemplate is the global vetted
+// library Claude composes designs from.
+// ==================================================================
+
+enum VoiceTone {
+  PROFESSIONAL
+  FRIENDLY
+  CASUAL
+  PLAYFUL
+  AUTHORITATIVE
+  EMPATHETIC
+}
+
+enum AgentChannel {
+  EMAIL
+  WHATSAPP
+}
+
+enum AgentConversationStatus {
+  ACTIVE
+  COMPLETED_DRAFT_CREATED
+  ABANDONED
+  FAILED
+}
+
+enum AgentMessageRole {
+  USER
+  ASSISTANT
+  TOOL_CALL
+  TOOL_RESULT
+  SYSTEM
+}
+
+enum EmailBlockCategory {
+  HERO
+  CONTENT
+  MEDIA
+  CTA
+  FOOTER
+  DIVIDER
+  SOCIAL
+}
+
+/// One per tenant. Filled by the user from /t/[slug]/settings/brand,
+/// read by every agent conversation at start. `completedAt` is null
+/// until the user runs the "Save & complete" path; agent entry points
+/// block until it's set.
+model TenantBrandProfile {
+  id                      String    @id @default(cuid())
+  tenantId                String    @unique
+  brandName               String
+  brandTagline            String?
+  brandDescription        String    @db.Text
+  primaryColor            String    // #RRGGBB
+  secondaryColor          String?
+  accentColor             String?
+  logoAssetId             String?
+  logoUrl                 String?
+  voiceTone               VoiceTone @default(FRIENDLY)
+  writingStyle            String?   @db.Text
+  industry                String?
+  targetAudience          String?   @db.Text
+  dosAndDonts             String?   @db.Text
+  signatureBlock          String?   @db.Text
+  socialLinks             Json      @default("[]")
+  unsubscribeFooterCustom String?   @db.Text
+  completedAt             DateTime?
+  updatedByUserId         String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  logoAsset Asset? @relation("BrandProfileLogo", fields: [logoAssetId], references: [id], onDelete: SetNull)
+}
+
+/// One row per chat session that produces a draft campaign. Status
+/// progresses ACTIVE → (COMPLETED_DRAFT_CREATED | ABANDONED | FAILED).
+/// `producedCampaignId` is unique so a draft maps back to exactly one
+/// source conversation.
+model AgentConversation {
+  id                 String                  @id @default(cuid())
+  tenantId           String
+  createdByUserId    String
+  channel            AgentChannel
+  status             AgentConversationStatus @default(ACTIVE)
+  goal               String?
+  producedCampaignId String?                 @unique
+  conversationState  Json                    @default("{}")
+  tokensUsed         Int                     @default(0)
+  costCents          Int                     @default(0)
+  title              String?
+  lastMessageAt      DateTime                @default(now())
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy        User           @relation("AgentConversationsStartedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  producedCampaign Campaign?      @relation(fields: [producedCampaignId], references: [id], onDelete: SetNull)
+  messages         AgentMessage[]
+
+  @@index([tenantId, status, lastMessageAt(sort: Desc)])
+  @@index([createdByUserId, lastMessageAt(sort: Desc)])
+}
+
+/// Every turn of every conversation. `tenantId` denormalised so the
+/// RLS policy doesn't need to JOIN through AgentConversation on every
+/// read (matches the CampaignSend / Contact pattern).
+model AgentMessage {
+  id             String           @id @default(cuid())
+  conversationId String
+  tenantId       String
+  role           AgentMessageRole
+  content        String?          @db.Text
+  toolName       String?
+  toolInput      Json?
+  toolOutput     Json?
+  tokensInput    Int?
+  tokensOutput   Int?
+  errorMessage   String?
+  createdAt      DateTime         @default(now())
+
+  conversation AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+/// Global library of vetted email block templates. Seeded by the
+/// 0010 migration with 12 starter blocks; not user-editable in Phase 7.
+/// `unlayerDesignJsonTemplate` carries the real Unlayer JSON with
+/// `{{placeholder}}` tokens that the composer substitutes from
+/// agent-provided content + brand defaults.
+model EmailBlockTemplate {
+  id                        String             @id @default(cuid())
+  slug                      String             @unique
+  name                      String
+  description               String             @db.Text
+  category                  EmailBlockCategory
+  previewImageUrl           String?
+  unlayerDesignJsonTemplate Json
+  placeholders              Json               @default("[]")
+  compatibleAfter           String[]           @default([])
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
+
+  @@index([category])
 }

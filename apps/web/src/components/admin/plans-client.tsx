@@ -48,6 +48,7 @@ const METRICS: PlanMetric[] = [
   PlanMetric.AI_CREDITS_PER_MONTH,
   PlanMetric.CUSTOM_SENDING_DOMAINS,
   PlanMetric.USER_SEATS,
+  PlanMetric.AI_AGENT_CONVERSATIONS_PER_MONTH,
 ];
 
 const METRIC_LABEL: Record<PlanMetric, string> = {
@@ -58,6 +59,7 @@ const METRIC_LABEL: Record<PlanMetric, string> = {
   AI_CREDITS_PER_MONTH: 'AI credits / month',
   CUSTOM_SENDING_DOMAINS: 'Custom sending domains',
   USER_SEATS: 'User seats',
+  AI_AGENT_CONVERSATIONS_PER_MONTH: 'AI agent conversations / month',
 };
 
 type FormState = {
