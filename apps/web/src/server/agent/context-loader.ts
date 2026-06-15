@@ -177,18 +177,56 @@ export function renderSystemPrompt(args: {
       `Ask only what you need. Don't be chatty. Don't promise anything you ` +
       `can't deliver in the Campaigns product (no analytics dashboards, no ` +
       `social posting, no API calls outside the tools below).`,
-    ``,
-    `When you have enough information, signal completion by calling ` +
-      `\`finalize_draft\`. (Not yet available in M2 — for now, after ` +
-      `calling set_goal, just respond with a short summary and let the ` +
-      `turn end.)`,
   );
 
+  if (args.channel === 'EMAIL') {
+    lines.push(
+      ``,
+      `# Email-specific guidance`,
+      ``,
+      `Workflow:`,
+      `  1. Call set_goal once when you understand the campaign's purpose.`,
+      `  2. Call set_audience with one of the segment ids below.`,
+      `  3. Call set_subject_line with a subject + optional preheader.`,
+      `  4. Call propose_design_plan with an ordered list of blocks.`,
+      `  5. Iterate with update_block_content / add_block / remove_block / reorder_blocks` +
+        ` based on user feedback.`,
+      `  6. Call finalize_draft once the user is happy. This hands off to the` +
+        ` visual editor; don't try to finish all polish in chat.`,
+      ``,
+      `When you need an image but the user hasn't given you a URL, call` +
+        ` request_image — the UI prompts them; you'll get the asset back.`,
+      ``,
+      `Every block has a slug + a content map filling in {{placeholders}}.` +
+        ` The composer auto-fills brand defaults (logo, address, unsubscribe URL,` +
+        ` brand_name, primary_color) so you don't have to repeat them in every block.`,
+      ``,
+      `# Available email blocks`,
+      ``,
+    );
+    for (const b of c.emailBlocks) {
+      lines.push(`  - ${b.slug} (${b.category}) — ${b.name}: ${b.description}`);
+    }
+  } else {
+    lines.push(
+      ``,
+      `# WhatsApp-specific guidance`,
+      `(WhatsApp tooling lands in M4 — for M3 only the shared set_goal tool is wired.)`,
+    );
+  }
+
   if (c.segments.length > 0) {
-    lines.push(``, `Available audience segments:`);
+    lines.push(``, `# Available audience segments`, ``);
     for (const s of c.segments) {
       lines.push(`  - ${s.name} (id: ${s.id})`);
     }
+  } else {
+    lines.push(
+      ``,
+      `# Available audience segments`,
+      ``,
+      `(none yet — ask the user to create one in Contacts → Segments before finalizing)`,
+    );
   }
 
   return lines.join('\n');

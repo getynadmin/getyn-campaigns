@@ -13,20 +13,22 @@ import {
   type ToolDefinition,
 } from '@getyn/ai';
 
-import { setGoalTool } from './tools/set-goal';
 import {
   loadAgentContext,
   renderSystemPrompt,
 } from './context-loader';
 import { createConversationMessageStore } from './message-store';
+import { emailAgentTools } from './tools/email';
+import { setGoalTool } from './tools/set-goal';
 
 /**
- * In M2 every conversation gets the same trivial toolset
- * (just `set_goal`). M3 will expand the EMAIL list and M4 will add
- * the WHATSAPP list.
+ * Channel-scoped tool registration. M3 lights up the email toolset;
+ * M4 will add the WhatsApp list.
  */
 function toolsForChannel(channel: 'EMAIL' | 'WHATSAPP'): ToolDefinition[] {
-  void channel;
+  if (channel === 'EMAIL') return emailAgentTools;
+  // WHATSAPP — placeholder until M4. For now only the shared
+  // set_goal tool is registered so the channel boots cleanly.
   return [setGoalTool as ToolDefinition];
 }
 
