@@ -25,6 +25,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Smartphone,
+  Sparkles,
   Users,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -125,6 +126,11 @@ const SECTIONS: Section[] = [
         label: 'SMS Servers',
         icon: Smartphone,
         badge: 'Soon',
+      },
+      {
+        href: '/admin/integrations/ai-llms',
+        label: 'AI LLMs',
+        icon: Sparkles,
       },
     ],
   },

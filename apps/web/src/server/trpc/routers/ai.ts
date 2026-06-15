@@ -10,6 +10,7 @@ import { aiDraftTemplateSchema } from '@getyn/types';
 
 import { assertTenantActive } from '@/server/billing/assert-active';
 import { assertWithinLimit } from '@/server/billing/assert-limit';
+import { getAnthropicCredentials } from '@/server/integrations/anthropic';
 
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
 
@@ -45,9 +46,10 @@ export const aiRouter = createTRPCRouter({
    * server is missing ANTHROPIC_API_KEY (the feature is gracefully
    * disabled rather than crashing the editor).
    */
-  isAvailable: tenantProcedure.query(() => ({
-    available: isAiConfigured(),
-  })),
+  isAvailable: tenantProcedure.query(async () => {
+    const anthropic = await getAnthropicCredentials();
+    return { available: isAiConfigured(anthropic.apiKey ?? undefined) };
+  }),
 
   draftWhatsAppTemplate: tenantProcedure
     .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
@@ -88,15 +90,20 @@ export const aiRouter = createTRPCRouter({
         select: { name: true },
       });
 
+      const anthropic = await getAnthropicCredentials();
+
       let result;
       try {
-        result = await draftWhatsAppTemplate({
-          brief: input.brief,
-          category: input.category,
-          language: input.language,
-          tone: input.tone,
-          tenantName: tenant?.name,
-        });
+        result = await draftWhatsAppTemplate(
+          {
+            brief: input.brief,
+            category: input.category,
+            language: input.language,
+            tone: input.tone,
+            tenantName: tenant?.name,
+          },
+          anthropic.apiKey ? { apiKey: anthropic.apiKey } : {},
+        );
       } catch (err) {
         if (err instanceof AiNotConfiguredError) {
           throw new TRPCError({

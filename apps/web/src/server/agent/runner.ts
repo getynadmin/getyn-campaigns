@@ -14,6 +14,7 @@ import {
 } from '@getyn/ai';
 
 import { emitAgentSentryAlert } from '@/server/analytics/agent-events';
+import { getAnthropicCredentials } from '@/server/integrations/anthropic';
 
 import {
   loadAgentContext,
@@ -126,6 +127,20 @@ export async function* runConversationTurn(args: {
   const initialState =
     (convo.conversationState as Record<string, unknown> | null) ?? {};
 
+  // Phase 7 follow-up — resolve the Anthropic key from the
+  // anthropic_llm IntegrationCredential row (admin-managed) with
+  // env-var fallback so the agent surface keeps working through
+  // the admin migration.
+  const anthropic = await getAnthropicCredentials();
+  if (!anthropic.apiKey) {
+    yield {
+      type: 'error',
+      message:
+        'AI is not configured for this workspace. An admin needs to add an Anthropic API key in Admin → Global Integrations → AI LLMs.',
+    };
+    return;
+  }
+
   yield* runAgentTurn({
     conversationId: convo.id,
     tenantId: convo.tenantId,
@@ -136,6 +151,7 @@ export async function* runConversationTurn(args: {
     store,
     initialState,
     finalizeToolNames: FINALIZE_TOOL_NAMES,
+    apiKey: anthropic.apiKey,
   });
 
   // After the turn streams, sync the goal from accumulated state to

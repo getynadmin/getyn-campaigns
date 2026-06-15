@@ -15,6 +15,8 @@
 import { z } from 'zod';
 
 import { defineTool, draftWhatsAppTemplate } from '@getyn/ai';
+
+import { getAnthropicCredentials } from '@/server/integrations/anthropic';
 import { WATemplateStatus, prisma, withTenant } from '@getyn/db';
 import type { Prisma, WATemplateCategory } from '@getyn/db';
 
@@ -95,15 +97,21 @@ export const draftNewTemplateTool = defineTool({
       }),
     );
 
-    // Run the Phase 4 M7 drafting pipeline.
-    const result = await draftWhatsAppTemplate({
-      brief: input.brief,
-      category: input.category,
-      language: input.language,
-      tone: input.tone,
-      tenantName: brand?.brandName,
-      tenantAbout: brand?.brandDescription ?? undefined,
-    });
+    // Run the Phase 4 M7 drafting pipeline. Anthropic key resolves
+    // from the anthropic_llm IntegrationCredential row first, env
+    // fallback otherwise.
+    const anthropic = await getAnthropicCredentials();
+    const result = await draftWhatsAppTemplate(
+      {
+        brief: input.brief,
+        category: input.category,
+        language: input.language,
+        tone: input.tone,
+        tenantName: brand?.brandName,
+        tenantAbout: brand?.brandDescription ?? undefined,
+      },
+      anthropic.apiKey ? { apiKey: anthropic.apiKey } : {},
+    );
 
     if (!result.components) {
       throw new Error(

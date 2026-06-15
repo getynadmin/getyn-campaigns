@@ -150,8 +150,9 @@ function tryParse(raw: string): ParsedResponse | null {
  */
 export async function draftWhatsAppTemplate(
   req: DraftRequest,
+  opts: { apiKey?: string } = {},
 ): Promise<DraftResult> {
-  const client = getAnthropicClient();
+  const client = getAnthropicClient(opts.apiKey);
   const systemPrompt = buildSystemPrompt(req);
 
   let lastRaw = '';

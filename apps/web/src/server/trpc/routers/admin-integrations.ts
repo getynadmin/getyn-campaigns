@@ -52,6 +52,12 @@ import {
   type WhatsAppConfig,
   type WhatsAppSecrets,
 } from '@/server/integrations/whatsapp';
+import {
+  getAnthropicCredentials,
+  testAnthropicCredentials,
+  type AnthropicConfig,
+  type AnthropicSecrets,
+} from '@/server/integrations/anthropic';
 
 import {
   createAdminRouter,
@@ -596,6 +602,95 @@ const railwayRouter = createAdminRouter({
 });
 
 // =====================================================================
+// Anthropic (Claude) LLM — provider='anthropic_llm'
+// =====================================================================
+
+const anthropicUpdateSchema = z.object({
+  apiKey: z.string().max(2_000).default(''),
+  model: z.string().trim().max(120).default(''),
+  enabled: z.boolean(),
+});
+
+const anthropicRouter = createAdminRouter({
+  get: staffProcedure.query(async () => {
+    const row = await adminLoadIntegration<AnthropicConfig, AnthropicSecrets>(
+      'anthropic_llm',
+    );
+    const live = await getAnthropicCredentials();
+    return {
+      provider: 'anthropic_llm' as const,
+      enabled: row?.enabled ?? false,
+      config: { model: row?.config.model ?? '' },
+      hasSecrets: row?.hasSecrets ?? false,
+      lastTestedAt: row?.lastTestedAt ?? null,
+      lastTestStatus: row?.lastTestStatus ?? ('UNTESTED' as const),
+      lastTestError: row?.lastTestError ?? null,
+      liveSource: live.source,
+    };
+  }),
+
+  update: supportAdminProcedure
+    .input(anthropicUpdateSchema)
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async () => {
+        const existing = await adminLoadIntegration<
+          AnthropicConfig,
+          AnthropicSecrets
+        >('anthropic_llm');
+        const config: AnthropicConfig = input.model
+          ? { model: input.model }
+          : {};
+        const incomingKey = input.apiKey.trim();
+        const secretsPayload: Record<string, unknown> | null =
+          incomingKey === '' ? null : { apiKey: incomingKey };
+        await saveIntegration({
+          provider: 'anthropic_llm',
+          config: config as Record<string, unknown>,
+          secrets: secretsPayload,
+          enabled: input.enabled,
+          staffUserId: ctx.staff.staffUserId,
+        });
+        return {
+          result: { ok: true as const },
+          audit: {
+            action: 'admin.integration.anthropic.updated',
+            beforeSnapshot: existing
+              ? { enabled: existing.enabled, config: existing.config }
+              : null,
+            afterSnapshot: { enabled: input.enabled, config },
+          },
+        };
+      });
+    }),
+
+  test: supportAdminProcedure.mutation(async () => {
+    const creds = await getAnthropicCredentials();
+    if (!creds.apiKey) {
+      const error = 'API key is required to test.';
+      await recordTestResult({
+        provider: 'anthropic_llm',
+        ok: false,
+        error,
+      });
+      throw new TRPCError({ code: 'BAD_REQUEST', message: error });
+    }
+    const result = await testAnthropicCredentials({ apiKey: creds.apiKey });
+    await recordTestResult({
+      provider: 'anthropic_llm',
+      ok: result.ok,
+      error: result.error,
+    });
+    if (!result.ok) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: result.error ?? 'Test failed.',
+      });
+    }
+    return { ok: true as const };
+  }),
+});
+
+// =====================================================================
 // Top-level admin.integrations router — fans out per provider.
 // =====================================================================
 
@@ -607,4 +702,5 @@ export const adminIntegrationsRouter = createAdminRouter({
   emailTemplate: emailTemplateRouter,
   resend: resendRouter,
   railway: railwayRouter,
+  anthropic: anthropicRouter,
 });

@@ -13,7 +13,21 @@ export class AiNotConfiguredError extends Error {
   }
 }
 
-export function getAnthropicClient(): Anthropic {
+/**
+ * Resolves an Anthropic client, preferring an explicitly-supplied
+ * key over the env var. Phase 7 + Phase 5.6 admin path: the
+ * `anthropic_llm` IntegrationCredential row stores a tenant-managed
+ * key; runtime callers pass it via `apiKey` to override the env.
+ *
+ * When `apiKey` is omitted we use the long-lived process-wide cache
+ * (env-var driven). When supplied we always mint a fresh client to
+ * avoid leaking one tenant's key into another's request. The
+ * Anthropic SDK is cheap to construct.
+ */
+export function getAnthropicClient(apiKey?: string): Anthropic {
+  if (apiKey) {
+    return new Anthropic({ apiKey });
+  }
   if (cached) return cached;
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) throw new AiNotConfiguredError();
@@ -59,6 +73,6 @@ export function computeCost(
   };
 }
 
-export function isAiConfigured(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+export function isAiConfigured(apiKey?: string): boolean {
+  return Boolean(apiKey || process.env.ANTHROPIC_API_KEY);
 }

@@ -183,12 +183,17 @@ export interface RunAgentTurnArgs {
   /** Tools whose successful invocation signals "we're done — go
    *  hand off to the UI." Common case: `['finalize_draft']`. */
   finalizeToolNames?: string[];
+  /** Explicit Anthropic API key — when supplied, overrides the
+   *  process-wide env-var. Phase 7 + Phase 5.6 admin path: the
+   *  runner resolves the key from the `anthropic_llm` IntegrationCredential
+   *  row (DB) before falling back to ANTHROPIC_API_KEY env. */
+  apiKey?: string;
 }
 
 export async function* runAgentTurn(
   args: RunAgentTurnArgs,
 ): AsyncGenerator<AgentStreamEvent> {
-  const client = getAnthropicClient();
+  const client = getAnthropicClient(args.apiKey);
   const finalizeSet = new Set(args.finalizeToolNames ?? []);
   const state = { ...args.initialState };
   let totalTokensIn = 0;
