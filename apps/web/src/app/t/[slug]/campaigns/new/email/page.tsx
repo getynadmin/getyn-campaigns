@@ -2,17 +2,20 @@ import { notFound } from 'next/navigation';
 
 import { Role, prisma } from '@getyn/db';
 
-import { NewCampaignChooser } from '@/components/campaigns/new-campaign-chooser';
+import { CampaignNewClient } from '@/components/campaigns/campaign-new-client';
 import { getCurrentUser } from '@/server/auth/session';
 
-export const metadata = { title: 'New campaign' };
+export const metadata = { title: 'New email campaign' };
 
 /**
- * Phase 7 M5 — /t/[slug]/campaigns/new is now a chooser between the
- * AI Campaign Agent and the manual flows. The bare email form moved
- * to /campaigns/new/email.
+ * Phase 7 M5 — manual email-campaign create.
+ *
+ * Moved here from /campaigns/new (which is now a chooser between the
+ * AI agent and the manual flows). Same minimal create-form behaviour
+ * as before: name + segment → DRAFT, redirect into the existing
+ * detail page where the rest of the wizard lives.
  */
-export default async function NewCampaignPage({
+export default async function ManualNewEmailCampaignPage({
   params,
 }: {
   params: { slug: string };
@@ -36,13 +39,23 @@ export default async function NewCampaignPage({
   return (
     <div className="mx-auto max-w-2xl px-6 py-8">
       <h1 className="font-display text-2xl font-semibold tracking-tight">
-        New campaign
+        New email campaign
       </h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        How would you like to start?
+        Pick a name and a segment to start. You'll fill in the design and
+        send settings on the next page.
       </p>
       <div className="mt-6">
-        <NewCampaignChooser tenantSlug={params.slug} />
+        <CampaignNewClient
+          tenantSlug={params.slug}
+          tenantDefaults={{
+            fromName:
+              tenant.defaultFromName ??
+              tenant.companyDisplayName ??
+              tenant.name,
+            fromEmail: '',
+          }}
+        />
       </div>
     </div>
   );

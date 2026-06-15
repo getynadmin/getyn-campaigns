@@ -81,6 +81,11 @@ function buildSections(slug: string): SidebarSection[] {
           icon: Mail,
           trailing: 'plus',
         },
+        {
+          href: t('/agent'),
+          label: 'Agent',
+          icon: Sparkles,
+        },
         { href: t('/templates'), label: 'Templates', icon: FileText },
         {
           href: t('/inbox'),

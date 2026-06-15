@@ -6,6 +6,7 @@ import {
   AgentConversationStatus,
   PlanMetric,
   Role,
+  prisma,
   withTenant,
 } from '@getyn/db';
 import {
@@ -13,6 +14,7 @@ import {
   isBrandProfileComplete,
 } from '@getyn/types';
 
+import { renderEmailPlanHtml } from '@/server/agent/email-plan-renderer';
 import { assertTenantActive } from '@/server/billing/assert-active';
 import { assertWithinLimit } from '@/server/billing/assert-limit';
 
@@ -161,6 +163,47 @@ export const agentRouter = createTRPCRouter({
         }),
       );
       return rows;
+    }),
+
+  /**
+   * Phase 7 M5 — render the current design plan as preview HTML.
+   * Used by the email channel's right-pane preview. WhatsApp does
+   * its own phone-frame render client-side from the conversation
+   * state.
+   */
+  renderEmailPreview: tenantProcedure
+    .input(z.object({ conversationId: cuidSchema }))
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const convo = await withTenant(tenantId, (tx) =>
+        tx.agentConversation.findFirst({
+          where: { id: input.conversationId, tenantId },
+          select: { channel: true, conversationState: true },
+        }),
+      );
+      if (!convo || convo.channel !== AgentChannel.EMAIL) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Email conversation not found.',
+        });
+      }
+      const state = (convo.conversationState as Record<string, unknown>) ?? {};
+      const plan = (state.designPlan as
+        | Array<{ slug: string; content: Record<string, unknown> }>
+        | undefined) ?? [];
+      const brand = await withTenant(tenantId, (tx) =>
+        tx.tenantBrandProfile.findUnique({ where: { tenantId } }),
+      );
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { postalAddress: true },
+      });
+      const html = await renderEmailPlanHtml({
+        plan,
+        brand,
+        postalAddress: tenant?.postalAddress ?? null,
+      });
+      return { html, blockCount: plan.length };
     }),
 
   /**
