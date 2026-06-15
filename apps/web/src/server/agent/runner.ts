@@ -22,6 +22,17 @@ import { emailAgentTools } from './tools/email';
 import { whatsAppAgentTools } from './tools/whatsapp';
 
 /**
+ * Phase 7 M6 — hard cost cap per conversation.
+ *
+ * Once cumulative Claude spend on a conversation reaches this many
+ * cents, the runner appends a directive to the system prompt telling
+ * the agent to skip further refinement and call finalize_draft
+ * immediately. The agent's drafts may be rougher than usual, but
+ * the tenant doesn't keep racking up tokens.
+ */
+const COST_CAP_CENTS = 50;
+
+/**
  * Channel-scoped tool registration. Both lists include set_goal (the
  * trivial shared opener) and a finalize_draft variant; the runtime's
  * finalizeToolNames cap catches either.
@@ -46,6 +57,7 @@ export async function* runConversationTurn(args: {
       channel: true,
       status: true,
       conversationState: true,
+      costCents: true,
     },
   });
   if (!convo) {
@@ -64,10 +76,19 @@ export async function* runConversationTurn(args: {
     tenantId: convo.tenantId,
     channel: convo.channel,
   });
-  const systemPrompt = renderSystemPrompt({
-    channel: convo.channel,
-    context,
-  });
+  const overBudget = convo.costCents >= COST_CAP_CENTS;
+  const systemPrompt =
+    renderSystemPrompt({
+      channel: convo.channel,
+      context,
+    }) +
+    (overBudget
+      ? `\n\n# BUDGET CAP REACHED\n\nThis conversation has spent $${(
+          convo.costCents / 100
+        ).toFixed(
+          2,
+        )} in Claude API tokens already. STOP refining. Call \`finalize_draft\` on your very next turn with whatever you have. Tell the user briefly: "Let me create your draft now — you can refine it in the editor."`
+      : '');
 
   const store = createConversationMessageStore({
     conversationId: convo.id,

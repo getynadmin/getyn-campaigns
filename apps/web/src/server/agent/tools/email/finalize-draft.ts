@@ -28,6 +28,7 @@ import {
   withTenant,
 } from '@getyn/db';
 
+import { checkBrandFidelity } from '../../brand-fidelity';
 import { composeUnlayerJson } from '../../email-composer';
 import { readEmailState } from './state';
 
@@ -124,6 +125,22 @@ export const finalizeDraftTool = defineTool({
       const message = err instanceof Error ? err.message : 'Compose failed.';
       throw new Error(
         `Couldn't compose the design — ${message} Try simpler content for each block.`,
+      );
+    }
+
+    // Phase 7 M6 — brand fidelity check. Don't block, just warn.
+    const fidelity = checkBrandFidelity({
+      designJson: composed.designJson,
+      brand,
+    });
+    if (!fidelity.ok) {
+      composed.warnings.push(
+        `Off-brand colors detected: ${fidelity.offBrandColors.join(', ')}. Review in the editor.`,
+      );
+    }
+    if (!fidelity.primaryUsed) {
+      composed.warnings.push(
+        "The brand's primary color isn't used anywhere in the design — consider adding a CTA or accent in that color.",
       );
     }
 

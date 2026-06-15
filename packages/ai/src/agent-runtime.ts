@@ -40,6 +40,12 @@ import { ACTIVE_MODEL, computeCost, getAnthropicClient } from './client';
 const MAX_INNER_TURNS = 25;
 const MAX_TOKENS = 4_096;
 
+/** Phase 7 M6 — same-tool consecutive failure cap within a turn.
+ *  After 2 errors in a row from the same tool, the runtime injects a
+ *  warning into the next message so Claude steps back to ask the
+ *  user instead of looping. */
+const MAX_TOOL_RETRIES = 2;
+
 // ----------------------------------------------------------------------------
 // Tool registry
 // ----------------------------------------------------------------------------
@@ -189,6 +195,10 @@ export async function* runAgentTurn(
   let totalTokensOut = 0;
   let finalized = false;
   let reachedEndTurn = false;
+  // Phase 7 M6 — per-tool consecutive failure tracker for this turn.
+  // The runtime injects an explicit hint when a tool fails twice in
+  // a row so Claude steps back instead of looping.
+  const toolFailures = new Map<string, number>();
 
   // 1) Persist the user message + load history.
   await args.store.appendMessage({ role: 'USER', content: args.userMessage });
@@ -299,7 +309,8 @@ export async function* runAgentTurn(
       };
 
       if (!def) {
-        const errorMessage = `Unknown tool: ${use.name}`;
+        const baseError = `Unknown tool: ${use.name}`;
+        const errorMessage = withRetryHint(baseError, use.name, toolFailures);
         await args.store.appendMessage({
           role: 'TOOL_CALL',
           content: null,
@@ -327,7 +338,8 @@ export async function* runAgentTurn(
       // Validate input via Zod.
       const parsed = def.inputSchema.safeParse(use.input);
       if (!parsed.success) {
-        const errorMessage = `Tool input invalid: ${parsed.error.message}`;
+        const baseError = `Tool input invalid: ${parsed.error.message}`;
+        const errorMessage = withRetryHint(baseError, use.name, toolFailures);
         await args.store.appendMessage({
           role: 'TOOL_CALL',
           content: null,
@@ -363,6 +375,8 @@ export async function* runAgentTurn(
 
       try {
         const output = await def.handler(parsed.data, ctx);
+        // Successful call resets this tool's failure streak.
+        toolFailures.delete(use.name);
         await args.store.appendMessage({
           role: 'TOOL_RESULT',
           content: null,
@@ -385,8 +399,9 @@ export async function* runAgentTurn(
           finalized = true;
         }
       } catch (err) {
-        const errorMessage =
+        const baseError =
           err instanceof Error ? err.message : 'Tool handler threw.';
+        const errorMessage = withRetryHint(baseError, use.name, toolFailures);
         await args.store.appendMessage({
           role: 'TOOL_RESULT',
           content: null,
@@ -541,4 +556,43 @@ function toAnthropicTool(def: ToolDefinition): Anthropic.Messages.Tool {
       required: schema.required,
     } as Anthropic.Messages.Tool.InputSchema,
   };
+}
+
+/**
+ * Phase 7 M6 — tool retry backstop.
+ *
+ * Tracks consecutive failures of the same tool within a turn. After
+ * MAX_TOOL_RETRIES failures in a row we append an explicit hint to
+ * the tool_result content so Claude reads the cumulative count and
+ * is steered toward asking the user for clarification instead of
+ * retrying the same call a third time.
+ *
+ * Reset on success (see the try-block in runAgentTurn).
+ */
+function withRetryHint(
+  baseError: string,
+  toolName: string,
+  failures: Map<string, number>,
+): string {
+  const next = (failures.get(toolName) ?? 0) + 1;
+  failures.set(toolName, next);
+  if (next < MAX_TOOL_RETRIES) return baseError;
+  return (
+    baseError +
+    `\n\nNOTE: this is the ${next}${ordinalSuffix(next)} consecutive failure of \`${toolName}\` in this turn — don't retry the same call. Stop and ask the user for clarification, or pick a different tool.`
+  );
+}
+
+function ordinalSuffix(n: number): string {
+  if (n % 100 >= 11 && n % 100 <= 13) return 'th';
+  switch (n % 10) {
+    case 1:
+      return 'st';
+    case 2:
+      return 'nd';
+    case 3:
+      return 'rd';
+    default:
+      return 'th';
+  }
 }

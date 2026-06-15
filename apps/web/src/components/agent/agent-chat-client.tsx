@@ -359,16 +359,43 @@ function ChatPane({
 }
 
 function EmptyState({ channel }: { channel: Channel }): JSX.Element {
+  // Phase 7 M6 — 30-second tutorial. Three short tips + one channel
+  // -specific worked example.
+  const tips =
+    channel === 'EMAIL'
+      ? [
+          'Name your audience (a segment).',
+          'Describe the campaign — goal, tone, what to include.',
+          "I'll propose blocks; tweak in chat or open the editor when ready.",
+        ]
+      : [
+          "Name your audience (a segment) and what number you're sending from.",
+          'Either pick an APPROVED template or describe a new one.',
+          "Fill {{1}}, {{2}} — literal values or contact merge tags.",
+        ];
+  const example =
+    channel === 'EMAIL'
+      ? '"Black Friday sale, 30% off everything, send to All Subscribers, friendly tone, hero image + 3-feature section."'
+      : '"Order shipped notification with tracking link, send to Active Customers from the main number, use contact.firstName for the greeting."';
   return (
-    <div className="rounded-xl border border-dashed bg-muted/30 p-5 text-sm">
-      <p className="font-medium">
-        Tell me what you'd like to create.
-      </p>
-      <p className="mt-1 text-xs text-muted-foreground">
-        {channel === 'EMAIL'
-          ? 'Example: "Black Friday sale, 30% off everything, send it to All Subscribers, casual tone, include a hero image and a 3-feature section."'
-          : 'Example: "Order shipped notification with tracking link, send to active customers segment from our main number."'}
-      </p>
+    <div className="space-y-3">
+      <div className="rounded-xl border border-violet-300/40 bg-gradient-to-br from-violet-50 via-fuchsia-50 to-orange-50 p-5 text-sm dark:border-violet-900/40 dark:from-violet-950/30 dark:via-fuchsia-950/20 dark:to-orange-950/20">
+        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-violet-900 dark:text-violet-200">
+          <Sparkles className="size-3.5" />
+          How this works (30 seconds)
+        </div>
+        <ol className="list-decimal space-y-1 pl-5 text-xs text-foreground/80">
+          {tips.map((t, i) => (
+            <li key={i}>{t}</li>
+          ))}
+        </ol>
+      </div>
+      <div className="rounded-xl border border-dashed bg-muted/30 p-4 text-sm">
+        <p className="text-xs font-medium text-muted-foreground">
+          Try something like
+        </p>
+        <p className="mt-1 italic text-foreground/80">{example}</p>
+      </div>
     </div>
   );
 }
