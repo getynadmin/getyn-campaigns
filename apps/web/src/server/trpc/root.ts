@@ -1,4 +1,5 @@
 import { agentRouter } from './routers/agent';
+import { agentAttachmentsRouter } from './routers/agent-attachments';
 import { aiRouter } from './routers/ai';
 import { authRouter } from './routers/auth';
 import { campaignsRouter } from './routers/campaigns';
@@ -58,6 +59,8 @@ export const appRouter = createTRPCRouter({
   // Phase 7 — AI Campaign Agents: brand profile (M1) + runtime (M2).
   tenantBrand: tenantBrandRouter,
   agent: agentRouter,
+  // Phase 7.1 — attachment listing + signed-URL minting
+  agentAttachments: agentAttachmentsRouter,
 });
 
 export type AppRouter = typeof appRouter;

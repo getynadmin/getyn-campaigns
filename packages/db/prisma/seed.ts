@@ -13,7 +13,7 @@ import {
   PrismaClient,
   Role,
   SendingDomainStatus,
-  SubscriptionStatus,
+  ContactChannelStatus,
   WAConversationStatus,
   WADisplayPhoneStatus,
   WAMessageDirection,
@@ -183,12 +183,12 @@ async function main(): Promise<void> {
       'Garcia', 'Rodriguez', 'Silva', 'Okafor', 'Ali',
     ];
     const statuses = [
-      SubscriptionStatus.SUBSCRIBED,
-      SubscriptionStatus.SUBSCRIBED,
-      SubscriptionStatus.SUBSCRIBED,
-      SubscriptionStatus.SUBSCRIBED,
-      SubscriptionStatus.UNSUBSCRIBED,
-      SubscriptionStatus.BOUNCED,
+      ContactChannelStatus.SUBSCRIBED,
+      ContactChannelStatus.SUBSCRIBED,
+      ContactChannelStatus.SUBSCRIBED,
+      ContactChannelStatus.SUBSCRIBED,
+      ContactChannelStatus.UNSUBSCRIBED,
+      ContactChannelStatus.BOUNCED,
     ];
     const sources = [
       ContactSource.MANUAL,
@@ -341,7 +341,7 @@ async function main(): Promise<void> {
         });
       }
       // The unsubscribed ones got an UNSUBSCRIBED event 2 weeks after creation
-      if (contact.emailStatus === SubscriptionStatus.UNSUBSCRIBED) {
+      if (contact.emailStatus === ContactChannelStatus.UNSUBSCRIBED) {
         await prisma.contactEvent.create({
           data: {
             tenantId: tenant.id,

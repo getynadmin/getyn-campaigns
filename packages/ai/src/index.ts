@@ -23,3 +23,4 @@
 export * from './client';
 export * from './template-draft';
 export * from './agent-runtime';
+export * from './attachment-summary';

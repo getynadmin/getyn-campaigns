@@ -12,6 +12,8 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@getyn/ai": "workspace:*",
+    "@getyn/attachments": "workspace:*",
     "@getyn/crypto": "workspace:*",
     "@getyn/db": "workspace:*",
     "@getyn/types": "workspace:*",

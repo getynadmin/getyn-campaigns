@@ -92,9 +92,23 @@ export async function* runConversationTurn(args: {
     return;
   }
 
+  // Phase 7.1 — `channel` is nullable on the AgentConversation row
+  // because AUDIENCE conversations have no channel. This runner only
+  // serves CAMPAIGN_* conversations; the AUDIENCE agent has its own
+  // runner. Assert the invariant so downstream calls keep their
+  // non-null types.
+  if (convo.channel === null) {
+    yield {
+      type: 'error',
+      message:
+        'This conversation has no channel — likely an Audience Agent conversation routed to the wrong runner.',
+    };
+    return;
+  }
+  const channel = convo.channel;
   const context = await loadAgentContext({
     tenantId: convo.tenantId,
-    channel: convo.channel,
+    channel,
   });
   const overBudget = convo.costCents >= COST_CAP_CENTS;
   if (overBudget) {
@@ -102,7 +116,7 @@ export async function* runConversationTurn(args: {
       message: 'agent.cost.cap_reached',
       level: 'warning',
       tags: {
-        channel: convo.channel,
+        channel: channel,
         kind: 'cost_cap',
       },
       extra: {
@@ -115,7 +129,7 @@ export async function* runConversationTurn(args: {
   }
   const systemPrompt =
     renderSystemPrompt({
-      channel: convo.channel,
+      channel: channel,
       context,
     }) + buildCostCapDirective(convo.costCents);
 
@@ -146,7 +160,7 @@ export async function* runConversationTurn(args: {
     tenantId: convo.tenantId,
     userId: convo.createdByUserId,
     systemPrompt,
-    tools: toolsForChannel(convo.channel),
+    tools: toolsForChannel(channel),
     userMessage: args.userMessage,
     store,
     initialState,

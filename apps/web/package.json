@@ -15,6 +15,7 @@
   "dependencies": {
     "@auth0/nextjs-auth0": "^4.21.0",
     "@getyn/ai": "workspace:*",
+    "@getyn/attachments": "workspace:*",
     "@getyn/crypto": "workspace:*",
     "@getyn/db": "workspace:*",
     "@getyn/types": "workspace:*",

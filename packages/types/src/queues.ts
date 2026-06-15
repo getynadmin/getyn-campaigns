@@ -26,6 +26,10 @@ export const QUEUE_NAMES = {
   waPollStatus: 'wa-poll-status',
   waWebhooks: 'wa-webhooks',
   waPollInbound: 'wa-poll-inbound',
+  // Phase 7.1 — agent attachment ingest pipeline. CPU-bound
+  // (sharp, pdf-parse, xlsx) so a separate queue keeps it from
+  // blocking agent-turn jobs / send fan-outs.
+  attachmentParse: 'attachment-parse',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -157,6 +161,10 @@ export const JOB_NAMES = {
   waPollInbound: {
     tick: 'tick',
     pollWaba: 'poll-waba',
+  },
+  // Phase 7.1
+  attachmentParse: {
+    parse: 'parse-attachment',
   },
 } as const;
 
@@ -338,3 +346,18 @@ export const tenantPurgePayloadSchema = z.object({
   trigger: z.enum(['gsuite', 'grace_expired', 'staff_force']),
 });
 export type TenantPurgePayload = z.infer<typeof tenantPurgePayloadSchema>;
+
+/**
+ * Payload for `attachment-parse` (Phase 7.1).
+ *
+ * The web's upload route creates the AgentAttachment row + uploads
+ * the binary to Storage synchronously, then enqueues one of these so
+ * parsing + AI-summarization happen off the request path.
+ */
+export const attachmentParsePayloadSchema = z.object({
+  agentAttachmentId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type AttachmentParsePayload = z.infer<
+  typeof attachmentParsePayloadSchema
+>;

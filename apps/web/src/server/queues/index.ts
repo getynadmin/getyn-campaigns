@@ -3,11 +3,13 @@ import 'server-only';
 import {
   JOB_NAMES,
   QUEUE_NAMES,
+  attachmentParsePayloadSchema,
   importJobPayloadSchema,
   pollTemplateSubmissionPayloadSchema,
   prepareCampaignPayloadSchema,
   prepareWaCampaignPayloadSchema,
   resendWebhookPayloadSchema,
+  type AttachmentParsePayload,
   type ImportJobPayload,
   type PollTemplateSubmissionPayload,
   type PrepareCampaignPayload,
@@ -312,4 +314,35 @@ export async function enqueueTenantPurge(payload: {
       ...(payload.delayMs ? { delay: payload.delayMs } : {}),
     },
   );
+}
+
+// Phase 7.1 — agent attachment parse queue.
+let cachedAttachmentParseQueue: Queue<AttachmentParsePayload> | null = null;
+function getAttachmentParseQueue(): Queue<AttachmentParsePayload> {
+  if (cachedAttachmentParseQueue) return cachedAttachmentParseQueue;
+  cachedAttachmentParseQueue = new Queue<AttachmentParsePayload>(
+    QUEUE_NAMES.attachmentParse,
+    {
+      connection: getConnection(),
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: { age: 60 * 60 * 24 * 3, count: 1000 },
+        removeOnFail: { age: 60 * 60 * 24 * 14 },
+      },
+    },
+  );
+  return cachedAttachmentParseQueue;
+}
+
+export async function enqueueAttachmentParse(
+  payload: AttachmentParsePayload,
+): Promise<void> {
+  const validated = attachmentParsePayloadSchema.parse(payload);
+  const queue = getAttachmentParseQueue();
+  await queue.add(JOB_NAMES.attachmentParse.parse, validated, {
+    // jobId = agentAttachmentId so a retry on the upload route doesn't
+    // double-parse a single attachment.
+    jobId: validated.agentAttachmentId,
+  });
 }

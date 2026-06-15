@@ -2,9 +2,19 @@
 
 Multi-tenant B2B SaaS for email, WhatsApp, and SMS marketing campaigns with an AI copilot and drag-and-drop email template builder.
 
-> **Status:** Phases 1–7 shipped. Phase 7 added AI Campaign Agents — a conversational interface that drafts email and WhatsApp campaigns through chat, then hands off to the existing editors. Phase 5.5 added local plan management + per-metric limit enforcement; Phase 5.6 added admin-side global integrations, system email templates, and site branding controls.
+> **Status:** Phases 1–7 shipped; **Phase 7.1 M0–M1 landed** (attachment infrastructure — agents can ingest user-uploaded images, PDFs, spreadsheets, and Word docs; Audience Agent surface lands in M3).
 
-## Phase 7 — AI Campaign Agents (latest)
+## Phase 7.1 — Attachments + Audience Agent (in progress)
+
+Two related extensions of the Phase 7 surface:
+
+1. **Attachments in conversations.** Users upload PNG/JPG/WebP, PDF, CSV/XLS/XLSX, DOC/DOCX (10MB cap, magic-byte verified — claimed MIME is never trusted). The worker parses each into a structured `AgentAttachment.parsedContent` JSONB (CSV: columns + 100-row sample + per-column type guesses; PDF: text + page count; DOCX: text + headings; image: dimensions + EXIF-stripped thumbnail). A Haiku-backed summarizer ($0.05/attachment cap) produces a 2–5 sentence `aiSummary` that the conversation reuses across turns — raw file content never re-enters context after the first turn. Storage path: `agent-attachments/{tenantId}/{conversationId}/{assetId}-{filename}` (private bucket, signed URLs only; daily cleanup cron deletes after 30d if unreferenced).
+
+2. **Audience Agent** (M3+, upcoming). New agent surface under `/t/[slug]/audience/agent/[id]`, sharing the Phase 7 runtime. Primary flow: upload CSV → agent inspects schema → proposes column mapping + filters + dedupe + tags → user approves a `ProposedImportPlan` → existing Phase 2 `ImportJob` pipeline runs.
+
+Schema bits landed in M0: `AgentConversation.agentKind` (`CAMPAIGN_EMAIL | CAMPAIGN_WHATSAPP | AUDIENCE`), `AgentAttachment`, `AgentConversationAttachment`, `ProposedImportPlan`. New `@getyn/attachments` package isolates heavy parsers (sharp, pdf-parse, mammoth, xlsx) from the web bundle. New BullMQ queue `attachment-parse` plus daily `attachment-cleanup` cron in the worker.
+
+## Phase 7 — AI Campaign Agents
 
 **The flow** — tenants fill out their brand profile once at `/t/[slug]/settings/brand` (name, description, colors, voice, signature). Then from `/t/[slug]/campaigns/new` they click the gradient "Create with AI Agent" card, pick **Email** or **WhatsApp**, and land in a two-pane chat at `/t/[slug]/agent/[id]`. The agent asks a few focused questions, calls tools to assemble the campaign, and finalizes a DRAFT. The user reviews + sends through the existing pipeline.
 

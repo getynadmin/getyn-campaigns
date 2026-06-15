@@ -9,6 +9,8 @@ import { Queue, Worker } from 'bullmq';
 
 import { loadEnv } from './env';
 import { handleDailyReset, handleRatesDriftCorrect } from './handlers/cron';
+import { handleAttachmentCleanup } from './handlers/attachment-cleanup';
+import { handleAttachmentParse } from './handlers/attachment-parse';
 import { handleImportJob } from './handlers/imports';
 import { handleSendsJob } from './handlers/sends';
 import {
@@ -74,6 +76,18 @@ workers.push(
     // Each job gets a fresh lock that renews every 30s. If the worker
     // crashes mid-job, BullMQ re-queues it after the lock expires.
     lockDuration: 30_000,
+  }),
+);
+
+// Attachment parse queue — Phase 7.1. CPU-bound (sharp / pdf-parse /
+// xlsx / mammoth), kept on its own queue so it doesn't starve agent
+// streaming or send fan-outs. Concurrency 2 — parse jobs are short
+// (<5s typical) but burn a core during sharp re-encode.
+workers.push(
+  new Worker(QUEUE_NAMES.attachmentParse, handleAttachmentParse, {
+    connection,
+    concurrency: 2,
+    lockDuration: 60_000,
   }),
 );
 
@@ -309,6 +323,8 @@ workers.push(
           return handleDailyReset();
         case 'rates-drift':
           return handleRatesDriftCorrect();
+        case 'attachment-cleanup':
+          return handleAttachmentCleanup();
         default:
           throw new Error(`Unknown cron job: ${job.name}`);
       }
@@ -379,6 +395,17 @@ async function setupCronJobs(): Promise<void> {
     {
       repeat: { pattern: '5 * * * *', tz: 'UTC' },
       jobId: 'cron:rates-drift',
+    },
+  );
+  // Phase 7.1 — daily at 03:15 UTC. Deletes expired AgentAttachment
+  // rows + their Storage objects + their backing Asset rows. Off-peak
+  // because the cleanup may scan a large number of Storage objects.
+  await cronQueue.add(
+    'attachment-cleanup',
+    {},
+    {
+      repeat: { pattern: '15 3 * * *', tz: 'UTC' },
+      jobId: 'cron:attachment-cleanup',
     },
   );
 
