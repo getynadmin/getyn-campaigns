@@ -67,24 +67,34 @@ export async function withAdminContext<T>(
   staff: StaffContext,
   fn: (tx: AdminTx) => Promise<{ result: T; audit: AdminAuditArgs }>,
 ): Promise<T> {
-  return prisma.$transaction(async (tx) => {
-    const { result, audit } = await fn(tx);
-    await tx.staffAuditLog.create({
-      data: {
-        staffUserId: staff.staffUserId,
-        staffEmail: staff.staffEmail,
-        action: audit.action,
-        targetTenantId: audit.targetTenantId ?? null,
-        targetEntityId: audit.targetEntityId ?? null,
-        beforeSnapshot: toJsonSnapshot(audit.beforeSnapshot) ?? Prisma.JsonNull,
-        afterSnapshot: toJsonSnapshot(audit.afterSnapshot) ?? Prisma.JsonNull,
-        reason: audit.reason ?? null,
-        ipAddress: audit.ipAddress ?? null,
-        userAgent: audit.userAgent ?? null,
-      },
-    });
-    return result;
-  });
+  return prisma.$transaction(
+    async (tx) => {
+      const { result, audit } = await fn(tx);
+      await tx.staffAuditLog.create({
+        data: {
+          staffUserId: staff.staffUserId,
+          staffEmail: staff.staffEmail,
+          action: audit.action,
+          targetTenantId: audit.targetTenantId ?? null,
+          targetEntityId: audit.targetEntityId ?? null,
+          beforeSnapshot:
+            toJsonSnapshot(audit.beforeSnapshot) ?? Prisma.JsonNull,
+          afterSnapshot:
+            toJsonSnapshot(audit.afterSnapshot) ?? Prisma.JsonNull,
+          reason: audit.reason ?? null,
+          ipAddress: audit.ipAddress ?? null,
+          userAgent: audit.userAgent ?? null,
+        },
+      });
+      return result;
+    },
+    // Several callers (e.g. integration credential saves) do slow
+    // work on a separate pooled connection inside `fn` while this
+    // transaction holds the audit-row slot open. Prisma's 5s default
+    // fires under pgbouncer queueing / cold starts. 20s is enough
+    // headroom for envelope-encrypt + cross-region writes on Vercel.
+    { timeout: 20_000, maxWait: 10_000 },
+  );
 }
 
 /**
