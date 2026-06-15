@@ -28,6 +28,11 @@ import {
   withTenant,
 } from '@getyn/db';
 
+import {
+  emitAgentEvent,
+  emitAgentSentryAlert,
+} from '@/server/analytics/agent-events';
+
 import { checkBrandFidelity } from '../../brand-fidelity';
 import { composeUnlayerJson } from '../../email-composer';
 import { readEmailState } from './state';
@@ -123,6 +128,16 @@ export const finalizeDraftTool = defineTool({
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Compose failed.';
+      emitAgentSentryAlert({
+        message: 'agent.finalize.compose_failed',
+        level: 'warning',
+        tags: { channel: 'EMAIL', stage: 'compose' },
+        extra: {
+          conversationId: ctx.conversationId,
+          tenantId: ctx.tenantId,
+          error: message,
+        },
+      });
       throw new Error(
         `Couldn't compose the design — ${message} Try simpler content for each block.`,
       );
@@ -187,6 +202,16 @@ export const finalizeDraftTool = defineTool({
         status: AgentConversationStatus.COMPLETED_DRAFT_CREATED,
         producedCampaignId: campaignId,
       },
+    });
+
+    emitAgentEvent('agent.conversation.completed', {
+      conversationId: ctx.conversationId,
+      tenantId: ctx.tenantId,
+      userId: ctx.userId,
+      channel: 'EMAIL',
+      campaignId,
+      blockCount: composed.resolvedSlugs.length,
+      warnings: composed.warnings.length,
     });
 
     return {

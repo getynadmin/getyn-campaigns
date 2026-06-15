@@ -15,6 +15,7 @@ import {
 } from '@getyn/types';
 
 import { renderEmailPlanHtml } from '@/server/agent/email-plan-renderer';
+import { emitAgentEvent } from '@/server/analytics/agent-events';
 import { assertTenantActive } from '@/server/billing/assert-active';
 import { assertWithinLimit } from '@/server/billing/assert-limit';
 
@@ -91,6 +92,12 @@ export const agentRouter = createTRPCRouter({
           select: { id: true },
         }),
       );
+      emitAgentEvent('agent.conversation.started', {
+        conversationId: convo.id,
+        tenantId,
+        userId,
+        channel: input.channel,
+      });
       return { conversationId: convo.id };
     }),
 
@@ -215,10 +222,12 @@ export const agentRouter = createTRPCRouter({
     .input(z.object({ id: cuidSchema }))
     .mutation(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
+      const userId = ctx.user.id;
+      let channelEmitted: 'EMAIL' | 'WHATSAPP' | null = null;
       await withTenant(tenantId, async (tx) => {
         const convo = await tx.agentConversation.findFirst({
           where: { id: input.id, tenantId },
-          select: { id: true, status: true },
+          select: { id: true, status: true, channel: true },
         });
         if (!convo) {
           throw new TRPCError({
@@ -238,7 +247,16 @@ export const agentRouter = createTRPCRouter({
           where: { id: input.id },
           data: { status: AgentConversationStatus.ABANDONED },
         });
+        channelEmitted = convo.channel;
       });
+      if (channelEmitted) {
+        emitAgentEvent('agent.conversation.abandoned', {
+          conversationId: input.id,
+          tenantId,
+          userId,
+          channel: channelEmitted,
+        });
+      }
       return { ok: true as const };
     }),
 });

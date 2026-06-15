@@ -26,6 +26,8 @@ import {
 } from '@getyn/db';
 import type { Prisma } from '@getyn/db';
 
+import { emitAgentEvent } from '@/server/analytics/agent-events';
+
 import { readWaState } from './state';
 
 export const finalizeWhatsAppDraftTool = defineTool({
@@ -145,6 +147,16 @@ export const finalizeWhatsAppDraftTool = defineTool({
     });
 
     const awaitingMetaApproval = tmpl.status !== WATemplateStatus.APPROVED;
+
+    emitAgentEvent('agent.conversation.completed', {
+      conversationId: ctx.conversationId,
+      tenantId: ctx.tenantId,
+      userId: ctx.userId,
+      channel: 'WHATSAPP',
+      campaignId,
+      awaitingMetaApproval,
+      templateStatus: tmpl.status,
+    });
 
     return {
       ok: true as const,

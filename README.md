@@ -2,9 +2,57 @@
 
 Multi-tenant B2B SaaS for email, WhatsApp, and SMS marketing campaigns with an AI copilot and drag-and-drop email template builder.
 
-> **Status:** Phases 1–5.6 shipped. Phase 5.5 added local plan management + per-metric limit enforcement; Phase 5.6 added admin-side global integrations, system email templates, and site branding controls.
+> **Status:** Phases 1–7 shipped. Phase 7 added AI Campaign Agents — a conversational interface that drafts email and WhatsApp campaigns through chat, then hands off to the existing editors. Phase 5.5 added local plan management + per-metric limit enforcement; Phase 5.6 added admin-side global integrations, system email templates, and site branding controls.
 
-## Phase 5.6 — Admin integrations + branding (latest)
+## Phase 7 — AI Campaign Agents (latest)
+
+**The flow** — tenants fill out their brand profile once at `/t/[slug]/settings/brand` (name, description, colors, voice, signature). Then from `/t/[slug]/campaigns/new` they click the gradient "Create with AI Agent" card, pick **Email** or **WhatsApp**, and land in a two-pane chat at `/t/[slug]/agent/[id]`. The agent asks a few focused questions, calls tools to assemble the campaign, and finalizes a DRAFT. The user reviews + sends through the existing pipeline.
+
+**Brand profile** (`/t/[slug]/settings/brand`) is required before the agent can run. A dashboard nudge surfaces until it's complete. Stored in the new `TenantBrandProfile` table; read on every conversation start.
+
+**Email agent** — picks blocks from a vetted library of 13 starter templates (`EmailBlockTemplate`), assembles a design plan, and the `composeUnlayerJson` helper produces valid Unlayer JSON the existing editor loads cleanly. CAN-SPAM footer is auto-injected if missing; brand-fidelity check flags off-brand hex codes as warnings.
+
+**WhatsApp agent** — lists the tenant's APPROVED templates, picks one or drafts a new one via the existing Phase 4 M7 `draftWhatsAppTemplate` flow. New drafts land as `WhatsAppTemplate(status=DRAFT)` rows that the user submits to Meta from the existing editor. Campaign creation waits for Meta approval before dispatch.
+
+**Safety rails** —
+- $0.50 hard cost cap per conversation. Over the cap, the system prompt instructs the agent to call `finalize_draft` on its next turn with whatever it has.
+- Per-tool consecutive-failure cap (2). After 2 errors in a row from the same tool, the runtime appends a hint telling Claude to stop retrying and ask the user.
+- System prompt guardrails: no real-time data, no fake claims, no scope creep, no arbitrary hex colors.
+- Brand fidelity check (HSL-aware) flags off-brand colors as warnings without blocking the draft.
+
+**Plan metric** — `AI_AGENT_CONVERSATIONS_PER_MONTH` (Starter 10, Growth 100, Pro 500). Gated at `agent.startConversation` via the existing `assertWithinLimit` helper.
+
+**Observability** —
+- Sentry alerts (tagged `agent=true`): `agent.conversation.failed`, `agent.cost.cap_reached`, `agent.finalize.compose_failed`.
+- PostHog events (server-side via direct REST POST, fired from `server/analytics/agent-events.ts`): `agent.conversation.started / completed / abandoned`.
+
+**Conversation persistence** — `AgentConversation` + `AgentMessage` rows. Resume from `/t/[slug]/agent`; history rehydrated into Claude context (capped at last 50 messages or ~100k approx-tokens).
+
+**Architecture sketch**:
+
+```
+packages/ai/
+  agent-runtime.ts         # streaming tool-use loop, channel-agnostic
+  client.ts                # Anthropic client + cost calculation
+apps/web/src/server/agent/
+  runner.ts                # wires runtime to Prisma + channel toolsets
+  context-loader.ts        # brand profile + segments + block library
+  message-store.ts         # Prisma-backed MessageStore
+  email-composer.ts        # design plan → Unlayer JSON
+  email-plan-renderer.ts   # design plan → preview HTML
+  brand-fidelity.ts        # off-brand color check
+  tools/
+    set-goal.ts            # shared
+    email/                 # 9 email tools
+    whatsapp/              # 8 WA tools
+apps/web/src/components/agent/
+  agent-chat-client.tsx    # two-pane chat UI
+  use-agent-stream.ts      # SSE consumer
+  email-preview-pane.tsx   # iframe preview
+  whatsapp-preview-pane.tsx# phone-frame mockup
+```
+
+## Phase 5.6 — Admin integrations + branding
 
 **Sidebar structure** — `Admin Central` with Tenants, **Plan Management** (Plans, Upgrade Requests), Reports & Analytics (group placeholder), **Settings** (Plan Settings, Site Settings, Staff Users), **Global Integrations** (WhatsApp, Email SMTP, Email Templates, Sending Servers, SMS Servers), Audit log / Webhooks / Queues, plus Back to App + Sign Out. Legacy `/admin/settings` and `/admin/staff` redirect to the new locations.
 

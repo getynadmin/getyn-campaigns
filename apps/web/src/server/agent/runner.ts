@@ -13,6 +13,8 @@ import {
   type ToolDefinition,
 } from '@getyn/ai';
 
+import { emitAgentSentryAlert } from '@/server/analytics/agent-events';
+
 import {
   loadAgentContext,
   renderSystemPrompt,
@@ -30,7 +32,24 @@ import { whatsAppAgentTools } from './tools/whatsapp';
  * immediately. The agent's drafts may be rougher than usual, but
  * the tenant doesn't keep racking up tokens.
  */
-const COST_CAP_CENTS = 50;
+export const COST_CAP_CENTS = 50;
+
+/**
+ * Build the budget-cap directive suffix appended to the system prompt
+ * when the conversation has crossed the spending threshold. Exported
+ * for test coverage — the runner only consumes it via inline
+ * concatenation.
+ */
+export function buildCostCapDirective(costCents: number): string {
+  if (costCents < COST_CAP_CENTS) return '';
+  return (
+    `\n\n# BUDGET CAP REACHED\n\nThis conversation has spent $${(
+      costCents / 100
+    ).toFixed(
+      2,
+    )} in Claude API tokens already. STOP refining. Call \`finalize_draft\` on your very next turn with whatever you have. Tell the user briefly: "Let me create your draft now — you can refine it in the editor."`
+  );
+}
 
 /**
  * Channel-scoped tool registration. Both lists include set_goal (the
@@ -77,18 +96,27 @@ export async function* runConversationTurn(args: {
     channel: convo.channel,
   });
   const overBudget = convo.costCents >= COST_CAP_CENTS;
+  if (overBudget) {
+    emitAgentSentryAlert({
+      message: 'agent.cost.cap_reached',
+      level: 'warning',
+      tags: {
+        channel: convo.channel,
+        kind: 'cost_cap',
+      },
+      extra: {
+        conversationId: convo.id,
+        tenantId: convo.tenantId,
+        costCents: convo.costCents,
+        capCents: COST_CAP_CENTS,
+      },
+    });
+  }
   const systemPrompt =
     renderSystemPrompt({
       channel: convo.channel,
       context,
-    }) +
-    (overBudget
-      ? `\n\n# BUDGET CAP REACHED\n\nThis conversation has spent $${(
-          convo.costCents / 100
-        ).toFixed(
-          2,
-        )} in Claude API tokens already. STOP refining. Call \`finalize_draft\` on your very next turn with whatever you have. Tell the user briefly: "Let me create your draft now — you can refine it in the editor."`
-      : '');
+    }) + buildCostCapDirective(convo.costCents);
 
   const store = createConversationMessageStore({
     conversationId: convo.id,
