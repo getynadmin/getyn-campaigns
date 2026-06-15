@@ -42,13 +42,23 @@ export interface BrandContext {
     description: string;
     category: string;
   }>;
+  /** WhatsApp-only: connected phone numbers + approved template count. */
+  whatsApp?: {
+    phoneNumbers: Array<{
+      id: string;
+      phoneNumber: string;
+      verifiedName: string;
+    }>;
+    approvedTemplateCount: number;
+    accountConnected: boolean;
+  };
 }
 
 export async function loadAgentContext(args: {
   tenantId: string;
   channel: AgentChannel;
 }): Promise<BrandContext> {
-  const [tenant, profile, segments, blocks] = await Promise.all([
+  const [tenant, profile, segments, blocks, whatsAppCtx] = await Promise.all([
     prisma.tenant.findUnique({
       where: { id: args.tenantId },
       select: { name: true },
@@ -83,6 +93,9 @@ export async function loadAgentContext(args: {
           orderBy: { slug: 'asc' },
         })
       : Promise.resolve([] as never[]),
+    args.channel === 'WHATSAPP'
+      ? loadWhatsAppContext(args.tenantId)
+      : Promise.resolve(undefined),
   ]);
 
   return {
@@ -124,6 +137,54 @@ export async function loadAgentContext(args: {
       description: b.description,
       category: b.category,
     })),
+    whatsApp: whatsAppCtx,
+  };
+}
+
+/**
+ * Phase 7 M4 — WhatsApp-specific context. Loaded only when the
+ * conversation channel is WHATSAPP. Tells the system prompt about
+ * connected phone numbers + the size of the approved-template
+ * library so the agent knows whether to pick or draft.
+ */
+async function loadWhatsAppContext(
+  tenantId: string,
+): Promise<BrandContext['whatsApp']> {
+  const [account, phones, approvedCount] = await Promise.all([
+    prisma.whatsAppAccount.findUnique({
+      where: { tenantId },
+      select: { id: true },
+    }),
+    withTenant(tenantId, (tx) =>
+      tx.whatsAppPhoneNumber.findMany({
+        where: { tenantId },
+        select: {
+          id: true,
+          phoneNumber: true,
+          verifiedName: true,
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 10,
+      }),
+    ),
+    withTenant(tenantId, (tx) =>
+      tx.whatsAppTemplate.count({
+        where: {
+          tenantId,
+          status: 'APPROVED',
+          deletedAt: null,
+        },
+      }),
+    ),
+  ]);
+  return {
+    phoneNumbers: phones.map((p) => ({
+      id: p.id,
+      phoneNumber: p.phoneNumber,
+      verifiedName: p.verifiedName,
+    })),
+    approvedTemplateCount: approvedCount,
+    accountConnected: account !== null,
   };
 }
 
@@ -208,11 +269,61 @@ export function renderSystemPrompt(args: {
       lines.push(`  - ${b.slug} (${b.category}) — ${b.name}: ${b.description}`);
     }
   } else {
+    // WHATSAPP
+    const wa = c.whatsApp;
     lines.push(
       ``,
       `# WhatsApp-specific guidance`,
-      `(WhatsApp tooling lands in M4 — for M3 only the shared set_goal tool is wired.)`,
+      ``,
+      `Workflow:`,
+      `  1. Call set_goal once you understand the campaign's purpose.`,
+      `  2. Call set_audience with one of the segment ids below.`,
+      `  3. Pick a template:`,
+      `       - Use list_approved_templates to see what's already APPROVED.`,
+      `       - pick_existing_template if one fits.`,
+      `       - draft_new_template if nothing fits — this CREATES a new`,
+      `         DRAFT template that the user reviews + submits to Meta.`,
+      `         The campaign will sit in DRAFT until Meta approves it.`,
+      `  4. Call set_template_variables to fill {{1}}, {{2}}, ... (only`,
+      `     if the template has variables).`,
+      `  5. Call set_phone_number with one of the numbers below`,
+      `     (auto-pick if only one is listed).`,
+      `  6. Call finalize_draft once everything's set.`,
+      ``,
+      `Variables are either literal strings ("Welcome to Acme") or`,
+      `contact merge tags ("contact.firstName" / "contact.email") that`,
+      `get resolved per-recipient at dispatch time.`,
     );
+
+    if (wa) {
+      if (!wa.accountConnected) {
+        lines.push(
+          ``,
+          `WARNING: this workspace has NO connected WhatsApp account.` +
+            ` Stop and ask the user to connect one in Settings → Channels` +
+            ` before doing anything else.`,
+        );
+      }
+      lines.push(``, `# Connected phone numbers`, ``);
+      if (wa.phoneNumbers.length === 0) {
+        lines.push(
+          `  (none — the user needs to add one in Settings → Channels)`,
+        );
+      } else {
+        for (const p of wa.phoneNumbers) {
+          lines.push(
+            `  - ${p.phoneNumber} "${p.verifiedName}" (id: ${p.id})`,
+          );
+        }
+      }
+      lines.push(
+        ``,
+        `Approved templates in library: ${wa.approvedTemplateCount}` +
+          (wa.approvedTemplateCount === 0
+            ? ` — you'll need to draft a new one.`
+            : ` (call list_approved_templates to see them).`),
+      );
+    }
   }
 
   if (c.segments.length > 0) {

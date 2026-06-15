@@ -19,17 +19,16 @@ import {
 } from './context-loader';
 import { createConversationMessageStore } from './message-store';
 import { emailAgentTools } from './tools/email';
-import { setGoalTool } from './tools/set-goal';
+import { whatsAppAgentTools } from './tools/whatsapp';
 
 /**
- * Channel-scoped tool registration. M3 lights up the email toolset;
- * M4 will add the WhatsApp list.
+ * Channel-scoped tool registration. Both lists include set_goal (the
+ * trivial shared opener) and a finalize_draft variant; the runtime's
+ * finalizeToolNames cap catches either.
  */
 function toolsForChannel(channel: 'EMAIL' | 'WHATSAPP'): ToolDefinition[] {
   if (channel === 'EMAIL') return emailAgentTools;
-  // WHATSAPP — placeholder until M4. For now only the shared
-  // set_goal tool is registered so the channel boots cleanly.
-  return [setGoalTool as ToolDefinition];
+  return whatsAppAgentTools;
 }
 
 const FINALIZE_TOOL_NAMES = ['finalize_draft'];
