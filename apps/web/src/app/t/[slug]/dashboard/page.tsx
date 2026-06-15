@@ -42,12 +42,22 @@ export default async function DashboardPage({
 }): Promise<JSX.Element> {
   const tenant = await prisma.tenant.findUnique({
     where: { slug: params.slug },
-    include: {
-      _count: { select: { memberships: true } },
-      brandProfile: { select: { completedAt: true } },
-    },
+    include: { _count: { select: { memberships: true } } },
   });
   if (!tenant) notFound();
+  // Phase 7 M1 — brand-profile nudge. Wrapped in try/catch so the
+  // dashboard still renders cleanly on deploys where the
+  // 0010_phase7_ai_agents migration hasn't been applied yet
+  // (the table won't exist; null = render no nudge).
+  let brandProfile: { completedAt: Date | null } | null = null;
+  try {
+    brandProfile = await prisma.tenantBrandProfile.findUnique({
+      where: { tenantId: tenant.id },
+      select: { completedAt: true },
+    });
+  } catch {
+    brandProfile = null;
+  }
 
   const trialDaysLeft = tenant.trialEndsAt
     ? Math.max(
@@ -139,7 +149,7 @@ export default async function DashboardPage({
         ) : null}
       </div>
 
-      {tenant.brandProfile?.completedAt == null && (
+      {brandProfile?.completedAt == null && (
         <Link
           href={`/t/${params.slug}/settings/brand`}
           className="group block rounded-xl border border-violet-300 bg-gradient-to-r from-violet-50 via-fuchsia-50 to-orange-50 p-4 transition-shadow hover:shadow-md dark:border-violet-800/60 dark:from-violet-950/40 dark:via-fuchsia-950/30 dark:to-orange-950/20"
