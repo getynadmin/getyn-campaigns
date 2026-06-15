@@ -123,11 +123,11 @@ const whatsAppRouter = createAdminRouter({
   update: supportAdminProcedure
     .input(whatsAppUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      return withAdminContext(ctx.staff, async () => {
+      return withAdminContext(ctx.staff, async (tx) => {
         const existing = await adminLoadIntegration<
           WhatsAppConfig,
           WhatsAppSecrets
-        >('whatsapp_meta');
+        >('whatsapp_meta', tx);
         const config = { appId: input.appId, configId: input.configId };
 
         // Merge secrets: only overwrite fields the user actually typed.
@@ -149,13 +149,16 @@ const whatsAppRouter = createAdminRouter({
           };
         }
 
-        await saveIntegration({
-          provider: 'whatsapp_meta',
-          config,
-          secrets: secretsPayload,
-          enabled: input.enabled,
-          staffUserId: ctx.staff.staffUserId,
-        });
+        await saveIntegration(
+          {
+            provider: 'whatsapp_meta',
+            config,
+            secrets: secretsPayload,
+            enabled: input.enabled,
+            staffUserId: ctx.staff.staffUserId,
+          },
+          tx,
+        );
 
         return {
           result: { ok: true as const },
@@ -243,9 +246,10 @@ const smtpRouter = createAdminRouter({
   update: supportAdminProcedure
     .input(smtpUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      return withAdminContext(ctx.staff, async () => {
+      return withAdminContext(ctx.staff, async (tx) => {
         const existing = await adminLoadIntegration<SmtpConfig, SmtpSecrets>(
           'smtp_default',
+          tx,
         );
         const config = {
           host: input.host,
@@ -261,13 +265,16 @@ const smtpRouter = createAdminRouter({
           incomingPassword === ''
             ? null
             : { password: incomingPassword };
-        await saveIntegration({
-          provider: 'smtp_default',
-          config: config as Record<string, unknown>,
-          secrets: secretsPayload,
-          enabled: input.enabled,
-          staffUserId: ctx.staff.staffUserId,
-        });
+        await saveIntegration(
+          {
+            provider: 'smtp_default',
+            config: config as Record<string, unknown>,
+            secrets: secretsPayload,
+            enabled: input.enabled,
+            staffUserId: ctx.staff.staffUserId,
+          },
+          tx,
+        );
         return {
           result: { ok: true as const },
           audit: {
@@ -453,9 +460,10 @@ const resendRouter = createAdminRouter({
   update: supportAdminProcedure
     .input(resendUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      return withAdminContext(ctx.staff, async () => {
+      return withAdminContext(ctx.staff, async (tx) => {
         const existing = await adminLoadIntegration<ResendConfig, ResendSecrets>(
           'resend',
+          tx,
         );
         const config = { defaultFromEmail: input.defaultFromEmail };
         const incomingKey = input.apiKey.trim();
@@ -473,13 +481,16 @@ const resendRouter = createAdminRouter({
                   ? incomingHook
                   : (existing?.secrets?.webhookSigningSecret ?? ''),
             };
-        await saveIntegration({
-          provider: 'resend',
-          config: config as Record<string, unknown>,
-          secrets: secretsPayload,
-          enabled: input.enabled,
-          staffUserId: ctx.staff.staffUserId,
-        });
+        await saveIntegration(
+          {
+            provider: 'resend',
+            config: config as Record<string, unknown>,
+            secrets: secretsPayload,
+            enabled: input.enabled,
+            staffUserId: ctx.staff.staffUserId,
+          },
+          tx,
+        );
         return {
           result: { ok: true as const },
           audit: {
@@ -545,22 +556,25 @@ const railwayRouter = createAdminRouter({
   update: supportAdminProcedure
     .input(railwayUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      return withAdminContext(ctx.staff, async () => {
+      return withAdminContext(ctx.staff, async (tx) => {
         const existing = await adminLoadIntegration<
           RailwayConfig,
           RailwaySecrets
-        >('railway_worker');
+        >('railway_worker', tx);
         const config = { workerUrl: input.workerUrl };
         const incomingToken = input.projectToken.trim();
         const secretsPayload: Record<string, unknown> | null =
           incomingToken === '' ? null : { projectToken: incomingToken };
-        await saveIntegration({
-          provider: 'railway_worker',
-          config: config as Record<string, unknown>,
-          secrets: secretsPayload,
-          enabled: input.enabled,
-          staffUserId: ctx.staff.staffUserId,
-        });
+        await saveIntegration(
+          {
+            provider: 'railway_worker',
+            config: config as Record<string, unknown>,
+            secrets: secretsPayload,
+            enabled: input.enabled,
+            staffUserId: ctx.staff.staffUserId,
+          },
+          tx,
+        );
         return {
           result: { ok: true as const },
           audit: {
@@ -632,24 +646,27 @@ const anthropicRouter = createAdminRouter({
   update: supportAdminProcedure
     .input(anthropicUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      return withAdminContext(ctx.staff, async () => {
+      return withAdminContext(ctx.staff, async (tx) => {
         const existing = await adminLoadIntegration<
           AnthropicConfig,
           AnthropicSecrets
-        >('anthropic_llm');
+        >('anthropic_llm', tx);
         const config: AnthropicConfig = input.model
           ? { model: input.model }
           : {};
         const incomingKey = input.apiKey.trim();
         const secretsPayload: Record<string, unknown> | null =
           incomingKey === '' ? null : { apiKey: incomingKey };
-        await saveIntegration({
-          provider: 'anthropic_llm',
-          config: config as Record<string, unknown>,
-          secrets: secretsPayload,
-          enabled: input.enabled,
-          staffUserId: ctx.staff.staffUserId,
-        });
+        await saveIntegration(
+          {
+            provider: 'anthropic_llm',
+            config: config as Record<string, unknown>,
+            secrets: secretsPayload,
+            enabled: input.enabled,
+            staffUserId: ctx.staff.staffUserId,
+          },
+          tx,
+        );
         return {
           result: { ok: true as const },
           audit: {

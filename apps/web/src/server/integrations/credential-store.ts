@@ -12,6 +12,15 @@
 import { Prisma, prisma } from '@getyn/db';
 import { decrypt, encrypt, type EncryptedField } from '@getyn/crypto';
 
+/**
+ * Minimal Prisma client surface these helpers depend on. Lets callers
+ * pass an interactive-tx client (`tx`) so the slow encrypt + write
+ * runs on the same pooled connection that's holding the tx open —
+ * critical under Vercel + pgbouncer where connection_limit=1 makes
+ * "open a second connection inside the tx" deadlock.
+ */
+type CredentialClient = Pick<typeof prisma, 'integrationCredential'>;
+
 function ad(provider: string): string {
   return `integration:${provider}`;
 }
@@ -92,10 +101,11 @@ export async function loadIntegration<TConfig, TSecrets>(
  */
 export async function adminLoadIntegration<TConfig, TSecrets>(
   provider: string,
+  client: CredentialClient = prisma,
 ): Promise<
   (IntegrationRow<TConfig, TSecrets> & { hasSecrets: boolean }) | null
 > {
-  const row = await prisma.integrationCredential.findUnique({
+  const row = await client.integrationCredential.findUnique({
     where: { provider },
   });
   if (!row) return null;
@@ -130,14 +140,17 @@ export async function adminLoadIntegration<TConfig, TSecrets>(
  * common "edit non-secret fields only" path); pass an empty object
  * `{}` to clear them.
  */
-export async function saveIntegration(args: {
-  provider: string;
-  config: Record<string, unknown>;
-  /** null = leave existing secrets, {} or non-empty = replace. */
-  secrets: Record<string, unknown> | null;
-  enabled: boolean;
-  staffUserId: string;
-}): Promise<void> {
+export async function saveIntegration(
+  args: {
+    provider: string;
+    config: Record<string, unknown>;
+    /** null = leave existing secrets, {} or non-empty = replace. */
+    secrets: Record<string, unknown> | null;
+    enabled: boolean;
+    staffUserId: string;
+  },
+  client: CredentialClient = prisma,
+): Promise<void> {
   const data: Prisma.IntegrationCredentialUpdateInput = {
     config: args.config as Prisma.InputJsonValue,
     enabled: args.enabled,
@@ -151,7 +164,7 @@ export async function saveIntegration(args: {
       data.secrets = env as unknown as Prisma.InputJsonValue;
     }
   }
-  await prisma.integrationCredential.update({
+  await client.integrationCredential.update({
     where: { provider: args.provider },
     data,
   });
