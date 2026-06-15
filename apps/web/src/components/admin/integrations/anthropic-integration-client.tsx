@@ -183,7 +183,10 @@ export function AnthropicIntegrationClient(): JSX.Element {
           <Button
             onClick={() =>
               save.mutate({
-                apiKey: editKey ? apiKey : '',
+                // The input is editable whenever there's no saved key
+                // yet OR the user clicked "Replace". In both cases the
+                // typed value is what they want persisted.
+                apiKey: editKey || !data.hasSecrets ? apiKey : '',
                 model: model.trim(),
                 enabled,
               })
