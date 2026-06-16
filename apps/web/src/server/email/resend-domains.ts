@@ -169,11 +169,27 @@ export async function verifyResendDomain(
       verifiedAt: new Date(),
     };
   }
+
+  // Read current state first. Resend's `domains.verify` endpoint
+  // *schedules* a re-check, which transiently flips the status back
+  // to `pending` while DNS gets re-polled — even when the domain is
+  // already verified. So if we call verify→get unconditionally we'd
+  // overwrite a fresh VERIFIED state with a stale PENDING. Calling
+  // `get` first lets us short-circuit when Resend already knows the
+  // domain is good (e.g. the user verified via the Resend dashboard
+  // directly, or a previous Check Status already settled).
+  const current = await getResendDomain(resendDomainId);
+  if (current.status === 'VERIFIED') return current;
+
+  // Not verified — ask Resend to re-check, then re-read. We
+  // intentionally don't sleep between the two calls: Resend doesn't
+  // expose a "verification finished" signal, and DNS propagation can
+  // take minutes anyway. The user clicks Check Status again later;
+  // each click kicks off another check.
   const { error } = await c.domains.verify(resendDomainId);
   if (error) {
     throw new Error(`Resend.domains.verify failed: ${error.message}`);
   }
-  // Verify is async on Resend's side — we re-fetch to read the updated state.
   return getResendDomain(resendDomainId);
 }
 
