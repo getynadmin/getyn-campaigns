@@ -58,6 +58,12 @@ import {
   type AnthropicConfig,
   type AnthropicSecrets,
 } from '@/server/integrations/anthropic';
+import {
+  getDalleCredentials,
+  testDalleCredentials,
+  type DalleConfig,
+  type DalleSecrets,
+} from '@/server/integrations/dalle';
 
 import {
   createAdminRouter,
@@ -708,6 +714,186 @@ const anthropicRouter = createAdminRouter({
 });
 
 // =====================================================================
+// DALL-E (OpenAI Image) — provider='openai_dalle'
+// =====================================================================
+
+const dalleSizeSchema = z.enum(['1024x1024', '1792x1024', '1024x1792']);
+const dalleQualitySchema = z.enum(['standard', 'hd']);
+const dalleStyleSchema = z.enum(['vivid', 'natural']);
+
+const dalleUpdateSchema = z.object({
+  apiKey: z.string().max(2_000).default(''),
+  model: z.string().trim().max(120).default(''),
+  defaultSize: dalleSizeSchema.default('1024x1024'),
+  defaultQuality: dalleQualitySchema.default('standard'),
+  defaultStyle: dalleStyleSchema.default('vivid'),
+  enabled: z.boolean(),
+});
+
+const dalleRouter = createAdminRouter({
+  get: staffProcedure.query(async () => {
+    const row = await adminLoadIntegration<DalleConfig, DalleSecrets>(
+      'openai_dalle',
+    );
+    const live = await getDalleCredentials();
+    return {
+      provider: 'openai_dalle' as const,
+      enabled: row?.enabled ?? false,
+      config: {
+        model: row?.config.model ?? '',
+        defaultSize: row?.config.defaultSize ?? ('1024x1024' as const),
+        defaultQuality: row?.config.defaultQuality ?? ('standard' as const),
+        defaultStyle: row?.config.defaultStyle ?? ('vivid' as const),
+      },
+      hasSecrets: row?.hasSecrets ?? false,
+      lastTestedAt: row?.lastTestedAt ?? null,
+      lastTestStatus: row?.lastTestStatus ?? ('UNTESTED' as const),
+      lastTestError: row?.lastTestError ?? null,
+      liveSource: live.source,
+    };
+  }),
+
+  update: supportAdminProcedure
+    .input(dalleUpdateSchema)
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async (tx) => {
+        const existing = await adminLoadIntegration<DalleConfig, DalleSecrets>(
+          'openai_dalle',
+          tx,
+        );
+        const config: DalleConfig = {
+          ...(input.model ? { model: input.model } : {}),
+          defaultSize: input.defaultSize,
+          defaultQuality: input.defaultQuality,
+          defaultStyle: input.defaultStyle,
+        };
+        const incomingKey = input.apiKey.trim();
+        const secretsPayload: Record<string, unknown> | null =
+          incomingKey === '' ? null : { apiKey: incomingKey };
+        await saveIntegration(
+          {
+            provider: 'openai_dalle',
+            config: config as Record<string, unknown>,
+            secrets: secretsPayload,
+            enabled: input.enabled,
+            staffUserId: ctx.staff.staffUserId,
+          },
+          tx,
+        );
+        return {
+          result: { ok: true as const },
+          audit: {
+            action: 'admin.integration.dalle.updated',
+            beforeSnapshot: existing
+              ? { enabled: existing.enabled, config: existing.config }
+              : null,
+            afterSnapshot: { enabled: input.enabled, config },
+          },
+        };
+      });
+    }),
+
+  test: supportAdminProcedure.mutation(async () => {
+    const creds = await getDalleCredentials();
+    if (!creds.apiKey) {
+      const error = 'API key is required to test.';
+      await recordTestResult({
+        provider: 'openai_dalle',
+        ok: false,
+        error,
+      });
+      throw new TRPCError({ code: 'BAD_REQUEST', message: error });
+    }
+    const result = await testDalleCredentials({ apiKey: creds.apiKey });
+    await recordTestResult({
+      provider: 'openai_dalle',
+      ok: result.ok,
+      error: result.error,
+    });
+    if (!result.ok) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: result.error ?? 'Test failed.',
+      });
+    }
+    return { ok: true as const };
+  }),
+
+  /**
+   * "Test generation" — runs a single real DALL-E call with a fixed
+   * prompt and returns the URL OpenAI minted (valid ~1h, plenty for
+   * the admin to see the result). Records the outcome like the other
+   * .test mutations so the status badge updates. Costs $0.04 — staff
+   * action, so the cost lands on the admin operator's account, not a
+   * tenant's.
+   */
+  generateTest: supportAdminProcedure.mutation(async () => {
+    const creds = await getDalleCredentials();
+    if (!creds.apiKey) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'API key required.',
+      });
+    }
+    try {
+      const res = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${creds.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: creds.model,
+          prompt: 'a simple geometric pattern, minimalist, soft pastel colors',
+          n: 1,
+          size: creds.defaultSize,
+          quality: creds.defaultQuality,
+          style: creds.defaultStyle,
+          response_format: 'url',
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as
+          | { error?: { message?: string } }
+          | null;
+        const error =
+          body?.error?.message ?? `OpenAI returned ${res.status} ${res.statusText}`;
+        await recordTestResult({ provider: 'openai_dalle', ok: false, error });
+        throw new TRPCError({ code: 'BAD_REQUEST', message: error });
+      }
+      const json = (await res.json()) as {
+        data: Array<{ url: string; revised_prompt?: string }>;
+      };
+      const url = json.data[0]?.url;
+      if (!url) {
+        await recordTestResult({
+          provider: 'openai_dalle',
+          ok: false,
+          error: 'OpenAI returned no image URL.',
+        });
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'OpenAI returned no image URL.',
+        });
+      }
+      await recordTestResult({ provider: 'openai_dalle', ok: true });
+      return {
+        url,
+        revisedPrompt: json.data[0]?.revised_prompt ?? null,
+      };
+    } catch (err) {
+      if (err instanceof TRPCError) throw err;
+      const error = err instanceof Error ? err.message : 'Network error';
+      await recordTestResult({ provider: 'openai_dalle', ok: false, error });
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: error,
+      });
+    }
+  }),
+});
+
+// =====================================================================
 // Top-level admin.integrations router — fans out per provider.
 // =====================================================================
 
@@ -720,4 +906,5 @@ export const adminIntegrationsRouter = createAdminRouter({
   resend: resendRouter,
   railway: railwayRouter,
   anthropic: anthropicRouter,
+  dalle: dalleRouter,
 });

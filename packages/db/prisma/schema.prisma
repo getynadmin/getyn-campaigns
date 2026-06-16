@@ -1868,6 +1868,12 @@ model AgentAttachment {
   aiSummary            String?        @db.Text
   aiSummaryGeneratedAt DateTime?
   aiSummaryModel       String?
+  /// Phase 7.2 — structured visual style cues for IMAGE attachments.
+  /// Lazily populated the first time `generate_image_for_block` uses
+  /// this attachment as a reference, then cached so subsequent
+  /// generations don't re-pay the vision call. Shape:
+  /// { colors: string[], mood: string, composition: string, subject: string }.
+  visualStyleCues      Json?
   /// 30-day default; NULL means "pinned — referenced in a finalized
   /// plan, do not auto-delete".
   expiresAt            DateTime?
