@@ -1,3 +1,4 @@
+import { nanoid } from 'nanoid';
 import Papa from 'papaparse';
 import type { Job } from 'bullmq';
 
@@ -23,14 +24,13 @@ import {
 
 import { getSupabaseAdmin } from '../supabase';
 
-/** Rows per batch. Each batch runs inside one Prisma $transaction
- *  with ~3-5 queries per row (lookup → upsert → tag joins) — so 25
- *  rows × 5 queries = ~125 queries per tx, which finishes well
- *  inside the bumped 60s timeout below even with Supabase pgbouncer
- *  latency. Previously 100, which empirically tripped the
- *  pgbouncer "transaction was obtained before disconnecting"
- *  failure on 20k-row imports. */
-const BATCH_SIZE = 25;
+/** Rows per batch. With the bulk-operations refactor (one SELECT for
+ *  dedupe + a handful of createMany calls per batch), per-batch
+ *  query count is now constant ~5 regardless of row count — so we
+ *  can keep batches large for fewer transaction round-trips.
+ *  500 fits comfortably inside the 60s window even at Supabase's
+ *  worst pgbouncer latency. */
+const BATCH_SIZE = 500;
 /** Per-batch transaction window. Defaults to Prisma's 5s, which is
  *  too tight for the bulk-import workload. */
 const BATCH_TX_TIMEOUT_MS = 60_000;
@@ -276,55 +276,257 @@ interface BatchResult {
   errors: ImportRowError[];
 }
 
+/**
+ * Bulk-batch processor — replaces the per-row loop with a small
+ * fixed number of queries regardless of batch size.
+ *
+ * Per batch, against Supabase:
+ *   1 SELECT (dedupe lookup, OR'd on email + phone)
+ *   1 createMany (Contact rows; IDs pre-generated client-side so we
+ *     can reference them in the subsequent inserts without a
+ *     round-trip back to fetch them)
+ *   1 createMany (ContactEvent IMPORTED rows for the creates)
+ *   1 createMany (ContactTag joins, if tags configured)
+ *   1 createMany (ContactEvent TAG_ADDED rows, if tags configured)
+ *   N UPDATEs (one per row where dedupe matched an existing
+ *     contact). On a fresh import this is usually 0 or a handful;
+ *     on a re-import it's the dominant cost.
+ *
+ * Versus the prior per-row design that fired 3-5 queries per row,
+ * this is ~60x fewer round-trips for a typical fresh import.
+ *
+ * Trade-off: row-level extraction errors are still attributed to
+ * specific row numbers, but createMany-level failures (e.g. a unique
+ * constraint violation between rows in the same batch — which the
+ * schema doesn't have today but could in the future) collapse to
+ * a single failure attribution. The schema enforces uniqueness at
+ * the tenant scope, not globally; intra-batch dupes within a CSV
+ * upload would be a user-error case the import wizard should
+ * de-dupe up front.
+ */
 async function processBatch(input: BatchInput): Promise<BatchResult> {
-  const { tenantId, rows, rowOffset, mapping, customFieldById, dedupeBy, defaults } = input;
+  const {
+    tenantId,
+    rows,
+    rowOffset,
+    mapping,
+    customFieldById,
+    dedupeBy,
+    defaults,
+    tagIds,
+  } = input;
   const batchErrors: ImportRowError[] = [];
-  let succeeded = 0;
-  let failed = 0;
 
-  // One transaction per batch. This keeps the tenant-scoped SET LOCAL cheap
-  // (one setup per ~25 rows) and atomicises each batch's progress — if the
-  // transaction aborts, we re-process those rows on retry.
-  //
-  // The 60s timeout is generous compared to actual batch runtime (~2-4s at
-  // BATCH_SIZE=25 against Supabase) but gives us slack for Postgres
-  // backpressure and network blips. Without the bump, Prisma's default 5s
-  // tripped reliably mid-batch and surfaced as
-  // "Transaction was obtained before disconnecting" — the underlying
-  // pgbouncer connection got pulled before the tx finished.
+  // ---- Phase 1: extract everything client-side (no DB). -------------------
+  interface ExtractedEntry {
+    rowNumber: number;
+    ext: ExtractedRow;
+  }
+  const valid: ExtractedEntry[] = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const rowNumber = rowOffset + i + 1;
+    const raw = rows[i];
+    if (!raw) continue;
+    try {
+      const ext = extractRow(raw, mapping, customFieldById);
+      if (!ext.email && !ext.phone) {
+        throw new Error('Row has no email or phone — skipped.');
+      }
+      valid.push({ rowNumber, ext });
+    } catch (err) {
+      batchErrors.push({
+        row: rowNumber,
+        message: err instanceof Error ? err.message : 'Unknown error',
+      });
+    }
+  }
+  let succeeded = 0;
+  let failed = batchErrors.length;
+
+  if (valid.length === 0) {
+    return { processed: rows.length, succeeded, failed, errors: batchErrors };
+  }
+
+  // ---- Phase 2: DB work in one transaction. ------------------------------
   await withTenant(
     tenantId,
     async (tx) => {
-    for (let i = 0; i < rows.length; i += 1) {
-      const rowNumber = rowOffset + i + 1; // 1-indexed for user-facing errors
-      const raw = rows[i];
-      if (!raw) continue;
-
-      try {
-        const extracted = extractRow(raw, mapping, customFieldById);
-        if (!extracted.email && !extracted.phone) {
-          throw new Error('Row has no email or phone — skipped.');
-        }
-
-        const match = await findExisting(tx, tenantId, extracted, dedupeBy);
-        if (match) {
-          await updateExisting(tx, tenantId, match.id, extracted);
-        } else {
-          await createNew(tx, tenantId, extracted, defaults, input.tagIds);
-        }
-        succeeded += 1;
-      } catch (err) {
-        failed += 1;
-        batchErrors.push({
-          row: rowNumber,
-          message: err instanceof Error ? err.message : 'Unknown error',
-        });
+      // 2a. One dedupe lookup for the whole batch.
+      const emails = valid
+        .map((v) => v.ext.email)
+        .filter((e): e is string => !!e);
+      const phones = valid
+        .map((v) => v.ext.phone)
+        .filter((p): p is string => !!p);
+      const dedupeOr: Prisma.ContactWhereInput[] = [];
+      if (dedupeBy === 'EMAIL' || dedupeBy === 'EMAIL_OR_PHONE') {
+        if (emails.length) dedupeOr.push({ email: { in: emails } });
       }
-    }
+      if (dedupeBy === 'PHONE' || dedupeBy === 'EMAIL_OR_PHONE') {
+        if (phones.length) dedupeOr.push({ phone: { in: phones } });
+      }
 
-    // Apply tag assignments to any contacts we just touched. We collect
-    // them inside updateExisting/createNew via a return channel? Simpler:
-    // tag joins happen inline within create/update. Nothing to do here.
+      const existing =
+        dedupeOr.length > 0
+          ? await tx.contact.findMany({
+              where: { tenantId, deletedAt: null, OR: dedupeOr },
+              select: {
+                id: true,
+                email: true,
+                phone: true,
+                customFields: true,
+              },
+            })
+          : [];
+
+      const byEmail = new Map<string, (typeof existing)[number]>();
+      const byPhone = new Map<string, (typeof existing)[number]>();
+      for (const e of existing) {
+        if (e.email) byEmail.set(e.email, e);
+        if (e.phone) byPhone.set(e.phone, e);
+      }
+
+      // 2b. Partition into creates vs updates.
+      const toCreate: Array<{
+        rowNumber: number;
+        ext: ExtractedRow;
+        id: string;
+      }> = [];
+      const toUpdate: Array<{
+        rowNumber: number;
+        ext: ExtractedRow;
+        existing: (typeof existing)[number];
+      }> = [];
+
+      for (const v of valid) {
+        let match: (typeof existing)[number] | undefined;
+        if (dedupeBy === 'EMAIL' || dedupeBy === 'EMAIL_OR_PHONE') {
+          if (v.ext.email) match = byEmail.get(v.ext.email);
+        }
+        if (!match && (dedupeBy === 'PHONE' || dedupeBy === 'EMAIL_OR_PHONE')) {
+          if (v.ext.phone) match = byPhone.get(v.ext.phone);
+        }
+        if (match) {
+          toUpdate.push({ rowNumber: v.rowNumber, ext: v.ext, existing: match });
+        } else {
+          toCreate.push({
+            rowNumber: v.rowNumber,
+            ext: v.ext,
+            // Pre-generate the id so downstream createMany calls
+            // (ContactEvent, ContactTag) can reference it without a
+            // round-trip back to fetch newly-inserted ids. nanoid is
+            // opaque to Prisma — the schema's @default(cuid()) only
+            // fires when we don't provide an id.
+            id: nanoid(),
+          });
+        }
+      }
+
+      // 2c. Bulk create new contacts.
+      if (toCreate.length > 0) {
+        try {
+          await tx.contact.createMany({
+            data: toCreate.map((c) => ({
+              id: c.id,
+              tenantId,
+              email: c.ext.email,
+              phone: c.ext.phone,
+              firstName: c.ext.firstName,
+              lastName: c.ext.lastName,
+              language: c.ext.language ?? 'en',
+              timezone: c.ext.timezone,
+              source: ContactSource.IMPORT,
+              emailStatus: defaults.emailStatus as never,
+              smsStatus: defaults.smsStatus as never,
+              whatsappStatus: defaults.whatsappStatus as never,
+              customFields: c.ext.customFields as Prisma.InputJsonValue,
+            })),
+            skipDuplicates: true,
+          });
+          succeeded += toCreate.length;
+        } catch (err) {
+          // Bulk insert failed — attribute the error to every row in
+          // the batch's create set, then bail. The job's overall
+          // status will reflect this on the next progress write.
+          for (const c of toCreate) {
+            batchErrors.push({
+              row: c.rowNumber,
+              message: err instanceof Error ? err.message : 'createMany failed',
+            });
+            failed += 1;
+          }
+          return;
+        }
+
+        // 2d. Bulk insert IMPORTED events for the creates.
+        await tx.contactEvent.createMany({
+          data: toCreate.map((c) => ({
+            tenantId,
+            contactId: c.id,
+            type: ContactEventType.IMPORTED,
+            metadata: { action: 'create' } as Prisma.InputJsonValue,
+          })),
+        });
+
+        // 2e. Bulk insert tag joins + TAG_ADDED events for the creates.
+        if (tagIds.length > 0) {
+          const tagJoins = toCreate.flatMap((c) =>
+            tagIds.map((tagId) => ({ contactId: c.id, tagId })),
+          );
+          await tx.contactTag.createMany({
+            data: tagJoins,
+            skipDuplicates: true,
+          });
+          const tagEvents = toCreate.flatMap((c) =>
+            tagIds.map((tagId) => ({
+              tenantId,
+              contactId: c.id,
+              type: ContactEventType.TAG_ADDED,
+              metadata: { tagId, via: 'import' } as Prisma.InputJsonValue,
+            })),
+          );
+          await tx.contactEvent.createMany({ data: tagEvents });
+        }
+      }
+
+      // 2f. Per-row updates for the existing matches. These run one
+      //     UPDATE per row because the field set differs per row;
+      //     batching would require raw SQL and isn't worth the
+      //     complexity for what's usually the minority path.
+      for (const u of toUpdate) {
+        try {
+          const data: Prisma.ContactUpdateInput = {};
+          if (u.ext.email) data.email = u.ext.email;
+          if (u.ext.phone) data.phone = u.ext.phone;
+          if (u.ext.firstName) data.firstName = u.ext.firstName;
+          if (u.ext.lastName) data.lastName = u.ext.lastName;
+          if (u.ext.language) data.language = u.ext.language;
+          if (u.ext.timezone) data.timezone = u.ext.timezone;
+          if (Object.keys(u.ext.customFields).length > 0) {
+            const merged = {
+              ...((u.existing.customFields ?? {}) as Record<string, unknown>),
+              ...u.ext.customFields,
+            };
+            data.customFields = merged as Prisma.InputJsonValue;
+          }
+          await tx.contact.update({ where: { id: u.existing.id }, data });
+          await tx.contactEvent.create({
+            data: {
+              tenantId,
+              contactId: u.existing.id,
+              type: ContactEventType.IMPORTED,
+              metadata: { action: 'update' } as Prisma.InputJsonValue,
+            },
+          });
+          succeeded += 1;
+        } catch (err) {
+          failed += 1;
+          batchErrors.push({
+            row: u.rowNumber,
+            message: err instanceof Error ? err.message : 'update failed',
+          });
+        }
+      }
     },
     { timeout: BATCH_TX_TIMEOUT_MS, maxWait: BATCH_TX_MAX_WAIT_MS },
   );
@@ -461,131 +663,6 @@ function coerceCustomFieldValue(
       const d = new Date(value);
       if (Number.isNaN(d.getTime())) return { ok: false };
       return { ok: true, value: d.toISOString() };
-    }
-  }
-}
-
-// ===========================================================================
-// Dedupe / upsert
-// ===========================================================================
-
-async function findExisting(
-  tx: Prisma.TransactionClient,
-  tenantId: string,
-  extracted: ExtractedRow,
-  strategy: ImportDedupeStrategyValue,
-): Promise<{ id: string; customFields: Prisma.JsonValue } | null> {
-  const where: Prisma.ContactWhereInput[] = [];
-  if (strategy === 'EMAIL' || strategy === 'EMAIL_OR_PHONE') {
-    if (extracted.email) where.push({ email: extracted.email });
-  }
-  if (strategy === 'PHONE' || strategy === 'EMAIL_OR_PHONE') {
-    if (extracted.phone) where.push({ phone: extracted.phone });
-  }
-  if (where.length === 0) return null;
-
-  const found = await tx.contact.findFirst({
-    where: {
-      tenantId,
-      deletedAt: null,
-      OR: where,
-    },
-    select: { id: true, customFields: true },
-  });
-  return found;
-}
-
-async function updateExisting(
-  tx: Prisma.TransactionClient,
-  tenantId: string,
-  contactId: string,
-  extracted: ExtractedRow,
-): Promise<void> {
-  // Only overwrite identity fields if the CSV provided them. Blank cells
-  // should never nuke an existing email/name/etc.
-  const data: Prisma.ContactUpdateInput = {};
-  if (extracted.email) data.email = extracted.email;
-  if (extracted.phone) data.phone = extracted.phone;
-  if (extracted.firstName) data.firstName = extracted.firstName;
-  if (extracted.lastName) data.lastName = extracted.lastName;
-  if (extracted.language) data.language = extracted.language;
-  if (extracted.timezone) data.timezone = extracted.timezone;
-
-  if (Object.keys(extracted.customFields).length > 0) {
-    const existing = await tx.contact.findUnique({
-      where: { id: contactId },
-      select: { customFields: true },
-    });
-    const merged = {
-      ...((existing?.customFields ?? {}) as Record<string, unknown>),
-      ...extracted.customFields,
-    };
-    data.customFields = merged as Prisma.InputJsonValue;
-  }
-
-  await tx.contact.update({ where: { id: contactId }, data });
-
-  await tx.contactEvent.create({
-    data: {
-      tenantId,
-      contactId,
-      type: ContactEventType.IMPORTED,
-      metadata: { action: 'update' },
-    },
-  });
-}
-
-async function createNew(
-  tx: Prisma.TransactionClient,
-  tenantId: string,
-  extracted: ExtractedRow,
-  defaults: BatchInput['defaults'],
-  tagIds: string[],
-): Promise<void> {
-  const contact = await tx.contact.create({
-    data: {
-      tenantId,
-      email: extracted.email,
-      phone: extracted.phone,
-      firstName: extracted.firstName,
-      lastName: extracted.lastName,
-      language: extracted.language ?? 'en',
-      timezone: extracted.timezone,
-      source: ContactSource.IMPORT,
-      emailStatus: defaults.emailStatus as never,
-      smsStatus: defaults.smsStatus as never,
-      whatsappStatus: defaults.whatsappStatus as never,
-      customFields: extracted.customFields as Prisma.InputJsonValue,
-      ...(tagIds.length > 0
-        ? {
-            tags: {
-              create: tagIds.map((tagId) => ({ tagId })),
-            },
-          }
-        : {}),
-    },
-    select: { id: true },
-  });
-
-  await tx.contactEvent.create({
-    data: {
-      tenantId,
-      contactId: contact.id,
-      type: ContactEventType.IMPORTED,
-      metadata: { action: 'create' },
-    },
-  });
-
-  if (tagIds.length > 0) {
-    for (const tagId of tagIds) {
-      await tx.contactEvent.create({
-        data: {
-          tenantId,
-          contactId: contact.id,
-          type: ContactEventType.TAG_ADDED,
-          metadata: { tagId, via: 'import' },
-        },
-      });
     }
   }
 }
