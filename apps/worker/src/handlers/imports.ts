@@ -160,6 +160,7 @@ export async function handleImportJob(job: Job<unknown>): Promise<void> {
     // -------- Process in batches ----------------------------------------
     let processedRows = 0;
     let successRows = 0;
+    let updatedRows = 0;
     let errorRows = 0;
     const errors: ImportRowError[] = [];
     let truncatedFlagAdded = false;
@@ -178,6 +179,7 @@ export async function handleImportJob(job: Job<unknown>): Promise<void> {
         await persistProgress(importJobId, tenantId, {
           processedRows,
           successRows,
+          updatedRows,
           errorRows,
           errors,
           truncatedFlagAdded,
@@ -203,6 +205,7 @@ export async function handleImportJob(job: Job<unknown>): Promise<void> {
 
       processedRows += batchResult.processed;
       successRows += batchResult.succeeded;
+      updatedRows += batchResult.updated;
       errorRows += batchResult.failed;
       for (const err of batchResult.errors) {
         if (errors.length < IMPORT_ERROR_CAP) {
@@ -215,6 +218,7 @@ export async function handleImportJob(job: Job<unknown>): Promise<void> {
       await persistProgress(importJobId, tenantId, {
         processedRows,
         successRows,
+        updatedRows,
         errorRows,
         errors,
         truncatedFlagAdded,
@@ -230,12 +234,13 @@ export async function handleImportJob(job: Job<unknown>): Promise<void> {
           completedAt: new Date(),
           processedRows,
           successRows,
+          updatedRows,
           errorRows,
         },
       }),
     );
     console.info(
-      `[worker:imports] completed job ${importJobId}: ${successRows}/${totalRows} rows imported (${errorRows} errors)`,
+      `[worker:imports] completed job ${importJobId}: ${successRows}/${totalRows} rows imported (${updatedRows} updates, ${errorRows} errors)`,
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -272,6 +277,8 @@ interface BatchInput {
 interface BatchResult {
   processed: number;
   succeeded: number;
+  /** Of `succeeded`, how many were updates to pre-existing contacts. */
+  updated: number;
   failed: number;
   errors: ImportRowError[];
 }
@@ -341,10 +348,17 @@ async function processBatch(input: BatchInput): Promise<BatchResult> {
     }
   }
   let succeeded = 0;
+  let updated = 0;
   let failed = batchErrors.length;
 
   if (valid.length === 0) {
-    return { processed: rows.length, succeeded, failed, errors: batchErrors };
+    return {
+      processed: rows.length,
+      succeeded,
+      updated,
+      failed,
+      errors: batchErrors,
+    };
   }
 
   // ---- Phase 2: DB work in one transaction. ------------------------------
@@ -519,6 +533,7 @@ async function processBatch(input: BatchInput): Promise<BatchResult> {
             },
           });
           succeeded += 1;
+          updated += 1;
         } catch (err) {
           failed += 1;
           batchErrors.push({
@@ -534,6 +549,7 @@ async function processBatch(input: BatchInput): Promise<BatchResult> {
   return {
     processed: rows.length,
     succeeded,
+    updated,
     failed,
     errors: batchErrors,
   };
@@ -677,6 +693,7 @@ async function persistProgress(
   progress: {
     processedRows: number;
     successRows: number;
+    updatedRows: number;
     errorRows: number;
     errors: ImportRowError[];
     truncatedFlagAdded: boolean;
@@ -692,6 +709,7 @@ async function persistProgress(
       data: {
         processedRows: progress.processedRows,
         successRows: progress.successRows,
+        updatedRows: progress.updatedRows,
         errorRows: progress.errorRows,
         errors: errorsPayload,
       },

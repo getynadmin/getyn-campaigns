@@ -135,8 +135,12 @@ export function ImportProgress({ tenantSlug, importJobId }: Props): JSX.Element 
               />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3 text-center">
-            <Stat label="Imported" value={data.successRows} />
+          <div className="grid grid-cols-4 gap-3 text-center">
+            <Stat
+              label="New"
+              value={Math.max(0, data.successRows - data.updatedRows)}
+            />
+            <Stat label="Updated" value={data.updatedRows} />
             <Stat label="Errors" value={data.errorRows} tone="warn" />
             <Stat
               label="Remaining"

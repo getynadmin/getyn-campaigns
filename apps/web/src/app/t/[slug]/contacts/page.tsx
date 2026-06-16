@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { Upload } from 'lucide-react';
 import { Role, prisma } from '@getyn/db';
 
+import { ActiveImportsBanner } from '@/components/contacts/active-imports-banner';
 import { ContactList } from '@/components/contacts/contact-list';
 import { NewContactDialog } from '@/components/contacts/new-contact-dialog';
 import { Button } from '@/components/ui/button';
@@ -57,6 +58,7 @@ export default async function ContactsPage({
           </div>
         ) : null}
       </div>
+      <ActiveImportsBanner tenantSlug={params.slug} />
       <ContactList tenantSlug={params.slug} currentRole={membership.role} />
     </div>
   );

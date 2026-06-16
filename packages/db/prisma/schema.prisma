@@ -490,6 +490,11 @@ model ImportJob {
   totalRows             Int?
   processedRows         Int                  @default(0)
   successRows           Int                  @default(0)
+  /// Of successRows, how many landed as updates on a pre-existing
+  /// contact (matched by the dedupeBy strategy). The remainder is
+  /// new inserts. UI surfaces this as "X new + Y updated" so users
+  /// can sanity-check a re-import.
+  updatedRows           Int                  @default(0)
   errorRows             Int                  @default(0)
   errors                Json                 @default("[]") // capped at 100 entries + { truncated: boolean }
   mapping               Json // { [csvColumn]: { kind: 'field'|'custom_field'|'skip', field?: string, customFieldId?: string } }
