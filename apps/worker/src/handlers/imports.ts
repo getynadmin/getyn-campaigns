@@ -31,10 +31,6 @@ import { getSupabaseAdmin } from '../supabase';
  *  500 fits comfortably inside the 60s window even at Supabase's
  *  worst pgbouncer latency. */
 const BATCH_SIZE = 500;
-/** Per-batch transaction window. Defaults to Prisma's 5s, which is
- *  too tight for the bulk-import workload. */
-const BATCH_TX_TIMEOUT_MS = 60_000;
-const BATCH_TX_MAX_WAIT_MS = 10_000;
 const IMPORT_BUCKET = 'imports';
 /** A loose email regex — matches the intent of contactEmailSchema without
  *  pulling Zod into the hot loop. Good enough to reject obviously bad rows. */
@@ -361,10 +357,23 @@ async function processBatch(input: BatchInput): Promise<BatchResult> {
     };
   }
 
-  // ---- Phase 2: DB work in one transaction. ------------------------------
-  await withTenant(
-    tenantId,
-    async (tx) => {
+  // ---- Phase 2: DB work, no transaction wrapper. -------------------------
+  //
+  // Originally this ran inside `withTenant`, which opens a Prisma
+  // $transaction. Supabase's pgbouncer (transaction-pool mode) cuts the
+  // underlying connection between statements within the tx and surfaces
+  // "Transaction not found... was obtained before disconnecting" —
+  // even on the Session Pooler some configurations still trip this.
+  //
+  // The worker connects as the `postgres` role which bypasses RLS, so
+  // the tenant-scoped SET LOCAL that `withTenant` does is purely
+  // defensive — we don't need it here. Every query below includes
+  // tenantId explicitly in the WHERE/data clauses. The trade-off is
+  // that a per-statement failure mid-batch can leave a partial state
+  // (contacts created without their IMPORTED events), but ContactEvent
+  // is audit-only and BullMQ retries idempotently via skipDuplicates.
+  const tx = prisma;
+  try {
       // 2a. One dedupe lookup for the whole batch.
       const emails = valid
         .map((v) => v.ext.email)
@@ -469,7 +478,13 @@ async function processBatch(input: BatchInput): Promise<BatchResult> {
             });
             failed += 1;
           }
-          return;
+          return {
+            processed: rows.length,
+            succeeded,
+            updated,
+            failed,
+            errors: batchErrors,
+          };
         }
 
         // 2d. Bulk insert IMPORTED events for the creates.
@@ -542,9 +557,17 @@ async function processBatch(input: BatchInput): Promise<BatchResult> {
           });
         }
       }
-    },
-    { timeout: BATCH_TX_TIMEOUT_MS, maxWait: BATCH_TX_MAX_WAIT_MS },
-  );
+  } catch (err) {
+    // Bulk path threw before per-row attribution could happen. Mark
+    // every still-unaccounted-for row as failed so the user sees the
+    // error rather than silent zeros.
+    const message = err instanceof Error ? err.message : String(err);
+    const unattributed = valid.length - succeeded - (failed - batchErrors.length);
+    for (let i = 0; i < unattributed; i += 1) {
+      batchErrors.push({ row: rowOffset + i + 1, message });
+      failed += 1;
+    }
+  }
 
   return {
     processed: rows.length,
