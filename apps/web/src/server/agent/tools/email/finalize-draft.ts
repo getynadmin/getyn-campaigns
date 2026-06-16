@@ -35,6 +35,7 @@ import {
 
 import { checkBrandFidelity } from '../../brand-fidelity';
 import { composeUnlayerJson } from '../../email-composer';
+import { copyAgentAttachmentsToEmailAssets } from '../../email-asset-finalize';
 import { readEmailState } from './state';
 
 export const finalizeDraftTool = defineTool({
@@ -111,11 +112,21 @@ export const finalizeDraftTool = defineTool({
       );
     }
 
+    // Phase 7.2 — migrate agent-attachments image URLs to permanent
+    // email-assets copies BEFORE composing. The composer doesn't
+    // know the difference; downstream rendering uses the rewritten
+    // URLs. Failures here surface as warnings, not errors — better
+    // to ship with a 24h URL than abort finalize.
+    const migration = await copyAgentAttachmentsToEmailAssets({
+      plan: state.designPlan,
+      tenantId: ctx.tenantId,
+    });
+
     // Compose Unlayer JSON.
     let composed;
     try {
       composed = await composeUnlayerJson({
-        plan: state.designPlan.map((b) => ({
+        plan: migration.plan.map((b) => ({
           slug: b.slug,
           content: b.content,
         })),
@@ -126,6 +137,11 @@ export const finalizeDraftTool = defineTool({
           postalAddress: tenant.postalAddress,
         },
       });
+      // Surface any migration warnings via the composer's warning
+      // channel so they show up in the finalize result.
+      for (const w of migration.warnings) {
+        composed.warnings.push(w);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Compose failed.';
       emitAgentSentryAlert({

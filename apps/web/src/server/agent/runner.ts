@@ -109,6 +109,7 @@ export async function* runConversationTurn(args: {
   const context = await loadAgentContext({
     tenantId: convo.tenantId,
     channel,
+    conversationId: convo.id,
   });
   const overBudget = convo.costCents >= COST_CAP_CENTS;
   if (overBudget) {

@@ -52,13 +52,26 @@ export interface BrandContext {
     approvedTemplateCount: number;
     accountConnected: boolean;
   };
+  /** Phase 7.2 — files the user attached in this conversation, with
+   *  cached Haiku summaries so the agent can reference them by id
+   *  in `use_attachment_in_block` and `generate_image_for_block`
+   *  without spending tokens re-describing them. */
+  attachments: Array<{
+    id: string;
+    fileName: string;
+    type: 'IMAGE' | 'PDF' | 'SPREADSHEET' | 'DOCUMENT';
+    summary: string;
+  }>;
 }
 
 export async function loadAgentContext(args: {
   tenantId: string;
   channel: AgentChannel;
+  /** Phase 7.2 — when supplied, the loader also pulls AgentAttachment
+   *  rows for that conversation so the system prompt can list them. */
+  conversationId?: string;
 }): Promise<BrandContext> {
-  const [tenant, profile, segments, blocks, whatsAppCtx] = await Promise.all([
+  const [tenant, profile, segments, blocks, whatsAppCtx, attachments] = await Promise.all([
     prisma.tenant.findUnique({
       where: { id: args.tenantId },
       select: { name: true },
@@ -96,6 +109,24 @@ export async function loadAgentContext(args: {
     args.channel === 'WHATSAPP'
       ? loadWhatsAppContext(args.tenantId)
       : Promise.resolve(undefined),
+    args.conversationId
+      ? withTenant(args.tenantId, (tx) =>
+          tx.agentConversationAttachment.findMany({
+            where: {
+              conversationId: args.conversationId,
+              tenantId: args.tenantId,
+            },
+            orderBy: { createdAt: 'asc' },
+            include: {
+              attachment: {
+                include: {
+                  asset: { select: { fileName: true } },
+                },
+              },
+            },
+          }),
+        )
+      : Promise.resolve([] as never[]),
   ]);
 
   return {
@@ -138,6 +169,16 @@ export async function loadAgentContext(args: {
       category: b.category,
     })),
     whatsApp: whatsAppCtx,
+    attachments: attachments.map((link) => ({
+      id: link.attachment.id,
+      fileName: link.attachment.asset.fileName,
+      type: link.attachment.attachmentType,
+      summary:
+        link.attachment.aiSummary ??
+        (link.attachment.parsedAt
+          ? '(no summary)'
+          : '(still parsing, ask user to wait a moment)'),
+    })),
   };
 }
 
@@ -275,12 +316,31 @@ export function renderSystemPrompt(args: {
       `  6. Call finalize_draft once the user is happy. This hands off to the` +
         ` visual editor; don't try to finish all polish in chat.`,
       ``,
-      `When you need an image but the user hasn't given you a URL, call` +
-        ` request_image — the UI prompts them; you'll get the asset back.`,
-      ``,
       `Every block has a slug + a content map filling in {{placeholders}}.` +
         ` The composer auto-fills brand defaults (logo, address, unsubscribe URL,` +
         ` brand_name, primary_color) so you don't have to repeat them in every block.`,
+      ``,
+      `# Image strategy`,
+      ``,
+      `When a block has an image placeholder (image_url, icon_1/2/3, logo_url):`,
+      `  - If the user attached a relevant image, prefer use_attachment_in_block` +
+        ` to place it directly.`,
+      `  - If no relevant attachment, use generate_image_for_block to create` +
+        ` one with DALL-E.`,
+      `  - For hero images, prefer generation over leaving a placeholder.`,
+      `  - For product or business-specific imagery, ask the user to attach` +
+        ` if they have a specific image; generate if they don't.`,
+      `  - When generating with a reference attachment, the new image is` +
+        ` inspired by the reference's visual style — not an exact match.`,
+      `  - Write specific, descriptive prompts. Example: "Professional product` +
+        ` photo of a leather backpack on a wooden desk, soft natural lighting"` +
+        ` — not "a backpack".`,
+      `  - Avoid prompts that ask DALL-E to render text or logos (poor quality)` +
+        ` — use use_attachment_in_block for text/logo images instead.`,
+      `  - You have a budget of 3 image generations per conversation. Use` +
+        ` them where they add the most value.`,
+      `  - request_image is the legacy fallback that asks the user to upload —` +
+        ` only use it when neither tool fits.`,
       ``,
       `# Available email blocks`,
       ``,
@@ -358,6 +418,17 @@ export function renderSystemPrompt(args: {
       ``,
       `(none yet — ask the user to create one in Contacts → Segments before finalizing)`,
     );
+  }
+
+  // Phase 7.2 — attachment manifest. The agent picks reference images
+  // or files by referencing the IDs listed here. Cached summaries are
+  // included so the agent has enough context to choose without an
+  // additional `inspect_*` tool call.
+  if (c.attachments.length > 0) {
+    lines.push(``, `# Files attached in this conversation`, ``);
+    for (const a of c.attachments) {
+      lines.push(`  - ${a.id} (${a.type}, ${a.fileName}): ${a.summary}`);
+    }
   }
 
   return lines.join('\n');

@@ -24,3 +24,5 @@ export * from './client';
 export * from './template-draft';
 export * from './agent-runtime';
 export * from './attachment-summary';
+export * from './dalle';
+export * from './visual-style-extractor';

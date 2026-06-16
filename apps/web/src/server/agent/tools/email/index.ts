@@ -7,11 +7,13 @@ import {
   reorderBlocksTool,
 } from './add-remove-reorder';
 import { finalizeDraftTool } from './finalize-draft';
+import { generateImageForBlockTool } from './generate-image-for-block';
 import { proposeDesignPlanTool } from './propose-design-plan';
 import { requestImageTool } from './request-image';
 import { setAudienceTool } from './set-audience';
 import { setSubjectLineTool } from './set-subject-line';
 import { updateBlockContentTool } from './update-block-content';
+import { useAttachmentInBlockTool } from './use-attachment-in-block';
 
 /**
  * The full email-agent toolset. Order matches the order Claude is
@@ -34,5 +36,8 @@ export const emailAgentTools: ToolDefinition[] = [
   removeBlockTool as ToolDefinition,
   reorderBlocksTool as ToolDefinition,
   requestImageTool as ToolDefinition,
+  // Phase 7.2
+  useAttachmentInBlockTool as ToolDefinition,
+  generateImageForBlockTool as ToolDefinition,
   finalizeDraftTool as ToolDefinition,
 ];

@@ -28,6 +28,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAgentStream } from './use-agent-stream';
 import { EmailPreviewPane } from './email-preview-pane';
 import { WhatsAppPreviewPane } from './whatsapp-preview-pane';
+import {
+  AgentAttachmentComposer,
+  useAttachmentUpload,
+} from './agent-attachment-composer';
 import { api } from '@/lib/trpc';
 
 /**
@@ -170,6 +174,8 @@ export function AgentChatClient({
               : 'hidden w-full flex-col border-r md:flex md:w-2/5'
           }
           channel={channel}
+          conversationId={conversationId}
+          costCents={convo.costCents}
           messages={convo.messages.map(serverMsgToView)}
           streamingText={stream.streamingText}
           toolCalls={stream.toolCalls}
@@ -255,6 +261,8 @@ function serverMsgToView(m: {
 function ChatPane({
   className,
   channel,
+  conversationId,
+  costCents,
   messages,
   streamingText,
   toolCalls,
@@ -268,6 +276,8 @@ function ChatPane({
 }: {
   className: string;
   channel: Channel;
+  conversationId: string;
+  costCents: number;
   messages: MessageView[];
   streamingText: string;
   toolCalls: { id: string; name: string; output?: unknown; error?: string }[];
@@ -280,6 +290,9 @@ function ChatPane({
   finalizedRedirectTo: string | null;
 }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepth = useRef(0);
+  const uploadFiles = useAttachmentUpload(conversationId);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -289,7 +302,40 @@ function ChatPane({
   }, [messages.length, streamingText, toolCalls.length]);
 
   return (
-    <section className={className}>
+    <section
+      className={`${className} relative`}
+      onDragEnter={(e) => {
+        if (disabled) return;
+        if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+        e.preventDefault();
+        dragDepth.current += 1;
+        setDragOver(true);
+      }}
+      onDragOver={(e) => {
+        if (disabled) return;
+        if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+        e.preventDefault();
+      }}
+      onDragLeave={() => {
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragOver(false);
+      }}
+      onDrop={(e) => {
+        if (disabled) return;
+        if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+        e.preventDefault();
+        dragDepth.current = 0;
+        setDragOver(false);
+        if (e.dataTransfer.files.length > 0) {
+          void uploadFiles(e.dataTransfer.files);
+        }
+      }}
+    >
+      {dragOver && (
+        <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-lg border-2 border-dashed border-foreground/40 bg-background/80 text-sm text-muted-foreground">
+          Drop to attach (image, PDF, CSV, XLSX, DOC)
+        </div>
+      )}
       <div
         ref={scrollRef}
         className="flex-1 space-y-3 overflow-y-auto p-4 pb-2"
@@ -327,14 +373,18 @@ function ChatPane({
         )}
       </div>
 
-      {/* Input */}
+      {/* Input + attachment composer */}
       <form
-        className="border-t bg-background p-3"
+        className="space-y-2 border-t bg-background p-3"
         onSubmit={(e) => {
           e.preventDefault();
           onSend();
         }}
       >
+        <AgentAttachmentComposer
+          conversationId={conversationId}
+          disabled={disabled}
+        />
         <div className="flex gap-2">
           <Input
             value={input}
@@ -353,8 +403,38 @@ function ChatPane({
             <Send className="size-4" />
           </Button>
         </div>
+        <ConversationCostFooter costCents={costCents} />
       </form>
     </section>
+  );
+}
+
+/**
+ * Phase 7.2 — tenant-side cost transparency. Shows the running
+ * conversation cost against the $0.50 ceiling so users understand
+ * why the agent might force-finalize as it approaches the cap.
+ */
+function ConversationCostFooter({
+  costCents,
+}: {
+  costCents: number;
+}): JSX.Element {
+  const usd = costCents / 100;
+  const cap = 0.5;
+  const pct = Math.min(100, Math.round((usd / cap) * 100));
+  const warn = pct >= 80;
+  return (
+    <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+      <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+        <div
+          className={`h-full ${warn ? 'bg-amber-500' : 'bg-foreground/60'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="tabular-nums">
+        Conversation cost: ${usd.toFixed(2)} / ${cap.toFixed(2)}
+      </span>
+    </div>
   );
 }
 
@@ -436,6 +516,22 @@ function ToolCallPill({
 }: {
   call: { id: string; name: string; output?: unknown; error?: string };
 }): JSX.Element {
+  // Phase 7.2 — generate_image_for_block is the only multi-second
+  // synchronous tool. While output is undefined, show an animated
+  // "Generating image…" pill with the typical-time hint.
+  const isPending =
+    call.name === 'generate_image_for_block' &&
+    call.output === undefined &&
+    !call.error;
+  if (isPending) {
+    return (
+      <div className="flex items-center gap-2 rounded-full border border-sky-300 bg-sky-50/60 px-2.5 py-1 text-[11px] text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">
+        <Loader2 className="size-3 animate-spin" />
+        <span>Generating image…</span>
+        <span className="opacity-70">usually 5-10 seconds</span>
+      </div>
+    );
+  }
   const summary = summariseToolOutput(call.name, call.output);
   const isError = !!call.error;
   return (
@@ -479,6 +575,15 @@ function summariseToolOutput(name: string, output: unknown): string {
   if (name === 'set_template_variables' && typeof o.filled === 'number')
     return `${o.filled} variable${o.filled === 1 ? '' : 's'} filled`;
   if (name === 'finalize_draft') return 'draft ready';
+  // Phase 7.2
+  if (name === 'use_attachment_in_block' && typeof o.fileName === 'string')
+    return `placed ${o.fileName}`;
+  if (name === 'generate_image_for_block') {
+    if (o.ok === false && typeof o.error === 'string') return o.error;
+    if (typeof o.generationsRemaining === 'number')
+      return `image generated (${o.generationsRemaining} of 3 left)`;
+    return 'image generated';
+  }
   return '';
 }
 
