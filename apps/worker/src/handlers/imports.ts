@@ -23,7 +23,18 @@ import {
 
 import { getSupabaseAdmin } from '../supabase';
 
-const BATCH_SIZE = 100;
+/** Rows per batch. Each batch runs inside one Prisma $transaction
+ *  with ~3-5 queries per row (lookup → upsert → tag joins) — so 25
+ *  rows × 5 queries = ~125 queries per tx, which finishes well
+ *  inside the bumped 60s timeout below even with Supabase pgbouncer
+ *  latency. Previously 100, which empirically tripped the
+ *  pgbouncer "transaction was obtained before disconnecting"
+ *  failure on 20k-row imports. */
+const BATCH_SIZE = 25;
+/** Per-batch transaction window. Defaults to Prisma's 5s, which is
+ *  too tight for the bulk-import workload. */
+const BATCH_TX_TIMEOUT_MS = 60_000;
+const BATCH_TX_MAX_WAIT_MS = 10_000;
 const IMPORT_BUCKET = 'imports';
 /** A loose email regex — matches the intent of contactEmailSchema without
  *  pulling Zod into the hot loop. Good enough to reject obviously bad rows. */
@@ -272,9 +283,18 @@ async function processBatch(input: BatchInput): Promise<BatchResult> {
   let failed = 0;
 
   // One transaction per batch. This keeps the tenant-scoped SET LOCAL cheap
-  // (one setup per ~100 rows) and atomicises each batch's progress — if the
+  // (one setup per ~25 rows) and atomicises each batch's progress — if the
   // transaction aborts, we re-process those rows on retry.
-  await withTenant(tenantId, async (tx) => {
+  //
+  // The 60s timeout is generous compared to actual batch runtime (~2-4s at
+  // BATCH_SIZE=25 against Supabase) but gives us slack for Postgres
+  // backpressure and network blips. Without the bump, Prisma's default 5s
+  // tripped reliably mid-batch and surfaced as
+  // "Transaction was obtained before disconnecting" — the underlying
+  // pgbouncer connection got pulled before the tx finished.
+  await withTenant(
+    tenantId,
+    async (tx) => {
     for (let i = 0; i < rows.length; i += 1) {
       const rowNumber = rowOffset + i + 1; // 1-indexed for user-facing errors
       const raw = rows[i];
@@ -305,7 +325,9 @@ async function processBatch(input: BatchInput): Promise<BatchResult> {
     // Apply tag assignments to any contacts we just touched. We collect
     // them inside updateExisting/createNew via a return channel? Simpler:
     // tag joins happen inline within create/update. Nothing to do here.
-  });
+    },
+    { timeout: BATCH_TX_TIMEOUT_MS, maxWait: BATCH_TX_MAX_WAIT_MS },
+  );
 
   return {
     processed: rows.length,

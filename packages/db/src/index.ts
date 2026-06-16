@@ -55,16 +55,28 @@ if (process.env.NODE_ENV !== 'production') {
 export async function withTenant<T>(
   tenantId: string | null,
   fn: (tx: PrismaClient) => Promise<T>,
+  opts?: {
+    /** Per-tx timeout in ms. Defaults to Prisma's 5s — fine for
+     *  request-scoped reads/writes but too low for bulk import
+     *  batches that fire hundreds of queries inside one tx. */
+    timeout?: number;
+    /** Time to wait for a connection before bailing. Defaults to 2s.
+     *  Bump alongside `timeout` for long-running batches. */
+    maxWait?: number;
+  },
 ): Promise<T> {
-  return prisma.$transaction(async (tx) => {
-    if (tenantId) {
-      await tx.$executeRawUnsafe(
-        `SELECT set_config('app.current_tenant_id', $1, true)`,
-        tenantId,
-      );
-    }
-    return fn(tx as unknown as PrismaClient);
-  });
+  return prisma.$transaction(
+    async (tx) => {
+      if (tenantId) {
+        await tx.$executeRawUnsafe(
+          `SELECT set_config('app.current_tenant_id', $1, true)`,
+          tenantId,
+        );
+      }
+      return fn(tx as unknown as PrismaClient);
+    },
+    opts,
+  );
 }
 
 /**
