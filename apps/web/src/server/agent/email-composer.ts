@@ -114,6 +114,16 @@ export async function composeUnlayerJson(args: {
   const rows: Record<string, unknown>[] = [];
   const counters = { u_row: 0, u_column: 0, u_content_text: 0, u_content_heading: 0, u_content_image: 0, u_content_button: 0, u_content_divider: 0, u_content_social: 0 };
 
+  // Per-block missing-placeholder collection. Built up during the
+  // loop so the error message can attribute each unfilled key to a
+  // specific block — without this the agent gets a flat list like
+  // "body, body_1" and can't tell which block to fix.
+  const missingByBlock: Array<{
+    index: number;
+    slug: string;
+    missing: string[];
+  }> = [];
+
   for (const entry of finalPlan) {
     const tmpl = bySlug.get(entry.slug);
     if (!tmpl) continue; // already errored above; defensive
@@ -128,13 +138,42 @@ export async function composeUnlayerJson(args: {
         'invalid_template',
       );
     }
+    // Find every {{token}} referenced in the template; flag any that
+    // the merged content (agent-provided + brand defaults) doesn't
+    // fill. Brand-default keys (logo_url, address, …) are always
+    // present in `merged`, so this only catches genuine agent gaps.
+    const required = new Set<string>();
+    collectTokens(rawTemplate, required);
+    const blockMissing = [...required].filter((k) => !(k in merged));
+    if (blockMissing.length > 0) {
+      missingByBlock.push({
+        index: finalPlan.indexOf(entry),
+        slug: entry.slug,
+        missing: blockMissing,
+      });
+    }
     // Deep clone and substitute. We clone via JSON round-trip — the
     // templates are pure JSON.
     const substituted = substituteTokens(rawTemplate, merged, warnings);
     rows.push(toUnlayerRow(substituted, counters));
   }
 
-  // Verify nothing is left unsubstituted across the assembled doc.
+  if (missingByBlock.length > 0) {
+    const detail = missingByBlock
+      .map(
+        (b) =>
+          `block ${b.index} (${b.slug}): ${b.missing.join(', ')}`,
+      )
+      .join('; ');
+    throw new ComposerError(
+      `Couldn't compose the design — fill these placeholders via update_block_content: ${detail}.`,
+      'unresolved_token',
+    );
+  }
+
+  // Defense-in-depth: catch any token that slipped through the
+  // per-block check (e.g. a brand default value that itself contained
+  // a {{...}} token).
   const unresolved = findUnresolvedTokens(rows);
   if (unresolved.length > 0) {
     throw new ComposerError(
@@ -178,6 +217,25 @@ export async function composeUnlayerJson(args: {
 // ----------------------------------------------------------------------------
 
 const TOKEN_RE = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
+
+/** Walk a template JSON tree and collect every `{{token}}` name it
+ *  references. Used pre-substitution so we can attribute missing keys
+ *  to their owning block in the composer error. */
+function collectTokens(node: unknown, out: Set<string>): void {
+  if (typeof node === 'string') {
+    for (const m of node.matchAll(TOKEN_RE)) {
+      if (m[1]) out.add(m[1]);
+    }
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const child of node) collectTokens(child, out);
+    return;
+  }
+  if (node && typeof node === 'object') {
+    for (const v of Object.values(node)) collectTokens(v, out);
+  }
+}
 
 function substituteTokens(
   node: unknown,
