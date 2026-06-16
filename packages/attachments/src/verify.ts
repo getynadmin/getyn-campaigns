@@ -17,13 +17,26 @@
  * which has a CFB header but file-type sometimes returns 'cfb' rather
  * than the office variant.
  */
-import { fileTypeFromBuffer } from 'file-type';
-
 import {
   ALLOWED_MIME_TYPES,
   isAllowedMime,
   type AllowedMimeType,
 } from './mime';
+
+/**
+ * `file-type` v19+ is ESM-only. tsx runs the worker in CJS mode and a
+ * static `import { fileTypeFromBuffer } from 'file-type'` gets
+ * transpiled to a require() call, which throws
+ * ERR_PACKAGE_PATH_NOT_EXPORTED at startup before the worker binds
+ * to its port. A dynamic import resolves at call-time and Node's
+ * loader handles the ESM → CJS interop correctly.
+ */
+let cachedFileType: typeof import('file-type') | null = null;
+async function loadFileType(): Promise<typeof import('file-type')> {
+  if (cachedFileType) return cachedFileType;
+  cachedFileType = await import('file-type');
+  return cachedFileType;
+}
 
 export interface VerifiedFile {
   /** The MIME type we trust — derived from magic bytes for binaries,
@@ -93,6 +106,7 @@ export async function verifyAttachment(
     return { verifiedMime: 'text/csv' };
   }
 
+  const { fileTypeFromBuffer } = await loadFileType();
   const detected = await fileTypeFromBuffer(buf);
   if (!detected) {
     throw new AttachmentVerifyError(
