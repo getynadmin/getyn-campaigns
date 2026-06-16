@@ -1,0 +1,16 @@
+# Railway / Nixpacks build configuration.
+#
+# Sole purpose: prevent Nixpacks from setting NODE_ENV=production
+# during the install phase. With NODE_ENV=production pnpm skips
+# devDependencies, but several of our postinstall scripts need the
+# `prisma` CLI which has historically lived in devDeps. Even though
+# we moved it to deps in cb63156, this gives belt-and-suspenders
+# coverage so any future devDep regression (CLI tools, etc.) doesn't
+# break the build.
+#
+# Everything else — phase ordering, start command — is left to
+# Nixpacks' auto-detection so we don't accidentally override a
+# Railway-managed setting that's already working.
+
+[phases.install]
+cmds = ["NODE_ENV=development pnpm install --frozen-lockfile"]
