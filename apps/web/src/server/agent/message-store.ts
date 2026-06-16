@@ -102,6 +102,20 @@ export function createConversationMessageStore(args: {
         if (trimmed.length >= HISTORY_MAX_MESSAGES) break;
       }
       trimmed.reverse();
+      // Anthropic invariant: every tool_result block must be preceded
+      // by an assistant message containing the matching tool_use.
+      // If our slice landed inside a turn cycle we may have a leading
+      // TOOL_CALL / TOOL_RESULT / ASSISTANT row whose pairing partner
+      // got dropped by the token-budget trim. Walk forward until the
+      // first USER message — that's the only safe starting point.
+      const firstUser = trimmed.findIndex((r) => r.role === 'USER');
+      if (firstUser > 0) {
+        trimmed.splice(0, firstUser);
+      } else if (firstUser === -1) {
+        // Pathological: nothing but ASSISTANT / TOOL_* rows. Empty
+        // history is safer than a malformed one.
+        return [];
+      }
       return trimmed.map((r) => ({
         role: REVERSE_ROLE[r.role],
         content: r.content,

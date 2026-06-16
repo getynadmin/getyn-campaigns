@@ -532,6 +532,41 @@ function ToolCallPill({
       </div>
     );
   }
+  // Inline render the generated image so the user can see the result
+  // without scrolling to the preview pane. Failures collapse to the
+  // regular pill — they're caught below.
+  const imageUrl =
+    call.name === 'generate_image_for_block' &&
+    call.output &&
+    typeof call.output === 'object' &&
+    (call.output as { ok?: boolean }).ok === true
+      ? (call.output as { imageUrl?: string }).imageUrl
+      : null;
+  if (imageUrl) {
+    const o = call.output as {
+      revisedPrompt?: string;
+      generationsRemaining?: number;
+    };
+    return (
+      <div className="flex flex-col gap-1.5 rounded-xl border border-violet-300 bg-violet-50/40 p-2 dark:border-violet-900 dark:bg-violet-950/20">
+        <div className="flex items-center gap-2 text-[11px] text-violet-900 dark:text-violet-200">
+          <CheckCircle2 className="size-3" />
+          <code className="font-mono">generate_image_for_block</code>
+          {typeof o.generationsRemaining === 'number' && (
+            <span className="opacity-70">
+              {o.generationsRemaining} of 3 left
+            </span>
+          )}
+        </div>
+        {/* eslint-disable-next-line @next/next/no-img-element -- transient signed URL, not an Asset */}
+        <img
+          src={imageUrl}
+          alt={o.revisedPrompt ?? 'AI generated image'}
+          className="max-h-48 w-auto rounded-lg border bg-background object-contain"
+        />
+      </div>
+    );
+  }
   const summary = summariseToolOutput(call.name, call.output);
   const isError = !!call.error;
   return (

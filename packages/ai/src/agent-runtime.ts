@@ -481,6 +481,16 @@ function historyToAnthropic(
   // sit inside an assistant/user message respectively.
   let pendingAssistantBlocks: AnyBlockParam[] = [];
   let pendingUserBlocks: AnyBlockParam[] = [];
+  // tool_use ids emitted so far. Anthropic rejects any tool_result
+  // whose id doesn't match a tool_use in the IMMEDIATELY preceding
+  // assistant message — we track all known ids across the whole
+  // conversation as a defensive filter against orphans introduced by
+  // history truncation, mid-turn crashes, or persistence bugs.
+  const knownToolUseIds = new Set<string>();
+  // tool_use ids that haven't been answered yet in this slice. Used
+  // to drop trailing tool_use blocks at the very end (would also
+  // confuse Anthropic — it'd retry).
+  let openToolUseIds = new Set<string>();
 
   const flushAssistant = () => {
     if (pendingAssistantBlocks.length > 0) {
@@ -498,6 +508,14 @@ function historyToAnthropic(
   for (const msg of history) {
     if (msg.role === 'SYSTEM') continue; // system prompt threaded separately
     if (msg.role === 'USER') {
+      // If we have open tool_uses with no matching tool_results, drop
+      // the partial assistant turn — Anthropic would reject the
+      // user-message follow-up otherwise. Better to lose context for
+      // a half-finished turn than crash the whole conversation.
+      if (openToolUseIds.size > 0) {
+        pendingAssistantBlocks = [];
+        openToolUseIds = new Set();
+      }
       flushAssistant();
       flushUser();
       out.push({ role: 'user', content: msg.content ?? '' });
@@ -510,6 +528,8 @@ function historyToAnthropic(
     } else if (msg.role === 'TOOL_CALL') {
       flushUser();
       if (msg.toolUseId && msg.toolName) {
+        knownToolUseIds.add(msg.toolUseId);
+        openToolUseIds.add(msg.toolUseId);
         pendingAssistantBlocks.push({
           type: 'tool_use',
           id: msg.toolUseId,
@@ -518,18 +538,28 @@ function historyToAnthropic(
         });
       }
     } else if (msg.role === 'TOOL_RESULT') {
+      // Drop orphan tool_results — Anthropic's #1 cause of
+      // "messages.N.content.M: unexpected tool_use_id" errors.
+      if (!msg.toolUseId || !knownToolUseIds.has(msg.toolUseId)) continue;
       flushAssistant();
-      if (msg.toolUseId) {
-        pendingUserBlocks.push({
-          type: 'tool_result',
-          tool_use_id: msg.toolUseId,
-          content: JSON.stringify(
-            msg.toolOutput ?? msg.errorMessage ?? null,
-          ),
-          is_error: Boolean(msg.errorMessage),
-        });
-      }
+      openToolUseIds.delete(msg.toolUseId);
+      pendingUserBlocks.push({
+        type: 'tool_result',
+        tool_use_id: msg.toolUseId,
+        content: JSON.stringify(
+          msg.toolOutput ?? msg.errorMessage ?? null,
+        ),
+        is_error: Boolean(msg.errorMessage),
+      });
     }
+  }
+  // If the final turn has open tool_uses with no matching results,
+  // drop the trailing assistant tool_use block so the next call
+  // doesn't ask Anthropic to "continue" an unanswered tool call.
+  if (openToolUseIds.size > 0) {
+    pendingAssistantBlocks = pendingAssistantBlocks.filter(
+      (b) => b.type !== 'tool_use' || !openToolUseIds.has(b.id),
+    );
   }
   flushAssistant();
   flushUser();
