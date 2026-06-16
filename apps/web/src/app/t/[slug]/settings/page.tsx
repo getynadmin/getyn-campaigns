@@ -42,7 +42,11 @@ export default async function WorkspaceSettingsPage({
       </CardHeader>
       <CardContent>
         <WorkspaceSettingsForm
-          defaults={{ name: tenant.name, slug: tenant.slug }}
+          defaults={{
+            name: tenant.name,
+            slug: tenant.slug,
+            postalAddress: tenant.postalAddress ?? '',
+          }}
           canEdit={canEdit}
         />
       </CardContent>

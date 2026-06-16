@@ -59,6 +59,10 @@ export const tenantRouter = createTRPCRouter({
       z.object({
         name: z.string().min(2).max(60).optional(),
         slug: tenantSlugSchema.optional(),
+        // CAN-SPAM-required physical address surfaced in every email
+        // campaign's footer. Empty string clears the value (rare, but
+        // we accept it so the field doesn't get stuck on a typo).
+        postalAddress: z.string().trim().max(300).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -68,6 +72,9 @@ export const tenantRouter = createTRPCRouter({
           data: {
             ...(input.name ? { name: input.name } : {}),
             ...(input.slug ? { slug: input.slug } : {}),
+            ...(input.postalAddress !== undefined
+              ? { postalAddress: input.postalAddress || null }
+              : {}),
           },
         });
       } catch (err) {

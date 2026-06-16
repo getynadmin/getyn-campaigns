@@ -29,6 +29,10 @@ const schema = z.object({
       /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
       'Lowercase letters, numbers, and single dashes only',
     ),
+  // CAN-SPAM-required physical address. Empty string is allowed
+  // (clears the value); the agent's finalize_draft tool blocks until
+  // it's non-empty for any email campaign.
+  postalAddress: z.string().trim().max(300).default(''),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -41,7 +45,7 @@ export function WorkspaceSettingsForm({
   defaults,
   canEdit,
 }: {
-  defaults: { name: string; slug: string };
+  defaults: { name: string; slug: string; postalAddress: string };
   canEdit: boolean;
 }): JSX.Element {
   const router = useRouter();
@@ -95,6 +99,28 @@ export function WorkspaceSettingsForm({
               </FormControl>
               <FormDescription>
                 Used in the URL: app.getyn.com/t/<strong>{field.value || 'your-slug'}</strong>
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="postalAddress"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Postal address</FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  disabled={!canEdit}
+                  placeholder="123 Main St, Suite 400, Springfield IL 62701, USA"
+                />
+              </FormControl>
+              <FormDescription>
+                Physical mailing address shown in every email campaign&rsquo;s
+                footer. Required by CAN-SPAM &mdash; the campaign agent
+                won&rsquo;t finalize a draft until this is set.
               </FormDescription>
               <FormMessage />
             </FormItem>
