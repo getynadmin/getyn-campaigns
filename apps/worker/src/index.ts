@@ -523,9 +523,14 @@ for (const worker of workers) {
  * small — the worker's deploy artifact stays tight.
  */
 const healthServer: Server = createServer((req, res) => {
-  if (req.url !== '/health') {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: false, error: 'Not found' }));
+  // Railway's default healthcheck probes `/`, not `/health`. Returning
+  // 404 on `/` reads as "unhealthy" to the platform and triggers a
+  // SIGTERM kill loop. Treat any GET (including `/`) as a health probe
+  // so the platform's default config works without per-service tuning.
+  const url = req.url ?? '/';
+  if (req.method && req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'Method not allowed' }));
     return;
   }
 
@@ -538,16 +543,24 @@ const healthServer: Server = createServer((req, res) => {
   const allWorkersRunning = queues.every((q) => q.running);
   const ok = redisStatus === 'ready' && allWorkersRunning;
 
-  res.writeHead(ok ? 200 : 503, { 'Content-Type': 'application/json' });
-  res.end(
-    JSON.stringify({
-      ok,
-      redis: redisStatus,
-      queues,
-      uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
-      version: process.env.npm_package_version ?? 'dev',
-    }),
-  );
+  // `/health` gets the full payload (for ops + monitoring). `/` and
+  // anything else gets a minimal 200 — Railway just needs *something*
+  // 2xx to mark the service alive.
+  if (url.startsWith('/health')) {
+    res.writeHead(ok ? 200 : 503, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        ok,
+        redis: redisStatus,
+        queues,
+        uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
+        version: process.env.npm_package_version ?? 'dev',
+      }),
+    );
+    return;
+  }
+  res.writeHead(ok ? 200 : 503, { 'Content-Type': 'text/plain' });
+  res.end(ok ? 'ok' : 'unhealthy');
 });
 
 healthServer.listen(env.PORT, () => {
