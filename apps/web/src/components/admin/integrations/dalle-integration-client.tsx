@@ -21,9 +21,8 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { adminApi } from '@/lib/admin-trpc';
 
-type Size = '1024x1024' | '1792x1024' | '1024x1792';
-type Quality = 'standard' | 'hd';
-type Style = 'vivid' | 'natural';
+type Size = '1024x1024' | '1024x1536' | '1536x1024' | 'auto';
+type Quality = 'low' | 'medium' | 'high' | 'auto';
 
 export function DalleIntegrationClient(): JSX.Element {
   const utils = adminApi.useUtils();
@@ -31,8 +30,7 @@ export function DalleIntegrationClient(): JSX.Element {
   const [hydrated, setHydrated] = useState(false);
   const [model, setModel] = useState('');
   const [defaultSize, setDefaultSize] = useState<Size>('1024x1024');
-  const [defaultQuality, setDefaultQuality] = useState<Quality>('standard');
-  const [defaultStyle, setDefaultStyle] = useState<Style>('vivid');
+  const [defaultQuality, setDefaultQuality] = useState<Quality>('medium');
   const [enabled, setEnabled] = useState(false);
   const [editKey, setEditKey] = useState(false);
   const [apiKey, setApiKey] = useState('');
@@ -44,7 +42,6 @@ export function DalleIntegrationClient(): JSX.Element {
     setModel(data.config.model);
     setDefaultSize(data.config.defaultSize as Size);
     setDefaultQuality(data.config.defaultQuality as Quality);
-    setDefaultStyle(data.config.defaultStyle as Style);
     setEnabled(data.enabled);
     setHydrated(true);
   }, [data, hydrated]);
@@ -143,7 +140,7 @@ export function DalleIntegrationClient(): JSX.Element {
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              Used platform-wide for DALL-E 3 image generation inside the
+              Used platform-wide for OpenAI image generation (gpt-image-2) inside the
               Campaign Agent. Stored encrypted (AES-256-GCM). Get a key
               from{' '}
               <a
@@ -163,19 +160,20 @@ export function DalleIntegrationClient(): JSX.Element {
             <Input
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              placeholder="dall-e-3 (default)"
+              placeholder="gpt-image-2 (default)"
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <RadioGroup
               label="Default size"
               value={defaultSize}
               onChange={(v) => setDefaultSize(v as Size)}
               options={[
-                { value: '1024x1024', label: 'Square' },
-                { value: '1792x1024', label: 'Wide' },
-                { value: '1024x1792', label: 'Tall' },
+                { value: '1024x1024', label: 'Square 1024' },
+                { value: '1536x1024', label: 'Wide 1536×1024' },
+                { value: '1024x1536', label: 'Tall 1024×1536' },
+                { value: 'auto', label: 'Auto' },
               ]}
             />
             <RadioGroup
@@ -183,17 +181,10 @@ export function DalleIntegrationClient(): JSX.Element {
               value={defaultQuality}
               onChange={(v) => setDefaultQuality(v as Quality)}
               options={[
-                { value: 'standard', label: 'Standard ($0.04)' },
-                { value: 'hd', label: 'HD ($0.08)' },
-              ]}
-            />
-            <RadioGroup
-              label="Default style"
-              value={defaultStyle}
-              onChange={(v) => setDefaultStyle(v as Style)}
-              options={[
-                { value: 'vivid', label: 'Vivid' },
-                { value: 'natural', label: 'Natural' },
+                { value: 'low', label: 'Low (~$0.006)' },
+                { value: 'medium', label: 'Medium (~$0.05)' },
+                { value: 'high', label: 'High (~$0.21)' },
+                { value: 'auto', label: 'Auto' },
               ]}
             />
           </div>
@@ -241,7 +232,7 @@ export function DalleIntegrationClient(): JSX.Element {
               ) : (
                 <Wand2 className="mr-2 size-4" />
               )}
-              Test generation ($0.04)
+              Test generation (~$0.05 at medium)
             </Button>
           </div>
           <Button
@@ -251,7 +242,6 @@ export function DalleIntegrationClient(): JSX.Element {
                 model: model.trim(),
                 defaultSize,
                 defaultQuality,
-                defaultStyle,
                 enabled,
               })
             }

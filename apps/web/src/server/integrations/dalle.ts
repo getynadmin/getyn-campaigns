@@ -14,15 +14,24 @@ import { loadIntegration } from './credential-store';
 
 const PROVIDER = 'openai_dalle';
 
-export type DalleSize = '1024x1024' | '1792x1024' | '1024x1792';
-export type DalleQuality = 'standard' | 'hd';
+/** Sizes accepted by `gpt-image-2`. The old DALL-E 3 set
+ *  (1024x1792 / 1792x1024) is gone. */
+export type DalleSize = '1024x1024' | '1024x1536' | '1536x1024' | 'auto';
+
+/** gpt-image-2 quality enum (replaces the DALL-E 3 standard/hd pair). */
+export type DalleQuality = 'low' | 'medium' | 'high' | 'auto';
+
+/** Retained for backward-compat with any DALL-E 3 config rows the
+ *  admin may have saved before the migration. The agent doesn't send
+ *  this on gpt-image-2 calls. */
 export type DalleStyle = 'vivid' | 'natural';
 
 export interface DalleConfig {
-  /** Optional model override; defaults to dall-e-3. */
+  /** Optional model override; defaults to gpt-image-2. */
   model?: string;
   defaultSize?: DalleSize;
   defaultQuality?: DalleQuality;
+  /** Ignored on gpt-image-2; kept on the type to read legacy rows. */
   defaultStyle?: DalleStyle;
 }
 
@@ -41,20 +50,43 @@ export interface ResolvedDalle {
 }
 
 const DEFAULTS = {
-  model: 'dall-e-3',
+  model: 'gpt-image-2',
   defaultSize: '1024x1024' as DalleSize,
-  defaultQuality: 'standard' as DalleQuality,
-  defaultStyle: 'vivid' as DalleStyle,
+  defaultQuality: 'medium' as DalleQuality,
+  defaultStyle: 'vivid' as DalleStyle, // unused on gpt-image-2
 };
+
+/** Old DALL-E 3 quality values rows persisted before the gpt-image-2
+ *  migration map to the closest gpt-image-2 equivalent. */
+function migrateQuality(q: DalleQuality | string | undefined): DalleQuality {
+  if (q === 'standard') return 'medium';
+  if (q === 'hd') return 'high';
+  if (q === 'low' || q === 'medium' || q === 'high' || q === 'auto') return q;
+  return DEFAULTS.defaultQuality;
+}
+
+function migrateSize(s: DalleSize | string | undefined): DalleSize {
+  if (s === '1792x1024') return '1536x1024';
+  if (s === '1024x1792') return '1024x1536';
+  if (
+    s === '1024x1024' ||
+    s === '1024x1536' ||
+    s === '1536x1024' ||
+    s === 'auto'
+  ) {
+    return s;
+  }
+  return DEFAULTS.defaultSize;
+}
 
 async function load(): Promise<ResolvedDalle> {
   const row = await loadIntegration<DalleConfig, DalleSecrets>(PROVIDER);
   if (row && row.secrets?.apiKey) {
     return {
       apiKey: row.secrets.apiKey,
-      model: row.config.model ?? DEFAULTS.model,
-      defaultSize: row.config.defaultSize ?? DEFAULTS.defaultSize,
-      defaultQuality: row.config.defaultQuality ?? DEFAULTS.defaultQuality,
+      model: row.config.model || DEFAULTS.model,
+      defaultSize: migrateSize(row.config.defaultSize),
+      defaultQuality: migrateQuality(row.config.defaultQuality),
       defaultStyle: row.config.defaultStyle ?? DEFAULTS.defaultStyle,
       enabled: true,
       source: 'db',
@@ -79,7 +111,7 @@ export async function testDalleCredentials(args: {
   apiKey: string;
 }): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch('https://api.openai.com/v1/models/dall-e-3', {
+    const res = await fetch('https://api.openai.com/v1/models/gpt-image-2', {
       method: 'GET',
       headers: {
         authorization: `Bearer ${args.apiKey}`,

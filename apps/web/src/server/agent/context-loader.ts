@@ -326,7 +326,7 @@ export function renderSystemPrompt(args: {
       `  - If the user attached a relevant image, prefer use_attachment_in_block` +
         ` to place it directly.`,
       `  - If no relevant attachment, use generate_image_for_block to create` +
-        ` one with DALL-E.`,
+        ` one with OpenAI image generation (gpt-image-2).`,
       `  - For hero images, prefer generation over leaving a placeholder.`,
       `  - For product or business-specific imagery, ask the user to attach` +
         ` if they have a specific image; generate if they don't.`,
@@ -335,7 +335,7 @@ export function renderSystemPrompt(args: {
       `  - Write specific, descriptive prompts. Example: "Professional product` +
         ` photo of a leather backpack on a wooden desk, soft natural lighting"` +
         ` — not "a backpack".`,
-      `  - Avoid prompts that ask DALL-E to render text or logos (poor quality)` +
+      `  - Avoid prompts that ask the model to render text or logos (poor quality)` +
         ` — use use_attachment_in_block for text/logo images instead.`,
       `  - You have a budget of 3 image generations per conversation. Use` +
         ` them where they add the most value.`,

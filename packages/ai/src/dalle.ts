@@ -1,20 +1,36 @@
 /**
- * Phase 7.2 — DALL-E 3 image generation.
+ * Phase 7.2 — OpenAI image generation (gpt-image-2).
+ *
+ * NOTE: file is named `dalle` for historical reasons. OpenAI retired
+ * `dall-e-3` in 2026 and consolidated image generation under
+ * `gpt-image-2` — the request shape changed:
+ *   - `quality` enum is now low|medium|high|auto (not standard|hd)
+ *   - `style` parameter is gone (no vivid/natural)
+ *   - response is `b64_json` by default (no URL round-trip)
+ *   - new sizes: 1024x1024, 1024x1536, 1536x1024
  *
  * Thin wrapper around the REST endpoint — we don't pull the official
  * openai SDK because (a) the dep is heavy, (b) we only call one
- * endpoint, (c) the SDK's image response shape doesn't expose the
- * URL → buffer download cleanly anyway.
+ * endpoint, (c) it's trivial.
  *
- * Pricing (dall-e-3, USD per image):
- *   - standard 1024x1024            : $0.040
- *   - standard 1024x1792 / 1792x1024: $0.080
- *   - hd       1024x1024            : $0.080
- *   - hd       1024x1792 / 1792x1024: $0.120
+ * Pricing (gpt-image-2, USD per image, from OpenAI docs):
+ *   quality | 1024x1024 | non-square (1024x1536 / 1536x1024)
+ *   low     | $0.006    | $0.005
+ *   medium  | $0.053    | $0.041
+ *   high    | $0.211    | $0.165
  */
 
-export type DalleSize = '1024x1024' | '1792x1024' | '1024x1792';
-export type DalleQuality = 'standard' | 'hd';
+export type DalleSize =
+  | '1024x1024'
+  | '1024x1536'
+  | '1536x1024'
+  | 'auto';
+
+export type DalleQuality = 'low' | 'medium' | 'high' | 'auto';
+
+/** Kept in the public type for backward-compat with config rows
+ *  written by the old DALL-E 3 schema. The new API ignores it; we
+ *  drop it before sending. */
 export type DalleStyle = 'vivid' | 'natural';
 
 export interface GenerateImageArgs {
@@ -23,21 +39,21 @@ export interface GenerateImageArgs {
   model?: string;
   size?: DalleSize;
   quality?: DalleQuality;
+  /** Ignored on gpt-image-2; accepted only for backward compatibility
+   *  with persisted DALL-E 3 config rows. */
   style?: DalleStyle;
 }
 
 export interface GenerateImageResult {
-  /** PNG bytes downloaded from OpenAI's URL — caller uploads to
-   *  Supabase Storage and persists the AgentAttachment row. */
+  /** PNG bytes — decoded from the API's b64_json response. */
   imageBytes: Buffer;
-  /** OpenAI's notion of the prompt it actually ran (DALL-E 3 rewrites
-   *  prompts internally). Surface this to the user via the
-   *  "AI generated" badge tooltip so they understand what they got. */
+  /** gpt-image-2 doesn't expose a `revised_prompt` field; we echo
+   *  the user's prompt so the badge tooltip still has something to
+   *  show. */
   revisedPrompt: string;
   costUsd: number;
   size: DalleSize;
   quality: DalleQuality;
-  style: DalleStyle;
   model: string;
 }
 
@@ -52,28 +68,37 @@ export class DalleGenerationError extends Error {
   }
 }
 
+/** Compute the per-image cost. `auto` collapses to `medium` /
+ *  `1024x1024` for the estimator — the real call may pick something
+ *  else but we cost-check up front so we never blow the conversation
+ *  cap by surprise. */
 export function computeDalleCost(
   size: DalleSize,
   quality: DalleQuality,
 ): number {
-  if (quality === 'hd') {
-    return size === '1024x1024' ? 0.08 : 0.12;
-  }
-  return size === '1024x1024' ? 0.04 : 0.08;
+  const q: 'low' | 'medium' | 'high' = quality === 'auto' ? 'medium' : quality;
+  const square = size === '1024x1024' || size === 'auto';
+  if (q === 'low') return square ? 0.006 : 0.005;
+  if (q === 'medium') return square ? 0.053 : 0.041;
+  return square ? 0.211 : 0.165;
+}
+
+/** Wire-format quality — the API accepts low/medium/high/auto. */
+function wireQuality(q: DalleQuality): DalleQuality {
+  return q;
 }
 
 /**
- * Run a single DALL-E generation + download the resulting bytes.
- * Throws on any failure — callers catch and surface to the agent
- * tool result so the conversation can continue.
+ * Run a single image generation. Throws on any failure — callers
+ * catch and surface to the agent tool result so the conversation
+ * can continue.
  */
 export async function generateImage(
   args: GenerateImageArgs,
 ): Promise<GenerateImageResult> {
-  const model = args.model ?? 'dall-e-3';
+  const model = args.model ?? 'gpt-image-2';
   const size = args.size ?? '1024x1024';
-  const quality = args.quality ?? 'standard';
-  const style = args.style ?? 'vivid';
+  const quality = args.quality ?? 'medium';
 
   const res = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',
@@ -86,9 +111,7 @@ export async function generateImage(
       prompt: args.prompt,
       n: 1,
       size,
-      quality,
-      style,
-      response_format: 'url',
+      quality: wireQuality(quality),
     }),
   });
   if (!res.ok) {
@@ -102,28 +125,37 @@ export async function generateImage(
     );
   }
   const json = (await res.json()) as {
-    data: Array<{ url: string; revised_prompt?: string }>;
+    data: Array<{ b64_json?: string; url?: string; revised_prompt?: string }>;
   };
   const item = json.data[0];
-  if (!item?.url) {
+  if (!item) {
     throw new DalleGenerationError(
-      'OpenAI returned no image URL.',
+      'OpenAI returned no image data.',
       500,
-      'no_url',
+      'no_image',
     );
   }
 
-  // OpenAI's hosted URL is valid ~1h. We download immediately so the
-  // bytes are ours.
-  const dl = await fetch(item.url);
-  if (!dl.ok) {
+  let imageBytes: Buffer;
+  if (item.b64_json) {
+    imageBytes = Buffer.from(item.b64_json, 'base64');
+  } else if (item.url) {
+    const dl = await fetch(item.url);
+    if (!dl.ok) {
+      throw new DalleGenerationError(
+        `Could not download generated image: ${dl.status} ${dl.statusText}`,
+        dl.status,
+        'download_failed',
+      );
+    }
+    imageBytes = Buffer.from(await dl.arrayBuffer());
+  } else {
     throw new DalleGenerationError(
-      `Could not download generated image: ${dl.status} ${dl.statusText}`,
-      dl.status,
-      'download_failed',
+      'OpenAI returned neither b64_json nor url.',
+      500,
+      'no_image',
     );
   }
-  const imageBytes = Buffer.from(await dl.arrayBuffer());
 
   return {
     imageBytes,
@@ -131,7 +163,6 @@ export async function generateImage(
     costUsd: computeDalleCost(size, quality),
     size,
     quality,
-    style,
     model,
   };
 }

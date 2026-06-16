@@ -86,7 +86,7 @@ function cuesToPromptSuffix(cues: VisualStyleCues): string {
 export const generateImageForBlockTool = defineTool({
   name: 'generate_image_for_block',
   description:
-    'Generate a new image with DALL-E 3 and place it into a block image placeholder. Use specific, descriptive prompts (e.g. "Professional product photo of a leather backpack on a wooden desk, soft natural lighting") — not vague ones. Avoid prompts asking DALL-E to render text or logos. Optionally pass a referenceAttachmentId from the conversation manifest to inherit the visual style of an attached image. Budget: 3 generations per conversation.',
+    'Generate a new image with OpenAI image generation (gpt-image-2) and place it into a block image placeholder. Use specific, descriptive prompts (e.g. "Professional product photo of a leather backpack on a wooden desk, soft natural lighting") — not vague ones. Avoid prompts asking the model to render text or logos. Optionally pass a referenceAttachmentId from the conversation manifest to inherit the visual style of an attached image. Budget: 3 generations per conversation.',
   inputSchema: z.object({
     blockIndex: z.number().int().min(0),
     placeholderKey: z.string().min(1),
@@ -154,7 +154,7 @@ export const generateImageForBlockTool = defineTool({
       return {
         ok: false,
         error:
-          'DALL-E is not configured or not enabled for this workspace. An admin can turn it on in Admin → Global Integrations → AI LLMs.',
+          'OpenAI image generation is not configured or not enabled for this workspace. An admin can turn it on in Admin → Global Integrations → AI LLMs.',
       };
     }
 
@@ -245,15 +245,14 @@ export const generateImageForBlockTool = defineTool({
         model: dalle.model,
         size: dalle.defaultSize,
         quality: dalle.defaultQuality,
-        style: dalle.defaultStyle,
       });
     } catch (err) {
       if (err instanceof DalleGenerationError) {
-        return { ok: false, error: `DALL-E failed: ${err.message}` };
+        return { ok: false, error: `Image generation failed: ${err.message}` };
       }
       return {
         ok: false,
-        error: err instanceof Error ? err.message : 'DALL-E call failed.',
+        error: err instanceof Error ? err.message : 'Image generation call failed.',
       };
     }
 
@@ -309,13 +308,12 @@ export const generateImageForBlockTool = defineTool({
               revisedPrompt: generation.revisedPrompt,
               dalleSize: generation.size,
               dalleQuality: generation.quality,
-              dalleStyle: generation.style,
               dalleModel: generation.model,
               referenceAttachmentId: input.referenceAttachmentId ?? null,
             },
           },
           parsedAt: new Date(),
-          aiSummary: `DALL-E generated image. Prompt: "${input.prompt}".`,
+          aiSummary: `AI-generated image (${generation.model}). Prompt: "${input.prompt}".`,
           aiSummaryModel: generation.model,
           aiSummaryGeneratedAt: new Date(),
           // Pinned (NULL expiresAt) — this image is going into the

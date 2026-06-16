@@ -717,16 +717,19 @@ const anthropicRouter = createAdminRouter({
 // DALL-E (OpenAI Image) — provider='openai_dalle'
 // =====================================================================
 
-const dalleSizeSchema = z.enum(['1024x1024', '1792x1024', '1024x1792']);
-const dalleQualitySchema = z.enum(['standard', 'hd']);
-const dalleStyleSchema = z.enum(['vivid', 'natural']);
+const dalleSizeSchema = z.enum([
+  '1024x1024',
+  '1024x1536',
+  '1536x1024',
+  'auto',
+]);
+const dalleQualitySchema = z.enum(['low', 'medium', 'high', 'auto']);
 
 const dalleUpdateSchema = z.object({
   apiKey: z.string().max(2_000).default(''),
   model: z.string().trim().max(120).default(''),
   defaultSize: dalleSizeSchema.default('1024x1024'),
-  defaultQuality: dalleQualitySchema.default('standard'),
-  defaultStyle: dalleStyleSchema.default('vivid'),
+  defaultQuality: dalleQualitySchema.default('medium'),
   enabled: z.boolean(),
 });
 
@@ -741,9 +744,16 @@ const dalleRouter = createAdminRouter({
       enabled: row?.enabled ?? false,
       config: {
         model: row?.config.model ?? '',
-        defaultSize: row?.config.defaultSize ?? ('1024x1024' as const),
-        defaultQuality: row?.config.defaultQuality ?? ('standard' as const),
-        defaultStyle: row?.config.defaultStyle ?? ('vivid' as const),
+        defaultSize: (row?.config.defaultSize ?? '1024x1024') as
+          | '1024x1024'
+          | '1024x1536'
+          | '1536x1024'
+          | 'auto',
+        defaultQuality: (row?.config.defaultQuality ?? 'medium') as
+          | 'low'
+          | 'medium'
+          | 'high'
+          | 'auto',
       },
       hasSecrets: row?.hasSecrets ?? false,
       lastTestedAt: row?.lastTestedAt ?? null,
@@ -765,7 +775,6 @@ const dalleRouter = createAdminRouter({
           ...(input.model ? { model: input.model } : {}),
           defaultSize: input.defaultSize,
           defaultQuality: input.defaultQuality,
-          defaultStyle: input.defaultStyle,
         };
         const incomingKey = input.apiKey.trim();
         const secretsPayload: Record<string, unknown> | null =
@@ -843,13 +852,13 @@ const dalleRouter = createAdminRouter({
           authorization: `Bearer ${creds.apiKey}`,
         },
         body: JSON.stringify({
+          // gpt-image-2 doesn't accept the old `style` or
+          // `response_format` fields — it always returns b64_json.
           model: creds.model,
           prompt: 'a simple geometric pattern, minimalist, soft pastel colors',
           n: 1,
           size: creds.defaultSize,
           quality: creds.defaultQuality,
-          style: creds.defaultStyle,
-          response_format: 'url',
         }),
       });
       if (!res.ok) {
@@ -862,25 +871,31 @@ const dalleRouter = createAdminRouter({
         throw new TRPCError({ code: 'BAD_REQUEST', message: error });
       }
       const json = (await res.json()) as {
-        data: Array<{ url: string; revised_prompt?: string }>;
+        data: Array<{ b64_json?: string; url?: string }>;
       };
-      const url = json.data[0]?.url;
+      const item = json.data[0];
+      // Return a data: URL so the admin UI can render inline without
+      // a Storage round-trip. The test image is throwaway — we don't
+      // persist it.
+      let url: string | null = null;
+      if (item?.b64_json) {
+        url = `data:image/png;base64,${item.b64_json}`;
+      } else if (item?.url) {
+        url = item.url;
+      }
       if (!url) {
         await recordTestResult({
           provider: 'openai_dalle',
           ok: false,
-          error: 'OpenAI returned no image URL.',
+          error: 'OpenAI returned no image data.',
         });
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
-          message: 'OpenAI returned no image URL.',
+          message: 'OpenAI returned no image data.',
         });
       }
       await recordTestResult({ provider: 'openai_dalle', ok: true });
-      return {
-        url,
-        revisedPrompt: json.data[0]?.revised_prompt ?? null,
-      };
+      return { url, revisedPrompt: null as string | null };
     } catch (err) {
       if (err instanceof TRPCError) throw err;
       const error = err instanceof Error ? err.message : 'Network error';

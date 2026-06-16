@@ -10,7 +10,7 @@ export default function AdminAiLlmsPage(): JSX.Element {
         <h1 className="font-display text-xl font-semibold">AI LLMs</h1>
         <p className="text-sm text-muted-foreground">
           Platform-wide AI credentials. Powers the Campaign Agent (chat),
-          template drafting, attachment summarization, and DALL-E image
+          template drafting, attachment summarization, and OpenAI image
           generation across every tenant — one key per provider, one bill.
           Tenants don&rsquo;t see or manage this.
         </p>
@@ -25,7 +25,7 @@ export default function AdminAiLlmsPage(): JSX.Element {
 
       <section className="space-y-3">
         <h2 className="font-display text-base font-semibold">
-          Image Generation (DALL-E 3)
+          Image Generation (gpt-image-2)
         </h2>
         <DalleIntegrationClient />
       </section>
