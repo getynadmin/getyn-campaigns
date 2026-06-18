@@ -53,30 +53,35 @@ if (process.env.NODE_ENV !== 'production') {
  * acceptance) where the tenant context does not yet exist.
  */
 export async function withTenant<T>(
-  tenantId: string | null,
+  _tenantId: string | null,
   fn: (tx: PrismaClient) => Promise<T>,
-  opts?: {
-    /** Per-tx timeout in ms. Defaults to Prisma's 5s — fine for
-     *  request-scoped reads/writes but too low for bulk import
-     *  batches that fire hundreds of queries inside one tx. */
+  _opts?: {
     timeout?: number;
-    /** Time to wait for a connection before bailing. Defaults to 2s.
-     *  Bump alongside `timeout` for long-running batches. */
     maxWait?: number;
   },
 ): Promise<T> {
-  return prisma.$transaction(
-    async (tx) => {
-      if (tenantId) {
-        await tx.$executeRawUnsafe(
-          `SELECT set_config('app.current_tenant_id', $1, true)`,
-          tenantId,
-        );
-      }
-      return fn(tx as unknown as PrismaClient);
-    },
-    opts,
-  );
+  // Phase 7.2 follow-up — withTenant used to open a Prisma
+  // $transaction and SET LOCAL app.current_tenant_id, which RLS
+  // policies on tenant-scoped tables read for row authorization.
+  //
+  // That broke catastrophically on Supabase's Transaction Pooler
+  // (port 6543): pgbouncer doesn't pin connections within an
+  // interactive tx, so SET LOCAL gets dropped between statements
+  // and RLS silently filters every row out. Switching to Session
+  // Pooler fixes the tx semantics but exhausts Supabase's session
+  // cap under Vercel's serverless fan-out (EMAXCONNSESSION).
+  //
+  // Disabling RLS database-wide (migration
+  // `disable_rls_app_layer_enforcement`) removes the only thing
+  // that needed the session var. Every Prisma query in the codebase
+  // already includes `tenantId` in its WHERE/data clauses, so
+  // tenant scoping continues to hold at the app layer.
+  //
+  // The wrapper is kept as a typed pass-through so the hundreds of
+  // existing call sites keep compiling. tenantId is preserved as a
+  // parameter so future code can rely on the contract; opts is
+  // retained for the same reason but no longer needed.
+  return fn(prisma);
 }
 
 /**
