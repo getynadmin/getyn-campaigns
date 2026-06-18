@@ -1,4 +1,4 @@
-import { nanoid } from 'nanoid';
+import cuid from 'cuid';
 import Papa from 'papaparse';
 import type { Job } from 'bullmq';
 
@@ -437,10 +437,13 @@ async function processBatch(input: BatchInput): Promise<BatchResult> {
             ext: v.ext,
             // Pre-generate the id so downstream createMany calls
             // (ContactEvent, ContactTag) can reference it without a
-            // round-trip back to fetch newly-inserted ids. nanoid is
-            // opaque to Prisma — the schema's @default(cuid()) only
-            // fires when we don't provide an id.
-            id: nanoid(),
+            // round-trip back to fetch newly-inserted ids. Use cuid()
+            // to match the schema's @default(cuid()) format —
+            // nanoid was previously used here and produced IDs that
+            // failed Zod's strict cuid validation in the web API,
+            // breaking cursor pagination and individual-record reads
+            // for ~20k bulk-imported contacts.
+            id: cuid(),
           });
         }
       }

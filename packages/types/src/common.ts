@@ -32,4 +32,27 @@ export const tenantSlugSchema = z
 
 export const emailSchema = z.string().email();
 
-export const cuidSchema = z.string().cuid();
+/**
+ * Permissive ID validator.
+ *
+ * Originally `z.string().cuid()` — strict cuid (`c` + 24 lowercase
+ * chars). Switched to a broader URL-safe charset + length range so
+ * we also accept nanoid-format IDs (21 chars, mixed case, `_`/`-`)
+ * produced by bulk-insert paths in the worker. The DB column is
+ * just `TEXT`, so format consistency is an app-layer concern only
+ * — and strict cuid validation was silently rejecting cursor
+ * pagination and individual-record reads for ~20k rows imported
+ * via the worker's createMany path.
+ *
+ * The character set (`[A-Za-z0-9_-]`) and length range (15–40) cover
+ * cuid (25), cuid2 (variable), nanoid default (21), and uuid v4
+ * with dashes (36).
+ */
+export const cuidSchema = z
+  .string()
+  .min(15)
+  .max(40)
+  .regex(
+    /^[A-Za-z0-9_-]+$/,
+    'ID must be 15-40 URL-safe characters (letters, digits, _, -)',
+  );
