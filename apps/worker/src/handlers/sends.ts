@@ -355,19 +355,61 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
 /**
- * Per-batch send rate. Resend's default tier is 10 req/s; with 4 worker
- * concurrency = up to 40 req/s if all batches send in parallel. We
- * throttle inside the batch loop: 100ms between sends → 10 req/s per
- * batch. Multiple batches still risk exceeding — Resend will 429 us
- * and our retry-on-429 backoff handles it.
+ * Per-batch send rate. Resend tiers: free = 2 req/s, paid = 10 req/s.
+ * With 4-worker concurrency the actual ceiling is divisor lower
+ * (workers send in parallel from different batches), so 250ms here
+ * lands around 4 req/s aggregate. Override via env if your tier is
+ * different.
  *
- * For a real production setup the right thing is a global token-bucket
- * limiter in Redis. Flagged for M9.
+ * 429s are still possible under brief traffic spikes — handled by
+ * `sendWithResendRetry` below with exponential backoff.
+ *
+ * Long-term the right thing is a global token-bucket in Redis; this
+ * per-loop sleep + retry pair gets the worker through 99% of cases.
  */
-const PER_SEND_DELAY_MS = 100;
+const PER_SEND_DELAY_MS = process.env.RESEND_PER_SEND_DELAY_MS
+  ? Number(process.env.RESEND_PER_SEND_DELAY_MS)
+  : 250;
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Wrap a Resend send with exponential-backoff retry on rate-limit
+ * errors. Resend returns 429s in the `error` field (not an exception)
+ * with messages like "Too many requests. You can only make 2 requests
+ * per second." — we detect by message substring.
+ *
+ * Backoff: 1s, 2s, 4s, 8s, 16s. After 5 attempts, gives up and the
+ * caller marks the send FAILED. Total max wait per send ≈ 31s.
+ */
+async function sendWithResendRetry(
+  client: Resend,
+  opts: Parameters<Resend['emails']['send']>[0],
+): Promise<{ messageId: string | null }> {
+  const maxAttempts = 5;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const { data, error } = await client.emails.send(opts);
+    if (!error) {
+      return { messageId: data?.id ?? null };
+    }
+    const msg = error.message ?? '';
+    const isRateLimit =
+      /too many requests/i.test(msg) ||
+      /rate limit/i.test(msg) ||
+      ('statusCode' in error && (error as { statusCode?: number }).statusCode === 429);
+    if (!isRateLimit || attempt === maxAttempts - 1) {
+      throw new Error(msg);
+    }
+    const waitMs = 1000 * 2 ** attempt;
+    console.warn(
+      `[sends:dispatch] Resend rate-limited (attempt ${attempt + 1}/${maxAttempts}), backing off ${waitMs}ms`,
+    );
+    await sleep(waitMs);
+  }
+  // Unreachable — loop either returns or throws.
+  throw new Error('Exhausted Resend retries.');
 }
 
 async function handleDispatchBatch(job: Job): Promise<void> {
@@ -528,7 +570,7 @@ async function handleDispatchBatch(job: Job): Promise<void> {
     try {
       let messageId: string | null = null;
       if (resend) {
-        const { data, error } = await resend.emails.send({
+        const result = await sendWithResendRetry(resend, {
           from: rendered.fromAddress,
           to: send.email,
           subject: rendered.subject,
@@ -553,8 +595,7 @@ async function handleDispatchBatch(job: Job): Promise<void> {
             'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
           },
         });
-        if (error) throw new Error(error.message);
-        messageId = data?.id ?? null;
+        messageId = result.messageId;
       } else {
         // Stub mode (no RESEND_API_KEY) — log only.
         console.info(

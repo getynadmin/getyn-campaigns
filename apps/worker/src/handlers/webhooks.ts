@@ -261,13 +261,26 @@ async function bumpCachedRate(
     if (!policy) return;
     if (policy.cachedSendCount30d <= 0) return;
 
+    // Clamp helper. cachedSendCount30d only updates from the hourly
+    // drift-correct cron, but bounces/complaints increment per-event.
+    // Between cron runs the denominator can be hours-stale: if 10k
+    // emails blast out and 1k bounce while the cached count is still
+    // 10 (from before the blast), each bounce gives newCount/10 — and
+    // rates like 100.0 (= 10000%) end up in suspension messages.
+    //
+    // Clamping to [0, 1] keeps the suspension decision honest (any
+    // rate above the threshold still trips it) while making the
+    // surfaced number physically meaningful. The drift-correct cron
+    // restores the precise rate within the hour.
+    const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+
     if (kind === 'bounce') {
       const newCount =
         Math.round(policy.cachedBounceRate30d * policy.cachedSendCount30d) + 1;
       await tx.tenantSendingPolicy.update({
         where: { tenantId },
         data: {
-          cachedBounceRate30d: newCount / policy.cachedSendCount30d,
+          cachedBounceRate30d: clamp01(newCount / policy.cachedSendCount30d),
           cachedRatesUpdatedAt: new Date(),
         },
       });
@@ -279,7 +292,7 @@ async function bumpCachedRate(
       await tx.tenantSendingPolicy.update({
         where: { tenantId },
         data: {
-          cachedComplaintRate30d: newCount / policy.cachedSendCount30d,
+          cachedComplaintRate30d: clamp01(newCount / policy.cachedSendCount30d),
           cachedRatesUpdatedAt: new Date(),
         },
       });
