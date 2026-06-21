@@ -11,9 +11,13 @@ import { z } from 'zod';
 
 import { Role } from '@getyn/db';
 
+import { cuidSchema } from '@getyn/types';
+
 import {
   cleanupTenantContacts,
   deepScanTenantContacts,
+  getCleanupRunDetail,
+  listCleanupRuns,
   scanTenantContacts,
 } from '@/server/audience/email-verifier';
 
@@ -53,7 +57,7 @@ export const emailVerifierRouter = createTRPCRouter({
     .use(enforceRole(Role.OWNER, Role.ADMIN))
     .input(
       z.object({
-        categories: z.array(categorySchema).min(1).max(5),
+        categories: z.array(categorySchema).min(1).max(6),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -61,6 +65,25 @@ export const emailVerifierRouter = createTRPCRouter({
       return cleanupTenantContacts({
         tenantId,
         categories: input.categories,
+        runByUserId: ctx.user.id,
+      });
+    }),
+
+  history: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .query(async ({ ctx }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return listCleanupRuns(tenantId, 20);
+    }),
+
+  runDetail: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(z.object({ runId: cuidSchema }))
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return getCleanupRunDetail({
+        tenantId,
+        runId: input.runId,
       });
     }),
 });

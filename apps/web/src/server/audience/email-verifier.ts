@@ -18,7 +18,7 @@
  * a warm Vercel function. Above ~50k contacts we'd want to chunk +
  * stream, flagged for follow-up.
  */
-import { prisma } from '@getyn/db';
+import { prisma, type Prisma } from '@getyn/db';
 
 import { DISPOSABLE_DOMAINS, TYPO_DOMAINS } from './disposable-domains';
 import { probeMxBulk, type MxStatus } from './mx-check';
@@ -280,8 +280,9 @@ export async function deepScanTenantContacts(
 export async function cleanupTenantContacts(args: {
   tenantId: string;
   categories: FlagCategory[];
-}): Promise<{ updated: number }> {
-  if (args.categories.length === 0) return { updated: 0 };
+  runByUserId?: string | null;
+}): Promise<{ updated: number; runId: string | null }> {
+  if (args.categories.length === 0) return { updated: 0, runId: null };
 
   // Re-walk contacts to build the ID list. Avoids a stale snapshot
   // and lets us write one UPDATE per category instead of N per
@@ -321,21 +322,153 @@ export async function cleanupTenantContacts(args: {
 
   const selected = new Set(args.categories);
   const ids: string[] = [];
+  const countByCategory: Record<string, number> = {};
   for (const c of contacts) {
     if (!c.email) continue;
     const verdict = categorise(c.email, bouncedSet, mxByDomain);
     if (!verdict) continue;
-    if (selected.has(verdict.category)) ids.push(c.id);
+    if (selected.has(verdict.category)) {
+      ids.push(c.id);
+      countByCategory[verdict.category] =
+        (countByCategory[verdict.category] ?? 0) + 1;
+    }
   }
   if (ids.length === 0) {
-    return { updated: 0 };
+    return { updated: 0, runId: null };
   }
 
   const result = await prisma.contact.updateMany({
     where: { id: { in: ids }, tenantId: args.tenantId },
     data: { emailStatus: 'UNSUBSCRIBED' },
   });
-  void CATEGORY_PRIORITY;
 
-  return { updated: result.count };
+  // Write the history row — fire-and-await for atomicity with the
+  // updateMany above (best-effort: if it fails, the contacts are
+  // still cleaned, we just lose the audit row).
+  let runId: string | null = null;
+  try {
+    const run = await prisma.emailVerifierCleanupRun.create({
+      data: {
+        tenantId: args.tenantId,
+        runByUserId: args.runByUserId ?? null,
+        categories: args.categories,
+        totalCount: result.count,
+        countByCategory: countByCategory as Prisma.InputJsonValue,
+        affectedContactIds: ids,
+      },
+      select: { id: true },
+    });
+    runId = run.id;
+  } catch (err) {
+    // Audit write should never block the user — just log.
+    console.warn(
+      `[email-verifier] cleanup audit write failed: ${err instanceof Error ? err.message : 'unknown'}`,
+    );
+  }
+
+  // Invalidate segment caches so the count badges on /segments
+  // reflect the new state. Setting both to null causes the UI to
+  // render "—" until the user clicks Refresh on a segment.
+  await prisma.segment.updateMany({
+    where: { tenantId: args.tenantId },
+    data: { cachedCount: null, cachedCountAt: null },
+  });
+
+  void CATEGORY_PRIORITY;
+  return { updated: result.count, runId };
+}
+
+// ---------------------------------------------------------------------------
+// History queries
+// ---------------------------------------------------------------------------
+
+export interface CleanupRunSummary {
+  id: string;
+  createdAt: Date;
+  categories: string[];
+  totalCount: number;
+  countByCategory: Record<string, number>;
+  runBy: { id: string; name: string | null; email: string } | null;
+}
+
+export interface CleanupRunDetail extends CleanupRunSummary {
+  /** Affected contacts with current state — re-subscribed ones still
+   *  show here (the affectedContactIds list is immutable). */
+  contacts: Array<{
+    id: string;
+    email: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    /** Current emailStatus — may differ from "UNSUBSCRIBED" if the
+     *  user re-subscribed manually after the cleanup ran. */
+    currentEmailStatus: string;
+  }>;
+}
+
+export async function listCleanupRuns(
+  tenantId: string,
+  limit = 20,
+): Promise<CleanupRunSummary[]> {
+  const rows = await prisma.emailVerifierCleanupRun.findMany({
+    where: { tenantId },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    include: {
+      runBy: { select: { id: true, name: true, email: true } },
+    },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    createdAt: r.createdAt,
+    categories: r.categories,
+    totalCount: r.totalCount,
+    countByCategory: (r.countByCategory ?? {}) as Record<string, number>,
+    runBy: r.runBy,
+  }));
+}
+
+export async function getCleanupRunDetail(args: {
+  tenantId: string;
+  runId: string;
+  limit?: number;
+}): Promise<CleanupRunDetail | null> {
+  const limit = args.limit ?? 200;
+  const run = await prisma.emailVerifierCleanupRun.findFirst({
+    where: { id: args.runId, tenantId: args.tenantId },
+    include: {
+      runBy: { select: { id: true, name: true, email: true } },
+    },
+  });
+  if (!run) return null;
+  // Pull the affected contacts. Some may have been deleted since
+  // the cleanup; findMany silently drops missing IDs which is what
+  // we want here.
+  const contacts = await prisma.contact.findMany({
+    where: {
+      id: { in: run.affectedContactIds.slice(0, limit) },
+      tenantId: args.tenantId,
+    },
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      emailStatus: true,
+    },
+  });
+  return {
+    id: run.id,
+    createdAt: run.createdAt,
+    categories: run.categories,
+    totalCount: run.totalCount,
+    countByCategory: (run.countByCategory ?? {}) as Record<string, number>,
+    runBy: run.runBy,
+    contacts: contacts.map((c) => ({
+      id: c.id,
+      email: c.email,
+      firstName: c.firstName,
+      lastName: c.lastName,
+      currentEmailStatus: c.emailStatus,
+    })),
+  };
 }

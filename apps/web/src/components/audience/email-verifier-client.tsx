@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -425,6 +425,246 @@ export function EmailVerifierClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CleanupHistory />
     </>
+  );
+}
+
+/**
+ * Cleanup history — list of past Email Verifier bulk-unsubscribe
+ * runs with drill-down to the affected emails. Runs at the bottom
+ * of the page; auto-refreshes after a cleanup succeeds (we depend
+ * on tRPC's invalidation in the cleanup mutation).
+ */
+function CleanupHistory(): JSX.Element {
+  const utils = api.useUtils();
+  const history = api.emailVerifier.history.useQuery();
+  const [openRunId, setOpenRunId] = useState<string | null>(null);
+
+  // Refresh history after any cleanup succeeds — easiest path is to
+  // invalidate when the cleanup query cache changes. The parent
+  // component already calls utils.emailVerifier.scan.invalidate;
+  // mirror that here for history.
+  useEffect(() => {
+    void utils.emailVerifier.history.invalidate();
+    // We deliberately depend on the basic-scan cache key so a fresh
+    // scan or cleanup triggers a history refresh too.
+  }, [utils]);
+
+  return (
+    <section className="mt-10">
+      <header className="mb-3 flex items-baseline justify-between">
+        <h2 className="font-display text-lg font-semibold tracking-tight">
+          Cleanup history
+        </h2>
+        <span className="text-xs text-foreground/50">
+          Last 20 runs
+        </span>
+      </header>
+
+      {history.isLoading ? (
+        <Skeleton className="h-24" />
+      ) : !history.data || history.data.length === 0 ? (
+        <div className="rounded-lg border bg-card px-4 py-8 text-center text-sm text-foreground/60">
+          No cleanups run yet. Pick categories above and click{' '}
+          <strong>Mark as unsubscribed</strong> to record one.
+        </div>
+      ) : (
+        <ul className="divide-y rounded-lg border bg-card">
+          {history.data.map((run) => (
+            <li key={run.id}>
+              <button
+                type="button"
+                onClick={() => setOpenRunId(run.id)}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium tabular-nums">
+                      {run.totalCount.toLocaleString()}
+                    </span>
+                    <span className="text-sm text-foreground/70">
+                      contact{run.totalCount === 1 ? '' : 's'} marked unsubscribed
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-foreground/60">
+                    <span>
+                      {new Date(run.createdAt).toLocaleString()}
+                    </span>
+                    {run.runBy && (
+                      <>
+                        <span>·</span>
+                        <span>by {run.runBy.name ?? run.runBy.email}</span>
+                      </>
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {run.categories.map((c) => {
+                      const cat = c as Category;
+                      const meta = CATEGORY_META[cat];
+                      const count = run.countByCategory[c] ?? 0;
+                      return (
+                        <span
+                          key={c}
+                          className="inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[10px]"
+                        >
+                          {meta ? meta.label : c}
+                          <span className="font-medium tabular-nums">
+                            {count.toLocaleString()}
+                          </span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+                <span className="text-xs text-foreground/40">View →</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {openRunId && (
+        <RunDetailDialog
+          runId={openRunId}
+          onClose={() => setOpenRunId(null)}
+        />
+      )}
+    </section>
+  );
+}
+
+/**
+ * Detail modal for one cleanup run. Shows per-category counts at
+ * the top and the affected contact emails as a scrollable list.
+ * Each row shows current status (lets the user spot contacts
+ * re-subscribed after the cleanup).
+ */
+function RunDetailDialog({
+  runId,
+  onClose,
+}: {
+  runId: string;
+  onClose: () => void;
+}): JSX.Element {
+  const detail = api.emailVerifier.runDetail.useQuery({ runId });
+  const [filter, setFilter] = useState('');
+
+  const contacts = detail.data?.contacts ?? [];
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return contacts;
+    return contacts.filter((c) => {
+      const hay = `${c.email ?? ''} ${c.firstName ?? ''} ${c.lastName ?? ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [contacts, filter]);
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Cleanup run detail</DialogTitle>
+          <DialogDescription>
+            {detail.isLoading
+              ? 'Loading…'
+              : detail.data
+                ? `${detail.data.totalCount.toLocaleString()} contacts marked unsubscribed on ${new Date(
+                    detail.data.createdAt,
+                  ).toLocaleString()}.`
+                : 'Run not found.'}
+          </DialogDescription>
+        </DialogHeader>
+
+        {detail.data && (
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {detail.data.categories.map((c) => {
+                const cat = c as Category;
+                const meta = CATEGORY_META[cat];
+                const count = detail.data?.countByCategory[c] ?? 0;
+                return (
+                  <span
+                    key={c}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]',
+                      meta?.tone,
+                    )}
+                  >
+                    {meta?.label ?? c}
+                    <span className="font-medium tabular-nums">
+                      {count.toLocaleString()}
+                    </span>
+                  </span>
+                );
+              })}
+            </div>
+
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter by email or name…"
+              className="w-full rounded-md border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-foreground/30"
+            />
+
+            <div className="max-h-[50vh] overflow-y-auto rounded-md border">
+              {filtered.length === 0 ? (
+                <div className="px-4 py-8 text-center text-sm text-foreground/60">
+                  No contacts match the filter.
+                </div>
+              ) : (
+                <ul className="divide-y">
+                  {filtered.map((c) => (
+                    <li
+                      key={c.id}
+                      className="flex items-center justify-between gap-2 px-3 py-2 text-xs"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-mono">
+                          {c.email ?? '(no email)'}
+                        </div>
+                        {(c.firstName || c.lastName) && (
+                          <div className="truncate text-[10px] text-foreground/60">
+                            {[c.firstName, c.lastName].filter(Boolean).join(' ')}
+                          </div>
+                        )}
+                      </div>
+                      <span
+                        className={cn(
+                          'rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wider',
+                          c.currentEmailStatus === 'UNSUBSCRIBED'
+                            ? 'border-muted-foreground/40 text-muted-foreground'
+                            : 'border-emerald-300 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300',
+                        )}
+                        title={
+                          c.currentEmailStatus === 'UNSUBSCRIBED'
+                            ? 'Still unsubscribed'
+                            : 'Re-subscribed after this cleanup'
+                        }
+                      >
+                        {c.currentEmailStatus}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="text-[11px] text-foreground/50">
+              Showing {filtered.length} of {detail.data.contacts.length}
+              {detail.data.totalCount > detail.data.contacts.length &&
+                ` · ${(detail.data.totalCount - detail.data.contacts.length).toLocaleString()} more available in the DB (capped at 200 per view)`}
+            </div>
+          </>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

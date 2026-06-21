@@ -232,6 +232,7 @@ model User {
   importsCreated        ImportJob[]     @relation("ImportsCreatedBy")
   campaignsCreated      Campaign[]      @relation("CampaignsCreatedBy")
   emailTemplatesCreated EmailTemplate[] @relation("EmailTemplatesCreatedBy")
+  emailVerifierRuns     EmailVerifierCleanupRun[] @relation("EmailVerifierRunsBy")
 
   // Phase 4 backrelations
   whatsAppTemplatesCreated      WhatsAppTemplate[]     @relation("WhatsAppTemplatesCreatedBy")
@@ -321,6 +322,7 @@ model Tenant {
   agentConversations  AgentConversation[]
   agentAttachments    AgentAttachment[]
   proposedImportPlans ProposedImportPlan[]
+  emailVerifierRuns   EmailVerifierCleanupRun[]
 
   @@index([slug])
 }
@@ -1956,4 +1958,32 @@ model ProposedImportPlan {
   producedImportJob ImportJob?        @relation(fields: [producedImportJobId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, status])
+}
+
+/// Email Verifier cleanup run history. One row per bulk
+/// mark-as-unsubscribed action; the UI surfaces these as a list with
+/// drill-down so users can re-view which addresses were affected.
+///
+/// affectedContactIds is a TEXT[] — simplest possible storage. A
+/// 100k-row cleanup lands at ~2.5MB which Postgres handles fine.
+/// If we ever cross that we'd promote to a join table.
+model EmailVerifierCleanupRun {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  runByUserId        String?
+  /// FlagCategory values: INVALID_SYNTAX, ALREADY_BOUNCED,
+  /// TYPO_SUSPICIOUS, DISPOSABLE, ROLE_BASED, DEAD_DOMAIN.
+  categories         String[]
+  totalCount         Int      @default(0)
+  /// { [FlagCategory]: number }. Not a strict enum-keyed object
+  /// because Json doesn't enforce it; the verifier service writes
+  /// canonical keys.
+  countByCategory    Json     @default("{}")
+  affectedContactIds String[]
+  createdAt          DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  runBy  User?  @relation("EmailVerifierRunsBy", fields: [runByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt(sort: Desc)])
 }
