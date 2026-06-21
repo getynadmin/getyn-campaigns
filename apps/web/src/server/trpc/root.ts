@@ -1,5 +1,6 @@
 import { agentRouter } from './routers/agent';
 import { agentAttachmentsRouter } from './routers/agent-attachments';
+import { emailVerifierRouter } from './routers/email-verifier';
 import { aiRouter } from './routers/ai';
 import { authRouter } from './routers/auth';
 import { campaignsRouter } from './routers/campaigns';
@@ -61,6 +62,8 @@ export const appRouter = createTRPCRouter({
   agent: agentRouter,
   // Phase 7.1 — attachment listing + signed-URL minting
   agentAttachments: agentAttachmentsRouter,
+  // List-quality scanner under Audience → Email verifier
+  emailVerifier: emailVerifierRouter,
 });
 
 export type AppRouter = typeof appRouter;

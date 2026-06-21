@@ -10,6 +10,7 @@ import {
   ChevronsUpDown,
   FileText,
   Filter,
+  MailCheck,
   LayoutDashboard,
   LogOut,
   type LucideIcon,
@@ -103,6 +104,11 @@ function buildSections(slug: string): SidebarSection[] {
         { href: t('/contacts'), label: 'Contacts', icon: Users },
         { href: t('/segments'), label: 'Segments', icon: Filter },
         { href: t('/suppression'), label: 'Suppression', icon: ShieldOff },
+        {
+          href: t('/audience/email-verifier'),
+          label: 'Email Verifier',
+          icon: MailCheck,
+        },
       ],
     },
     {
