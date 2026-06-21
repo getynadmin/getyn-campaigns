@@ -5,11 +5,16 @@ import Link from 'next/link';
 import {
   ArrowRight,
   ChevronDown,
+  Copy,
+  Loader2,
   Mail,
   MessageSquare,
+  MoreHorizontal,
   Plus,
   Search,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 
 import type { CampaignStatusValue } from '@getyn/types';
 
@@ -52,11 +57,24 @@ export function CampaignsListClient({
 }): JSX.Element {
   const [status, setStatus] = useState<CampaignStatusValue | 'ALL'>('ALL');
   const [rawSearch, setRawSearch] = useState('');
+  const router = useRouter();
+  const utils = api.useUtils();
 
   const { data, isLoading } = api.campaign.list.useQuery({
     status: status === 'ALL' ? undefined : status,
     search: rawSearch || undefined,
     limit: 50,
+  });
+
+  const duplicate = api.campaign.duplicate.useMutation({
+    onSuccess: (res) => {
+      toast.success('Duplicated as a fresh DRAFT.');
+      void utils.campaign.list.invalidate();
+      // Drop the user straight into the copy so they can rename /
+      // tweak / re-schedule.
+      router.push(`/t/${tenantSlug}/campaigns/${res.id}`);
+    },
+    onError: (err) => toast.error(err.message ?? 'Could not duplicate.'),
   });
 
   return (
@@ -160,11 +178,16 @@ export function CampaignsListClient({
               const ec = row.emailCampaign;
               const abEnabled =
                 ec?.abTest && (ec.abTest as { enabled?: boolean }).enabled;
+              const dupPending =
+                duplicate.isPending && duplicate.variables?.id === row.id;
               return (
-                <li key={row.id}>
+                <li
+                  key={row.id}
+                  className="flex items-center transition-colors hover:bg-muted/40"
+                >
                   <Link
                     href={`/t/${tenantSlug}/campaigns/${row.id}`}
-                    className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-muted/40"
+                    className="flex flex-1 items-center gap-4 px-4 py-3"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -199,6 +222,36 @@ export function CampaignsListClient({
                     </p>
                     <ArrowRight className="size-4 text-muted-foreground" />
                   </Link>
+                  {canCreate ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="mr-2"
+                          aria-label="Row actions"
+                          disabled={dupPending}
+                        >
+                          {dupPending ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <MoreHorizontal className="size-4" />
+                          )}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuItem
+                          onSelect={(e) => {
+                            e.preventDefault();
+                            duplicate.mutate({ id: row.id });
+                          }}
+                        >
+                          <Copy className="mr-2 size-4" />
+                          Duplicate
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : null}
                 </li>
               );
             })}

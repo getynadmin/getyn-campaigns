@@ -511,6 +511,110 @@ export const campaignsRouter = createTRPCRouter({
       return { ok: true as const, sentTo: input.recipients.length };
     }),
 
+  /**
+   * Duplicate any campaign (DRAFT, SCHEDULED, SENDING, SENT, etc.)
+   * as a fresh DRAFT. Copies content the user authored — name,
+   * subject, design, copy, segment, sending domain — but leaves
+   * everything send-related blank: no scheduledAt, no sentAt, no
+   * CampaignSend rows, no events, no A/B variants. The user re-edits
+   * what they want and re-schedules.
+   *
+   * Counts against the plan's CAMPAIGNS_PER_MONTH metric just like a
+   * fresh campaign would.
+   */
+  duplicate: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(z.object({ id: cuidSchema }))
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      await assertTenantActive(tenantId);
+      // Duplication creates a DRAFT — no plan metric consumed until
+      // the user actually sends. Matches the create procedure which
+      // also doesn't gate on a campaign-count metric.
+
+      return withTenant(tenantId, async (tx) => {
+        const source = await tx.campaign.findFirst({
+          where: { id: input.id, tenantId },
+          include: {
+            emailCampaign: true,
+            whatsAppCampaign: true,
+          },
+        });
+        if (!source) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: 'Campaign not found.',
+          });
+        }
+
+        // Generate a unique-looking name. Users frequently duplicate
+        // the same campaign more than once; a `(Copy)` suffix is
+        // enough — the create flow doesn't enforce name uniqueness.
+        const dupName = source.name.endsWith('(Copy)')
+          ? source.name
+          : `${source.name} (Copy)`;
+
+        const copy = await tx.campaign.create({
+          data: {
+            tenantId,
+            type: source.type,
+            name: dupName,
+            status: CampaignStatus.DRAFT,
+            segmentId: source.segmentId,
+            timezone: source.timezone,
+            createdByUserId: ctx.user.id,
+            // Per-channel sidecar gets nested-created based on source
+            // type. Identity stays the same except `id` + `campaignId`
+            // are fresh.
+            ...(source.emailCampaign
+              ? {
+                  emailCampaign: {
+                    create: {
+                      subject: source.emailCampaign.subject,
+                      previewText: source.emailCampaign.previewText,
+                      fromName: source.emailCampaign.fromName,
+                      fromEmail: source.emailCampaign.fromEmail,
+                      replyTo: source.emailCampaign.replyTo,
+                      sendingDomainId: source.emailCampaign.sendingDomainId,
+                      designJson:
+                        source.emailCampaign.designJson as Prisma.InputJsonValue,
+                      renderedHtml: source.emailCampaign.renderedHtml,
+                      renderedText: source.emailCampaign.renderedText,
+                      // Drop A/B test config — re-set if needed in the
+                      // editor. A copied campaign starts with the
+                      // baseline variant only.
+                      templateId: source.emailCampaign.templateId,
+                    },
+                  },
+                }
+              : {}),
+            ...(source.whatsAppCampaign
+              ? {
+                  whatsAppCampaign: {
+                    create: {
+                      whatsAppAccountId:
+                        source.whatsAppCampaign.whatsAppAccountId,
+                      phoneNumberId:
+                        source.whatsAppCampaign.phoneNumberId,
+                      templateId: source.whatsAppCampaign.templateId,
+                      templateLanguage:
+                        source.whatsAppCampaign.templateLanguage,
+                      templateVariables:
+                        source.whatsAppCampaign
+                          .templateVariables as Prisma.InputJsonValue,
+                      headerMediaAssetId:
+                        source.whatsAppCampaign.headerMediaAssetId,
+                    },
+                  },
+                }
+              : {}),
+          },
+          select: { id: true },
+        });
+        return { ok: true as const, id: copy.id };
+      });
+    }),
+
   delete: tenantProcedure
     .use(enforceRole(Role.OWNER, Role.ADMIN))
     .input(campaignDeleteSchema)
