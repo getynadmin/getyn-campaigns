@@ -10,6 +10,8 @@
  */
 import type { ReactNode } from 'react';
 
+import { slugifyHeading } from './headings';
+
 export interface Article {
   slug: string;
   title: string;
@@ -38,7 +40,10 @@ const P = (children: ReactNode) => (
 );
 
 const H2 = (text: string) => (
-  <h2 className="mt-10 scroll-mt-24 font-display text-xl font-semibold tracking-tight">
+  <h2
+    id={slugifyHeading(text)}
+    className="mt-10 scroll-mt-24 font-display text-xl font-semibold tracking-tight"
+  >
     {text}
   </h2>
 );
@@ -1213,4 +1218,36 @@ export function allArticlePaths(): Array<{
   return categories.flatMap((c) =>
     c.articles.map((a) => ({ categorySlug: c.slug, articleSlug: a.slug })),
   );
+}
+
+/** Flat searchable index — fed into the client DocsSearch component.
+ *  Built once at module load; small enough that recomputation cost is
+ *  trivial even if we add hundreds of articles. */
+export function buildSearchIndex(): Array<{
+  href: string;
+  categoryTitle: string;
+  articleTitle: string;
+  summary: string;
+  haystack: string;
+}> {
+  const out: Array<{
+    href: string;
+    categoryTitle: string;
+    articleTitle: string;
+    summary: string;
+    haystack: string;
+  }> = [];
+  for (const c of categories) {
+    for (const a of c.articles) {
+      out.push({
+        href: `/docs/${c.slug}/${a.slug}`,
+        categoryTitle: c.title,
+        articleTitle: a.title,
+        summary: a.summary,
+        haystack:
+          `${a.title} ${a.summary} ${c.title}`.toLowerCase(),
+      });
+    }
+  }
+  return out;
 }

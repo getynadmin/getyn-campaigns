@@ -1,13 +1,15 @@
 import Link from 'next/link';
-import { ArrowRight, BookOpen, Search } from 'lucide-react';
+import { ArrowRight, BookOpen } from 'lucide-react';
 
-import { categories } from '@/lib/docs/articles';
+import { DocsSearch } from '@/components/docs/docs-search';
+import { buildSearchIndex, categories } from '@/lib/docs/articles';
 
 export default function DocsIndexPage(): JSX.Element {
   const totalArticles = categories.reduce(
     (sum, c) => sum + c.articles.length,
     0,
   );
+  const searchIndex = buildSearchIndex();
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-14">
@@ -24,9 +26,8 @@ export default function DocsIndexPage(): JSX.Element {
           do inside Getyn Campaigns — from your first import to A/B-testing
           subject lines on autopilot.
         </p>
-        <div className="mx-auto mt-8 flex max-w-xl items-center gap-3 rounded-full border bg-card px-4 py-3 text-sm text-foreground/50 shadow-sm">
-          <Search className="size-4" />
-          <span>Browse categories below — search is coming soon.</span>
+        <div className="mt-8">
+          <DocsSearch entries={searchIndex} />
         </div>
       </div>
 

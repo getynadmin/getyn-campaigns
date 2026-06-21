@@ -2,7 +2,9 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, ArrowRight, Clock } from 'lucide-react';
 
+import { ArticleToc } from '@/components/docs/article-toc';
 import { allArticlePaths, findArticle } from '@/lib/docs/articles';
+import { extractHeadings } from '@/lib/docs/headings';
 
 export function generateStaticParams(): Array<{
   category: string;
@@ -46,8 +48,12 @@ export default function ArticlePage({
       ? category.articles[articleIndex + 1]
       : null;
 
+  // Extract headings server-side so SSG bakes them in; client TOC only
+  // needs to wire the IntersectionObserver.
+  const headings = extractHeadings(article.body);
+
   return (
-    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-10 px-6 py-10 md:grid-cols-[220px_1fr]">
+    <div className="mx-auto grid max-w-7xl grid-cols-1 gap-10 px-6 py-10 md:grid-cols-[220px_1fr] lg:grid-cols-[220px_1fr_200px]">
       {/* Sidebar — category articles */}
       <aside className="hidden md:block">
         <div className="sticky top-24">
@@ -158,6 +164,11 @@ export default function ArticlePage({
           </div>
         )}
       </article>
+
+      {/* Right rail — TOC. Hidden on <lg breakpoints (grid-cols-2 there). */}
+      <aside className="hidden lg:block">
+        <ArticleToc headings={headings} />
+      </aside>
     </div>
   );
 }
