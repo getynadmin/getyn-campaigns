@@ -318,7 +318,39 @@ async function handlePrepareCampaign(job: Job): Promise<void> {
 /* dispatch-batch                                                             */
 /* -------------------------------------------------------------------------- */
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+/**
+ * Base URL for email-embedded links (tracking redirects, unsubscribe,
+ * web-view, List-Unsubscribe header). Falls through several env-var
+ * names because deploy targets disagree on which one is "the" one:
+ *   - NEXT_PUBLIC_APP_URL: web app + worker share this in our setup
+ *   - APP_URL: generic fallback
+ *   - VERCEL_URL: present on Vercel; needs `https://` prefixed
+ *
+ * In production we hard-fail rather than default to localhost: a
+ * silent localhost fallback ships broken links to real recipients
+ * (we've been bitten by this already).
+ */
+function resolveAppUrl(): string {
+  const explicit =
+    process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? '';
+  if (explicit) {
+    return explicit.replace(/\/$/, '');
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL.replace(/\/$/, '')}`;
+  }
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      '[worker:sends] NEXT_PUBLIC_APP_URL is not set in production. Every email-embedded link (tracking redirects, unsubscribe, web-view) would resolve to localhost — refusing to dispatch. Set NEXT_PUBLIC_APP_URL to the public web origin (e.g. https://campaigns.getyn.com) on the worker service and redeploy.',
+    );
+  }
+  console.warn(
+    '[worker:sends] NEXT_PUBLIC_APP_URL not set — defaulting to http://localhost:3000 (dev only)',
+  );
+  return 'http://localhost:3000';
+}
+
+const APP_URL = resolveAppUrl();
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
