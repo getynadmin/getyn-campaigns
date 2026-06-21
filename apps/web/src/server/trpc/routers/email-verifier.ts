@@ -13,6 +13,7 @@ import { Role } from '@getyn/db';
 
 import {
   cleanupTenantContacts,
+  deepScanTenantContacts,
   scanTenantContacts,
 } from '@/server/audience/email-verifier';
 
@@ -24,6 +25,7 @@ const categorySchema = z.enum([
   'TYPO_SUSPICIOUS',
   'DISPOSABLE',
   'ROLE_BASED',
+  'DEAD_DOMAIN',
 ]);
 
 export const emailVerifierRouter = createTRPCRouter({
@@ -32,6 +34,19 @@ export const emailVerifierRouter = createTRPCRouter({
     .query(async ({ ctx }) => {
       const tenantId = ctx.tenantContext.tenant.id;
       return scanTenantContacts(tenantId);
+    }),
+
+  /**
+   * Deep scan — basic scan + per-domain MX-record probe. Takes
+   * meaningfully longer (≈ 50ms per unique domain at 50-way
+   * concurrency, so ~20s for a 2k-domain tenant) so it's exposed as
+   * a separate mutation rather than auto-running on page load.
+   */
+  deepScan: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .mutation(async ({ ctx }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return deepScanTenantContacts(tenantId);
     }),
 
   cleanup: tenantProcedure

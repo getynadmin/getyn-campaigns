@@ -21,22 +21,28 @@
 import { prisma } from '@getyn/db';
 
 import { DISPOSABLE_DOMAINS, TYPO_DOMAINS } from './disposable-domains';
+import { probeMxBulk, type MxStatus } from './mx-check';
 
 export type FlagCategory =
   | 'INVALID_SYNTAX'
   | 'ALREADY_BOUNCED'
   | 'TYPO_SUSPICIOUS'
   | 'DISPOSABLE'
-  | 'ROLE_BASED';
+  | 'ROLE_BASED'
+  | 'DEAD_DOMAIN';
 
 /** Order matters for category attribution — a contact in multiple
  *  buckets is assigned to the highest-priority one (so the totals
- *  always sum to the unique flagged-contact count). */
+ *  always sum to the unique flagged-contact count).
+ *
+ *  DEAD_DOMAIN is placed after the cheap checks but before ROLE_BASED:
+ *  a no-MX domain is a stronger signal than "looks like a role inbox". */
 const CATEGORY_PRIORITY: FlagCategory[] = [
   'INVALID_SYNTAX',
   'ALREADY_BOUNCED',
   'TYPO_SUSPICIOUS',
   'DISPOSABLE',
+  'DEAD_DOMAIN',
   'ROLE_BASED',
 ];
 
@@ -89,7 +95,29 @@ export interface ScanSummary {
   /** Up to 10 sample flagged contacts per category for the UI to
    *  show as preview rows. */
   samples: Record<FlagCategory, ContactFlag[]>;
+  /** True only when this scan included the DNS/MX pass. The basic
+   *  scan leaves DEAD_DOMAIN at 0 — clients should hide the row
+   *  unless this flag is set. */
+  mxChecked: boolean;
 }
+
+const EMPTY_BY_CATEGORY = (): Record<FlagCategory, number> => ({
+  INVALID_SYNTAX: 0,
+  ALREADY_BOUNCED: 0,
+  TYPO_SUSPICIOUS: 0,
+  DISPOSABLE: 0,
+  ROLE_BASED: 0,
+  DEAD_DOMAIN: 0,
+});
+
+const EMPTY_SAMPLES = (): Record<FlagCategory, ContactFlag[]> => ({
+  INVALID_SYNTAX: [],
+  ALREADY_BOUNCED: [],
+  TYPO_SUSPICIOUS: [],
+  DISPOSABLE: [],
+  ROLE_BASED: [],
+  DEAD_DOMAIN: [],
+});
 
 function parseEmail(email: string): { local: string; domain: string } | null {
   const at = email.lastIndexOf('@');
@@ -103,6 +131,7 @@ function parseEmail(email: string): { local: string; domain: string } | null {
 function categorise(
   email: string,
   bouncedSet: Set<string>,
+  mxByDomain?: Map<string, MxStatus>,
 ): { category: FlagCategory; detail?: string } | null {
   if (!STRICT_EMAIL_RE.test(email)) {
     return { category: 'INVALID_SYNTAX' };
@@ -124,15 +153,26 @@ function categorise(
   if (DISPOSABLE_DOMAINS.has(domain)) {
     return { category: 'DISPOSABLE', detail: domain };
   }
+  // MX result is only consulted when the caller supplied it (deep scan
+  // path). NO_MX is a strong signal; UNKNOWN (timeout / SERVFAIL) is
+  // ignored to avoid false-positive unsubscribes on flaky DNS.
+  if (mxByDomain) {
+    const mx = mxByDomain.get(domain);
+    if (mx === 'NO_MX') {
+      return { category: 'DEAD_DOMAIN', detail: `${domain} — no MX record` };
+    }
+  }
   if (ROLE_LOCAL_PARTS.has(local)) {
     return { category: 'ROLE_BASED', detail: local };
   }
   return null;
 }
 
-/** Top-level scan entry. Returns a summary + samples, no mutation. */
+/** Top-level scan entry. Returns a summary + samples, no mutation.
+ *  Pass `mxByDomain` to enable the DEAD_DOMAIN check (deep scan). */
 export async function scanTenantContacts(
   tenantId: string,
+  mxByDomain?: Map<string, MxStatus>,
 ): Promise<ScanSummary> {
   // Fetch contacts + addresses that previously bounced in parallel.
   const [contacts, bouncedRows] = await Promise.all([
@@ -151,46 +191,23 @@ export async function scanTenantContacts(
         lastName: true,
       },
     }),
-    // Distinct emails that have hard-bounced in the last 90 days.
-    // groupBy on CampaignSend.email keeps the result set small even
-    // for very busy tenants.
+    // Distinct emails that have hard-bounced. groupBy on
+    // CampaignSend.email keeps the result set small even for very
+    // busy tenants.
     prisma.campaignSend.groupBy({
       by: ['email'],
-      where: {
-        tenantId,
-        status: 'BOUNCED',
-        // CampaignSend doesn't carry a createdAt index for this
-        // query; rely on the (tenantId, status) index instead and
-        // accept all bounces — practically 90d / forever is the
-        // same signal for our purpose.
-      },
+      where: { tenantId, status: 'BOUNCED' },
     }),
   ]);
 
-  const bouncedSet = new Set(
-    bouncedRows.map((r) => r.email.toLowerCase()),
-  );
-
-  const byCategory: Record<FlagCategory, number> = {
-    INVALID_SYNTAX: 0,
-    ALREADY_BOUNCED: 0,
-    TYPO_SUSPICIOUS: 0,
-    DISPOSABLE: 0,
-    ROLE_BASED: 0,
-  };
-  const samples: Record<FlagCategory, ContactFlag[]> = {
-    INVALID_SYNTAX: [],
-    ALREADY_BOUNCED: [],
-    TYPO_SUSPICIOUS: [],
-    DISPOSABLE: [],
-    ROLE_BASED: [],
-  };
-
+  const bouncedSet = new Set(bouncedRows.map((r) => r.email.toLowerCase()));
+  const byCategory = EMPTY_BY_CATEGORY();
+  const samples = EMPTY_SAMPLES();
   let totalFlagged = 0;
 
   for (const c of contacts) {
     if (!c.email) continue;
-    const verdict = categorise(c.email, bouncedSet);
+    const verdict = categorise(c.email, bouncedSet, mxByDomain);
     if (!verdict) continue;
     totalFlagged += 1;
     byCategory[verdict.category] += 1;
@@ -211,7 +228,47 @@ export async function scanTenantContacts(
     totalFlagged,
     byCategory,
     samples,
+    mxChecked: mxByDomain !== undefined,
   };
+}
+
+/**
+ * Deep variant of scanTenantContacts: first runs the cheap pass to
+ * collect every unique domain across subscribed contacts, then probes
+ * MX records for those domains in parallel, then re-categorises
+ * everything (with DEAD_DOMAIN now in play).
+ *
+ * Two passes over the contact list — extra ~50ms compared to the
+ * basic scan — plus the DNS probe which is the dominant cost.
+ */
+export async function deepScanTenantContacts(
+  tenantId: string,
+): Promise<ScanSummary> {
+  // Collect unique domains from currently-eligible contacts.
+  const contacts = await prisma.contact.findMany({
+    where: {
+      tenantId,
+      deletedAt: null,
+      emailStatus: 'SUBSCRIBED',
+      email: { not: null },
+    },
+    select: { email: true },
+  });
+
+  const domains = new Set<string>();
+  for (const c of contacts) {
+    if (!c.email) continue;
+    const parts = parseEmail(c.email);
+    if (!parts) continue;
+    // Skip domains we already know about (typo/disposable land in
+    // their own buckets via the cheap pass — no need to MX-probe).
+    if (TYPO_DOMAINS[parts.domain]) continue;
+    if (DISPOSABLE_DOMAINS.has(parts.domain)) continue;
+    domains.add(parts.domain);
+  }
+
+  const mxByDomain = await probeMxBulk(domains);
+  return scanTenantContacts(tenantId, mxByDomain);
 }
 
 /**
@@ -225,7 +282,6 @@ export async function cleanupTenantContacts(args: {
   categories: FlagCategory[];
 }): Promise<{ updated: number }> {
   if (args.categories.length === 0) return { updated: 0 };
-  const summary = await scanTenantContacts(args.tenantId);
 
   // Re-walk contacts to build the ID list. Avoids a stale snapshot
   // and lets us write one UPDATE per category instead of N per
@@ -246,11 +302,28 @@ export async function cleanupTenantContacts(args: {
   });
   const bouncedSet = new Set(bouncedRows.map((r) => r.email.toLowerCase()));
 
+  // If the cleanup includes DEAD_DOMAIN we need fresh MX data. Re-
+  // probe (rather than trust a stale scan-time map) so cleanup is
+  // self-contained and safe to call from anywhere.
+  let mxByDomain: Map<string, MxStatus> | undefined;
+  if (args.categories.includes('DEAD_DOMAIN')) {
+    const domains = new Set<string>();
+    for (const c of contacts) {
+      if (!c.email) continue;
+      const parts = parseEmail(c.email);
+      if (!parts) continue;
+      if (TYPO_DOMAINS[parts.domain]) continue;
+      if (DISPOSABLE_DOMAINS.has(parts.domain)) continue;
+      domains.add(parts.domain);
+    }
+    mxByDomain = await probeMxBulk(domains);
+  }
+
   const selected = new Set(args.categories);
   const ids: string[] = [];
   for (const c of contacts) {
     if (!c.email) continue;
-    const verdict = categorise(c.email, bouncedSet);
+    const verdict = categorise(c.email, bouncedSet, mxByDomain);
     if (!verdict) continue;
     if (selected.has(verdict.category)) ids.push(c.id);
   }
@@ -262,8 +335,6 @@ export async function cleanupTenantContacts(args: {
     where: { id: { in: ids }, tenantId: args.tenantId },
     data: { emailStatus: 'UNSUBSCRIBED' },
   });
-  // Reference unused but kept for tracing/debug parity with the API.
-  void summary;
   void CATEGORY_PRIORITY;
 
   return { updated: result.count };

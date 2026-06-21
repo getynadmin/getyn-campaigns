@@ -5,6 +5,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  Globe,
   Loader2,
   ShieldOff,
   Trash2,
@@ -31,7 +32,8 @@ type Category =
   | 'ALREADY_BOUNCED'
   | 'TYPO_SUSPICIOUS'
   | 'DISPOSABLE'
-  | 'ROLE_BASED';
+  | 'ROLE_BASED'
+  | 'DEAD_DOMAIN';
 
 const CATEGORY_META: Record<
   Category,
@@ -72,6 +74,13 @@ const CATEGORY_META: Record<
     icon: Zap,
     tone: 'border-violet-300 bg-violet-50/40 dark:border-violet-900 dark:bg-violet-950/20',
   },
+  DEAD_DOMAIN: {
+    label: 'Dead domain',
+    description:
+      'Domain has no MX record — mail can never be delivered. Detected via deep scan.',
+    icon: Globe,
+    tone: 'border-fuchsia-300 bg-fuchsia-50/40 dark:border-fuchsia-900 dark:bg-fuchsia-950/20',
+  },
 };
 
 const CATEGORY_ORDER: Category[] = [
@@ -79,6 +88,7 @@ const CATEGORY_ORDER: Category[] = [
   'ALREADY_BOUNCED',
   'TYPO_SUSPICIOUS',
   'DISPOSABLE',
+  'DEAD_DOMAIN',
   'ROLE_BASED',
 ];
 
@@ -88,15 +98,37 @@ export function EmailVerifierClient({
   canCleanup: boolean;
 }): JSX.Element {
   const utils = api.useUtils();
-  const { data, isLoading, isFetching, refetch } =
+  const { data: basicData, isLoading, isFetching, refetch } =
     api.emailVerifier.scan.useQuery(undefined, {
       // Manual-only — scan touches every contact, refetching on focus
       // would be expensive.
       refetchOnWindowFocus: false,
     });
 
+  // Deep scan result is held client-side — running it is a mutation
+  // (long-running, opt-in) so we don't want React Query to consider
+  // it stale and refetch.
+  const [deepData, setDeepData] = useState<typeof basicData | null>(null);
+
+  // Active data is the deep scan when present, otherwise basic.
+  const data = deepData ?? basicData;
+
   const [selected, setSelected] = useState<Set<Category>>(new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const deepScan = api.emailVerifier.deepScan.useMutation({
+    onSuccess: (res) => {
+      setDeepData(res);
+      const deadDomains = res.byCategory.DEAD_DOMAIN;
+      toast.success(
+        deadDomains > 0
+          ? `Deep scan done — found ${deadDomains.toLocaleString()} contact${deadDomains === 1 ? '' : 's'} on dead domains.`
+          : 'Deep scan done — no dead domains detected.',
+      );
+    },
+    onError: (err) =>
+      toast.error(err.message ?? 'Deep scan failed — try again.'),
+  });
 
   const cleanup = api.emailVerifier.cleanup.useMutation({
     onSuccess: (res) => {
@@ -105,6 +137,7 @@ export function EmailVerifierClient({
       );
       setSelected(new Set());
       setConfirmOpen(false);
+      setDeepData(null); // force a fresh re-scan / re-deep-scan if user wants
       void utils.emailVerifier.scan.invalidate();
     },
     onError: (err) => toast.error(err.message ?? 'Cleanup failed.'),
@@ -193,23 +226,53 @@ export function EmailVerifierClient({
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={isFetching}
-          onClick={() => void refetch()}
-        >
-          {isFetching ? (
-            <Loader2 className="mr-2 size-3.5 animate-spin" />
-          ) : null}
-          Re-scan
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isFetching || deepScan.isPending}
+            onClick={() => {
+              setDeepData(null);
+              void refetch();
+            }}
+          >
+            {isFetching ? (
+              <Loader2 className="mr-2 size-3.5 animate-spin" />
+            ) : null}
+            Re-scan
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={deepScan.isPending || isFetching}
+            onClick={() => deepScan.mutate()}
+            title="Probe MX records for every domain — slower (~20s for ~2k unique domains) but catches dead domains."
+          >
+            {deepScan.isPending ? (
+              <Loader2 className="mr-2 size-3.5 animate-spin" />
+            ) : (
+              <Globe className="mr-2 size-3.5" />
+            )}
+            {deepScan.isPending ? 'Deep scanning…' : 'Deep scan (MX check)'}
+          </Button>
+        </div>
+        {data.mxChecked ? (
+          <span className="text-xs text-foreground/60">
+            ✓ Dead-domain check included
+          </span>
+        ) : (
+          <span className="text-xs text-foreground/40">
+            Dead-domain check skipped — run Deep scan to include it
+          </span>
+        )}
       </div>
 
       {/* Per-category cards */}
       <div className="space-y-3">
-        {CATEGORY_ORDER.map((c) => {
+        {CATEGORY_ORDER.filter(
+          (c) => c !== 'DEAD_DOMAIN' || data.mxChecked,
+        ).map((c) => {
           const meta = CATEGORY_META[c];
           const Icon = meta.icon;
           const count = data.byCategory[c];
