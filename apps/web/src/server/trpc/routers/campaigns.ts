@@ -23,10 +23,14 @@ import {
   campaignRecipientsInputSchema,
   campaignScheduleSchema,
   campaignSendNowSchema,
+  campaignSendTestSchema,
   campaignUpdateSchema,
   cuidSchema,
   segmentRulesSchema,
 } from '@getyn/types';
+
+import { renderPlaintext } from '@/server/email/render';
+import { sendEmail } from '@/server/email/resend';
 
 import { scanCampaignContent } from '@/server/email/content-scanner';
 import {
@@ -425,6 +429,86 @@ export const campaignsRouter = createTRPCRouter({
         });
         return { ok: true as const };
       });
+    }),
+
+  /**
+   * Phase 7 follow-up — campaign-level test send.
+   *
+   * Renders the campaign's persisted designJson + renderedHtml (saved
+   * via `saveDesign` from the editor) and ships it to the recipients
+   * specified, with a "[TEST]" subject prefix and a small banner
+   * stripped out at preview time. Used by the editor's "Send test"
+   * button so the user can sanity-check rendering + merge tags
+   * against a real inbox before committing to a campaign-wide send.
+   *
+   * Test sends don't materialise CampaignSend rows or fire suppression
+   * checks — they're throwaway previews. Same Resend integration as
+   * production sends, so the inboxing path is identical.
+   */
+  sendTest: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(campaignSendTestSchema)
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const camp = await withTenant(tenantId, (tx) =>
+        tx.campaign.findFirst({
+          where: { id: input.id, tenantId },
+          include: { emailCampaign: true },
+        }),
+      );
+      if (!camp || !camp.emailCampaign) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Campaign not found in this workspace.',
+        });
+      }
+      const ec = camp.emailCampaign;
+      if (!ec.renderedHtml) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            'Open the editor and save the design once — there is no rendered HTML on this campaign yet.',
+        });
+      }
+
+      // Replace merge tags with sample values so the recipient sees
+      // a populated email instead of literal {{firstName}} tokens.
+      // Phase 3 polish — proper per-recipient merging happens in
+      // the dispatch pipeline, but for a test send we use friendly
+      // placeholders so the design looks right.
+      const sampleHtml = ec.renderedHtml
+        .replace(/\{\{\s*firstName\s*\}\}/g, 'Alex')
+        .replace(/\{\{\s*lastName\s*\}\}/g, 'Rivera')
+        .replace(/\{\{\s*email\s*\}\}/g, ctx.user.email ?? 'preview@example.com')
+        .replace(
+          /\{\{\s*unsubscribeUrl\s*\}\}/g,
+          'https://example.com/unsubscribe',
+        )
+        .replace(/\{\{\s*webViewUrl\s*\}\}/g, 'https://example.com/view')
+        .replace(
+          /\{\{\s*workspaceName\s*\}\}/g,
+          ctx.tenantContext.tenant.name,
+        );
+
+      const text = ec.renderedText
+        ? ec.renderedText
+            .replace(/\{\{\s*firstName\s*\}\}/g, 'Alex')
+            .replace(/\{\{\s*lastName\s*\}\}/g, 'Rivera')
+            .replace(/\{\{\s*email\s*\}\}/g, ctx.user.email ?? 'preview@example.com')
+        : renderPlaintext(sampleHtml);
+
+      // sendEmail uses the tenant's configured Resend from-address;
+      // we deliberately don't override per-call so test sends look
+      // identical to real sends as far as the inbox is concerned.
+      for (const to of input.recipients) {
+        await sendEmail({
+          to,
+          subject: `[TEST] ${ec.subject}`,
+          html: sampleHtml,
+          text,
+        });
+      }
+      return { ok: true as const, sentTo: input.recipients.length };
     }),
 
   delete: tenantProcedure

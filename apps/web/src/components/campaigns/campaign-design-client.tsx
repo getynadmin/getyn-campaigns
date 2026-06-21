@@ -42,6 +42,14 @@ export function CampaignDesignClient({
     },
     onError: (err) => toast.error(err.message ?? 'Save failed.'),
   });
+  const sendTest = api.campaign.sendTest.useMutation({
+    onSuccess: (res) => {
+      toast.success(
+        `Test email sent to ${res.sentTo} recipient${res.sentTo === 1 ? '' : 's'}.`,
+      );
+    },
+    onError: (err) => toast.error(err.message ?? 'Test send failed.'),
+  });
 
   if (!canEdit) {
     return (
@@ -85,11 +93,8 @@ export function CampaignDesignClient({
           renderedHtml,
         });
       }}
-      onSendTest={async () => {
-        toast.message('Test send from campaigns lands in the polish pass.', {
-          description:
-            'For now, use a template to test design + merge tags. Campaign-specific test send wires up in M9.',
-        });
+      onSendTest={async (recipients) => {
+        await sendTest.mutateAsync({ id: campaign.id, recipients });
       }}
       mergeTags={[
         { name: 'First name', value: '{{firstName}}', sample: 'Alex' },

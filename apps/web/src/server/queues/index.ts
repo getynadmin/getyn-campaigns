@@ -120,8 +120,11 @@ export async function enqueueResendWebhookEvent(
   const validated = resendWebhookPayloadSchema.parse(payload);
   const queue = getWebhooksQueue();
   // jobId scoped on (messageId, eventType) — duplicate POSTs collapse.
+  // BullMQ's job scheduler (v5+) rejects custom jobIds containing
+  // `:` — it reserves the character for its internal repeat-key
+  // encoding. Use `_` separators instead.
   await queue.add(JOB_NAMES.webhooks.processResendEvent, validated, {
-    jobId: `resend:${validated.messageId}:${validated.eventType}`,
+    jobId: `resend_${validated.messageId}_${validated.eventType}`,
   });
 }
 
@@ -146,7 +149,7 @@ export async function enqueuePrepareCampaign(
   const validated = prepareCampaignPayloadSchema.parse(payload);
   const queue = getSendsQueue();
   await queue.add(JOB_NAMES.sends.prepareCampaign, validated, {
-    jobId: `prepare:${validated.campaignId}`,
+    jobId: `prepare_${validated.campaignId}`,
     ...(options.delayMs !== undefined ? { delay: options.delayMs } : {}),
   });
 }
@@ -182,7 +185,7 @@ export async function enqueuePollTemplateSubmission(
     // First poll fires 30s after submit so Meta has time to assign a status.
     delay: 30_000,
     attempts: 1,
-    jobId: `poll:${validated.templateId}:${validated.attempt}`,
+    jobId: `poll_${validated.templateId}_${validated.attempt}`,
   });
 }
 
