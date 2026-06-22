@@ -1,3 +1,4 @@
+import { EmailQuotaTile } from './email-quota-tile';
 import { UserMenu } from './user-menu';
 import { WorkspaceSwitcher } from './workspace-switcher';
 
@@ -22,7 +23,8 @@ export function Topbar({
       <div className="flex items-center gap-2">
         <WorkspaceSwitcher currentSlug={currentSlug} tenants={tenants} />
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
+        <EmailQuotaTile tenantSlug={currentSlug} />
         <UserMenu
           name={user.name}
           email={user.email}

@@ -36,6 +36,27 @@ const requestUpgradeSchema = z.object({
 
 export const subscriptionRouter = createTRPCRouter({
   /**
+   * Compact usage + limit payload — for tile-style displays (e.g. the
+   * EmailQuotaTile in the topbar). Returns one row per PlanMetric with
+   * the resolved limit and current-period usage. Cheaper than `get`
+   * because it skips the plan catalogue + upgrade-target resolution.
+   */
+  usage: tenantProcedure.query(async ({ ctx }) => {
+    const tenantId = ctx.tenantContext.tenant.id;
+    const [limits, usage] = await Promise.all([
+      resolveTenantLimits(tenantId),
+      getAllCurrentUsage(tenantId),
+    ]);
+    return {
+      metrics: (Object.keys(limits) as Array<keyof typeof limits>).map((m) => ({
+        metric: m,
+        limit: limits[m],
+        current: usage[m] ?? 0,
+      })),
+    };
+  }),
+
+  /**
    * Subscription dashboard payload. One query → no waterfall.
    */
   get: tenantProcedure.query(async ({ ctx }) => {

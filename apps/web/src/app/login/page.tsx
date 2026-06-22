@@ -26,8 +26,20 @@ export const dynamic = 'force-dynamic';
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: { error?: string; logged_out?: string; next?: string };
+  searchParams: {
+    error?: string;
+    logged_out?: string;
+    next?: string;
+    sso?: string;
+    sso_error?: string;
+  };
 }): Promise<JSX.Element> {
+  // Older AdminCentral links may hit /login?sso=… instead of /sso?sso=…
+  // Forward those to the SSO route so the token still consumes.
+  if (searchParams.sso) {
+    const { redirect } = await import('next/navigation');
+    redirect(`/sso?sso=${encodeURIComponent(searchParams.sso)}`);
+  }
   const ssoAvailable = isAuth0Configured();
   // Skip the silent probe when the user just signed out (or hit an
   // SSO error) — otherwise we'd loop them straight back in.
