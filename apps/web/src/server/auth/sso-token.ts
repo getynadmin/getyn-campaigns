@@ -130,8 +130,23 @@ export function verifySsoToken(token: string): VerifyResult {
       detail: `token issued for "${parsed.appSlug}", not campaigns`,
     };
   }
-  if (parsed.exp < Date.now()) {
-    return { ok: false, reason: 'expired' };
+
+  // `exp` may be JWT-style seconds or JS-style milliseconds — the
+  // original prompt didn't pin it down. Normalise: anything below
+  // 10^11 is plausibly seconds (year 5138+ in ms but year 5138 in
+  // seconds is already 1.6×10^11). Multiply seconds → ms.
+  //
+  // A 30-second clock-skew tolerance covers the realistic case where
+  // AdminCentral signed a 60s token and the user clicked at second
+  // 59 with a small clock drift between the two servers.
+  const expMs = parsed.exp < 1e11 ? parsed.exp * 1000 : parsed.exp;
+  const SKEW_MS = 30_000;
+  if (expMs + SKEW_MS < Date.now()) {
+    return {
+      ok: false,
+      reason: 'expired',
+      detail: `token exp=${new Date(expMs).toISOString()}, now=${new Date().toISOString()}`,
+    };
   }
   return { ok: true, payload: parsed };
 }
