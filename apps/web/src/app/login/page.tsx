@@ -34,11 +34,12 @@ export default async function LoginPage({
     sso_error?: string;
   };
 }): Promise<JSX.Element> {
-  // Older AdminCentral links may hit /login?sso=… instead of /sso?sso=…
-  // Forward those to the SSO route so the token still consumes.
+  // Older AdminCentral links may hit /login?sso=… instead of
+  // /sso?sso=… Forward straight to the verifier route so the token
+  // still consumes — skip the /sso dispatcher hop.
   if (searchParams.sso) {
     const { redirect } = await import('next/navigation');
-    redirect(`/sso?sso=${encodeURIComponent(searchParams.sso)}`);
+    redirect(`/api/sso/consume?sso=${encodeURIComponent(searchParams.sso)}`);
   }
   const ssoAvailable = isAuth0Configured();
   // Skip the silent probe when the user just signed out (or hit an
