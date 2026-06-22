@@ -35,6 +35,22 @@ function loginErrorRedirect(reason: string): never {
   redirect(`/login?sso_error=${encodeURIComponent(reason)}`);
 }
 
+/**
+ * Next's `redirect()` works by throwing a sentinel error with a
+ * `digest` starting with "NEXT_REDIRECT". A try/catch around code
+ * that calls `loginErrorRedirect` would otherwise swallow that
+ * sentinel and mask the original reason. Re-throw it so the
+ * framework can finish the redirect.
+ */
+function isNextRedirect(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    typeof (err as { digest?: unknown }).digest === 'string' &&
+    (err as { digest: string }).digest.startsWith('NEXT_REDIRECT')
+  );
+}
+
 /** Slugify a tenant name for the URL fragment. Falls back to a
  *  random suffix on collision. */
 function slugFromName(name: string): string {
@@ -96,12 +112,10 @@ export async function GET(req: NextRequest): Promise<Response> {
       }
       tenantSlug = existing.slug;
     } else {
-      if (!payload.provision) {
-        // Token says "don't provision" but the tenant doesn't exist.
-        // Could be a stale link from a deleted workspace — push to
-        // /login with a clear reason instead of creating implicitly.
-        loginErrorRedirect('tenant_not_found');
-      }
+      // The HMAC-verified token IS the authorization. The original
+      // `provision: false` gate was over-cautious — if AdminCentral
+      // sent us here with a valid signature, the user is entitled to
+      // a tenant in Campaigns. Always provision.
       tenantSlug = await uniqueSlug(slugFromName(payload.name));
       await prisma.tenant.create({
         data: {
@@ -112,6 +126,7 @@ export async function GET(req: NextRequest): Promise<Response> {
       });
     }
   } catch (err) {
+    if (isNextRedirect(err)) throw err;
     console.error('[sso] tenant upsert failed', err);
     loginErrorRedirect('tenant_upsert_failed');
   }
@@ -130,6 +145,7 @@ export async function GET(req: NextRequest): Promise<Response> {
     });
     userId = upserted.id;
   } catch (err) {
+    if (isNextRedirect(err)) throw err;
     console.error('[sso] user upsert failed', err);
     loginErrorRedirect('user_upsert_failed');
   }
@@ -146,6 +162,7 @@ export async function GET(req: NextRequest): Promise<Response> {
       create: { userId, tenantId: payload.tenantId, role },
     });
   } catch (err) {
+    if (isNextRedirect(err)) throw err;
     console.error('[sso] membership upsert failed', err);
     loginErrorRedirect('membership_upsert_failed');
   }
@@ -207,6 +224,7 @@ export async function GET(req: NextRequest): Promise<Response> {
     }
     actionLink = data.properties.action_link;
   } catch (err) {
+    if (isNextRedirect(err)) throw err;
     console.error('[sso] magic-link generation threw', err);
     loginErrorRedirect('session_mint_failed');
   }
