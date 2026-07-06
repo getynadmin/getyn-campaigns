@@ -20,7 +20,6 @@ import {
   type EdgeChange,
   type Node,
   type NodeChange,
-  type ReactFlowInstance,
 } from '@xyflow/react';
 import { ArrowLeft, Loader2, Pause, Play, Save } from 'lucide-react';
 
