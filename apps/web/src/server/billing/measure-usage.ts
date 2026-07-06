@@ -140,6 +140,36 @@ export async function countAgentConversationsThisMonth(
   });
 }
 
+// Phase 8 M3 — counts every drip-campaign enrollment (regardless of
+// current status) created since the calendar-month boundary. The
+// gate at automation.enroll assertions checks against this.
+export async function countAutomationEnrollmentsThisMonth(
+  tenantId: string,
+): Promise<number> {
+  return prisma.automationEnrollment.count({
+    where: {
+      tenantId,
+      enrolledAt: { gte: startOfCalendarMonthUTC() },
+    },
+  });
+}
+
+// Phase 8 M5 — counts every draft the Email Agent generated (approved
+// + rejected) since the calendar-month boundary. Sonnet calls are
+// expensive; this cap protects the tenant's budget.
+export async function countAgentRepliesThisMonth(
+  tenantId: string,
+): Promise<number> {
+  return prisma.emailAgentMessage.count({
+    where: {
+      tenantId,
+      createdAt: { gte: startOfCalendarMonthUTC() },
+      direction: 'OUTBOUND',
+      status: { in: ['DRAFT_AWAITING_APPROVAL', 'APPROVED_QUEUED', 'SENT', 'DELIVERED', 'OPENED', 'CLICKED', 'REPLIED', 'BOUNCED', 'REJECTED'] },
+    },
+  });
+}
+
 export async function countSeatsConsumed(tenantId: string): Promise<number> {
   const now = new Date();
   const [members, pending] = await Promise.all([
@@ -181,6 +211,10 @@ export async function getCurrentUsage(
       return countSeatsConsumed(tenantId);
     case PlanMetric.AI_AGENT_CONVERSATIONS_PER_MONTH:
       return countAgentConversationsThisMonth(tenantId);
+    case PlanMetric.AUTOMATION_ENROLLMENTS_PER_MONTH:
+      return countAutomationEnrollmentsThisMonth(tenantId);
+    case PlanMetric.AGENT_REPLIES_PER_MONTH:
+      return countAgentRepliesThisMonth(tenantId);
   }
 }
 
@@ -200,6 +234,8 @@ export async function getAllCurrentUsage(
     PlanMetric.CUSTOM_SENDING_DOMAINS,
     PlanMetric.USER_SEATS,
     PlanMetric.AI_AGENT_CONVERSATIONS_PER_MONTH,
+    PlanMetric.AUTOMATION_ENROLLMENTS_PER_MONTH,
+    PlanMetric.AGENT_REPLIES_PER_MONTH,
   ];
   const values = await Promise.all(
     metrics.map((m) => getCurrentUsage(tenantId, m)),

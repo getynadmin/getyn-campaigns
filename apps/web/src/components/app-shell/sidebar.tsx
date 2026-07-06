@@ -23,6 +23,8 @@ import {
   Sparkles,
   Star,
   Users,
+  Workflow,
+  Bot,
 } from 'lucide-react';
 
 import { api } from '@/lib/trpc';
@@ -53,7 +55,7 @@ type SidebarItem = {
   /** Item appears disabled (future phase). */
   soon?: boolean;
   /** Live badge type. */
-  badge?: 'inboxUnread';
+  badge?: 'inboxUnread' | 'agentPending';
 };
 
 type SidebarSection = {
@@ -94,7 +96,38 @@ function buildSections(slug: string): SidebarSection[] {
           icon: MessageSquare,
           badge: 'inboxUnread',
         },
+        {
+          href: t('/email-inbox'),
+          label: 'Email Inbox',
+          icon: Mail,
+        },
         { href: t('/sms'), label: 'SMS', icon: Phone, soon: true },
+      ],
+    },
+    // Phase 8 — Automation (Drip Campaigns + Email Agent). Sits
+    // between Communicate and Audience per team decision — automation
+    // is upstream of one-off campaigns in most tenants' mental model.
+    {
+      key: 'automation',
+      label: 'Automation',
+      items: [
+        {
+          href: t('/automation/drip'),
+          label: 'Drip Campaigns',
+          icon: Workflow,
+          trailing: 'plus',
+        },
+        {
+          href: t('/automation/agents'),
+          label: 'Email Agent',
+          icon: Bot,
+        },
+        {
+          href: t('/automation/agents/inbox'),
+          label: 'Approval Inbox',
+          icon: Bot,
+          badge: 'agentPending',
+        },
       ],
     },
     {
@@ -168,6 +201,13 @@ export function Sidebar({
     retry: false,
   });
   const inboxCount = inboxUnread.data?.total ?? 0;
+
+  // Phase 8 M5 — Email Agent approval-inbox badge.
+  const agentPending = api.emailAgentInbox.pendingCount.useQuery(undefined, {
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const agentPendingCount = agentPending.data?.total ?? 0;
 
   const firstLetter = (appName.trim()[0] ?? 'G').toUpperCase();
 
@@ -299,7 +339,11 @@ export function Sidebar({
                   pathname === item.href ||
                   pathname.startsWith(`${item.href}/`);
                 const badgeNumber =
-                  item.badge === 'inboxUnread' ? inboxCount : null;
+                  item.badge === 'inboxUnread'
+                    ? inboxCount
+                    : item.badge === 'agentPending'
+                      ? agentPendingCount
+                      : null;
                 return (
                   <li key={item.href}>
                     <NavRow

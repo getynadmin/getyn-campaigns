@@ -12,6 +12,24 @@ export const QUEUE_NAMES = {
   imports: 'imports',
   sends: 'sends',
   webhooks: 'webhooks',
+  // Phase 8 M1 — inbound reply parsing. Web receives Resend/SendGrid
+  // inbound webhooks, persists InboundEmail row, enqueues here. Worker
+  // decodes the reply-token and fans out to campaign/agent/automation.
+  inboundEmails: 'inbound-emails',
+  // Phase 8 M3 — Drip Campaigns engine.
+  //  - tick (repeatable, 60s): scans due AutomationEnrollment rows,
+  //    fans out per-enrollment `step` jobs.
+  //  - step: processes exactly one enrollment's current node.
+  //  - wake: when a message node flips DRAFT→LIVE, wakes enrollments
+  //    paused at that node.
+  //  - enrollByEvent: on segment/tag change, enroll qualifying
+  //    contacts into automations that trigger on that event (M3 v2).
+  automations: 'automations',
+  // Phase 8 M5 — Email Agent engine.
+  //  - enroll: kick off initial outreach for a fresh EmailAgentEnrollment.
+  //  - followupTick (repeatable, 60s): find due follow-ups, fan out.
+  //  - processReply: classify + draft reply for an inbound EmailAgentMessage.
+  emailAgent: 'email-agent',
   // Phase 5 M4 — G-Suite lifecycle events (subscription / suspension /
   // delete). One queue for both real-webhook ingestion and admin-side
   // mock fires; the worker can't tell the difference.
@@ -112,6 +130,117 @@ export const resendWebhookPayloadSchema = z.object({
 });
 export type ResendWebhookPayload = z.infer<typeof resendWebhookPayloadSchema>;
 
+/**
+ * Payload for the `inbound-emails` queue (Phase 8 M1).
+ *
+ * The web's /api/webhooks/inbound-email route verifies the provider
+ * signature, persists an InboundEmail row with matchedTo=UNMATCHED,
+ * and enqueues this id for the worker to do token-routing off the
+ * request path.
+ *
+ * A single-column id is enough — the worker re-reads the row to see
+ * the raw payload + toAddress + fromAddress and does the routing
+ * decision there. Keeps Redis payload small and lets us re-run
+ * routing on the same row (e.g. after fixing a bug) without
+ * re-uploading the payload.
+ */
+export const inboundEmailProcessPayloadSchema = z.object({
+  inboundEmailId: cuidSchema,
+});
+export type InboundEmailProcessPayload = z.infer<
+  typeof inboundEmailProcessPayloadSchema
+>;
+
+// -----------------------------------------------------------------
+// Phase 8 M3 — Drip automation engine
+// -----------------------------------------------------------------
+
+/**
+ * `automation-tick` — the repeatable heartbeat. No payload: it
+ * always scans everyone's due-and-active enrollments. Set as a
+ * BullMQ repeatable job every 60s.
+ */
+export const automationTickPayloadSchema = z.object({});
+export type AutomationTickPayload = z.infer<typeof automationTickPayloadSchema>;
+
+/**
+ * `automation-step` — process one enrollment's current node. Split
+ * from the tick so failure of one enrollment doesn't stall the
+ * batch.
+ */
+export const automationStepPayloadSchema = z.object({
+  enrollmentId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type AutomationStepPayload = z.infer<typeof automationStepPayloadSchema>;
+
+/**
+ * `automation-wake-node` — fired when a message node flips
+ * DRAFT→LIVE. Wakes every enrollment paused at that node so the
+ * next tick processes them.
+ */
+export const automationWakePayloadSchema = z.object({
+  automationId: cuidSchema,
+  nodeId: z.string().min(1).max(64),
+  tenantId: cuidSchema,
+});
+export type AutomationWakePayload = z.infer<typeof automationWakePayloadSchema>;
+
+// -----------------------------------------------------------------
+// Phase 8 M5 — Email Agent engine
+// -----------------------------------------------------------------
+
+/**
+ * `email-agent-enroll` — draft + send the initial outreach for one
+ * enrollment, schedule its first follow-up. Fired by
+ * emailAgent.enroll / activate mutations.
+ */
+export const emailAgentEnrollPayloadSchema = z.object({
+  enrollmentId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type EmailAgentEnrollPayload = z.infer<
+  typeof emailAgentEnrollPayloadSchema
+>;
+
+/**
+ * `email-agent-followup-tick` — repeatable heartbeat, no payload.
+ * Scans due enrollments and fires per-enrollment step jobs. Split
+ * from step so a slow LLM call on one enrollment doesn't block
+ * others in the batch.
+ */
+export const emailAgentFollowupTickPayloadSchema = z.object({});
+export type EmailAgentFollowupTickPayload = z.infer<
+  typeof emailAgentFollowupTickPayloadSchema
+>;
+
+/**
+ * `email-agent-process-reply` — Haiku classifies, Sonnet drafts.
+ * Fired by the M1 inbound-email worker when a reply matches an
+ * EmailAgentEnrollment.
+ */
+export const emailAgentProcessReplyPayloadSchema = z.object({
+  inboundEmailId: cuidSchema,
+  enrollmentId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type EmailAgentProcessReplyPayload = z.infer<
+  typeof emailAgentProcessReplyPayloadSchema
+>;
+
+/**
+ * `email-agent-ingest-knowledge-source` — extract + summarize one
+ * EmailAgentKnowledgeSource row. Enqueued when a URL / FILE source
+ * is created and when the operator hits Refresh on a URL row.
+ */
+export const emailAgentIngestKnowledgeSourcePayloadSchema = z.object({
+  knowledgeSourceId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type EmailAgentIngestKnowledgeSourcePayload = z.infer<
+  typeof emailAgentIngestKnowledgeSourcePayloadSchema
+>;
+
 // -----------------------------------------------------------------------------
 // Job name registry per queue. Keeps BullMQ's `name` field strongly typed on
 // both sides of the wire.
@@ -135,6 +264,24 @@ export const JOB_NAMES = {
   },
   webhooks: {
     processResendEvent: 'process-resend-event',
+  },
+  inboundEmails: {
+    process: 'process-inbound-email',
+  },
+  // Phase 8 M3
+  automations: {
+    tick: 'automation-tick',
+    step: 'automation-step',
+    wake: 'automation-wake-node',
+  },
+  // Phase 8 M5
+  emailAgent: {
+    enroll: 'email-agent-enroll',
+    followupTick: 'email-agent-followup-tick',
+    processReply: 'email-agent-process-reply',
+    // Phase 8 M6 — pull URL / file content into
+    // EmailAgentKnowledgeSource.extractedText + summarize with Haiku.
+    ingestKnowledgeSource: 'email-agent-ingest-knowledge-source',
   },
   // Phase 4 — WhatsApp Business
   waPhoneRefresh: {

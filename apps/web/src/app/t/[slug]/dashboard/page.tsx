@@ -69,33 +69,65 @@ export default async function DashboardPage({
     : null;
 
   // Counts + recent campaigns in one tenant-scoped transaction.
-  const { contactsCount, segmentsCount, suppressedCount, campaignsCount, recentCampaigns } =
-    await withTenant(tenant.id, async (tx) => {
-      const [contactsCount, segmentsCount, suppressedCount, campaignsCount, recentCampaigns] =
-        await Promise.all([
-          tx.contact.count({ where: { tenantId: tenant.id, deletedAt: null } }),
-          tx.segment.count({ where: { tenantId: tenant.id } }),
-          tx.suppressionEntry.count({ where: { tenantId: tenant.id } }),
-          tx.campaign.count({ where: { tenantId: tenant.id } }),
-          tx.campaign.findMany({
-            where: { tenantId: tenant.id },
-            orderBy: { createdAt: 'desc' },
-            take: 5,
-            include: {
-              emailCampaign: {
-                select: { subject: true },
-              },
-            },
-          }),
-        ]);
-      return {
-        contactsCount,
-        segmentsCount,
-        suppressedCount,
-        campaignsCount,
-        recentCampaigns,
-      };
-    });
+  const {
+    contactsCount,
+    segmentsCount,
+    suppressedCount,
+    campaignsCount,
+    recentCampaigns,
+    activeAutomationsCount,
+    activeEmailAgentsCount,
+    pendingApprovalsCount,
+  } = await withTenant(tenant.id, async (tx) => {
+    const [
+      contactsCount,
+      segmentsCount,
+      suppressedCount,
+      campaignsCount,
+      recentCampaigns,
+      activeAutomationsCount,
+      activeEmailAgentsCount,
+      pendingApprovalsCount,
+    ] = await Promise.all([
+      tx.contact.count({ where: { tenantId: tenant.id, deletedAt: null } }),
+      tx.segment.count({ where: { tenantId: tenant.id } }),
+      tx.suppressionEntry.count({ where: { tenantId: tenant.id } }),
+      tx.campaign.count({ where: { tenantId: tenant.id } }),
+      tx.campaign.findMany({
+        where: { tenantId: tenant.id },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        include: {
+          emailCampaign: {
+            select: { subject: true },
+          },
+        },
+      }),
+      // Phase 8 M7 — automation dashboard widget.
+      tx.automation.count({
+        where: { tenantId: tenant.id, status: 'ACTIVE' },
+      }),
+      tx.emailAgent.count({
+        where: { tenantId: tenant.id, status: 'ACTIVE' },
+      }),
+      tx.emailAgentMessage.count({
+        where: {
+          tenantId: tenant.id,
+          status: 'DRAFT_AWAITING_APPROVAL',
+        },
+      }),
+    ]);
+    return {
+      contactsCount,
+      segmentsCount,
+      suppressedCount,
+      campaignsCount,
+      recentCampaigns,
+      activeAutomationsCount,
+      activeEmailAgentsCount,
+      pendingApprovalsCount,
+    };
+  });
 
   // For each recent campaign, fetch a quick open-rate aggregate. We keep
   // this off the dashboard's hot path by limiting to the 5 visible rows.
@@ -201,6 +233,35 @@ export default async function DashboardPage({
         />
       </div>
 
+      {/* Phase 8 M7 — Automation strip. Only render when the tenant has
+          something live (active flows / agents / pending approvals) so
+          new tenants aren't cluttered with zero widgets. */}
+      {(activeAutomationsCount > 0 ||
+        activeEmailAgentsCount > 0 ||
+        pendingApprovalsCount > 0) && (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <StatCard
+            label="Active automations"
+            value={activeAutomationsCount.toLocaleString()}
+            href={`/t/${params.slug}/automation/drip`}
+            cta="Open drip campaigns"
+          />
+          <StatCard
+            label="Active email agents"
+            value={activeEmailAgentsCount.toLocaleString()}
+            href={`/t/${params.slug}/automation/agents`}
+            cta="Open email agents"
+          />
+          <StatCard
+            label="Replies awaiting approval"
+            value={pendingApprovalsCount.toLocaleString()}
+            href={`/t/${params.slug}/automation/agents/inbox`}
+            cta={pendingApprovalsCount > 0 ? 'Review now' : 'Open inbox'}
+            tone={pendingApprovalsCount > 0 ? 'amber' : undefined}
+          />
+        </div>
+      )}
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2">
           <CardTitle className="text-base">Recent campaigns</CardTitle>
@@ -273,14 +334,22 @@ function StatCard({
   value,
   href,
   cta,
+  tone,
 }: {
   label: string;
   value: string;
   href: string;
   cta: string;
+  /** 'amber' highlights the card (e.g. items awaiting operator action). */
+  tone?: 'amber';
 }): JSX.Element {
   return (
-    <Card>
+    <Card
+      className={cn(
+        tone === 'amber' &&
+          'border-amber-300 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20',
+      )}
+    >
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">
           {label}
@@ -290,7 +359,12 @@ function StatCard({
         <p className="font-display text-3xl font-semibold">{value}</p>
         <Link
           href={href}
-          className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          className={cn(
+            'mt-2 inline-flex items-center gap-1 text-xs font-medium transition-colors',
+            tone === 'amber'
+              ? 'text-amber-900 hover:text-amber-950 dark:text-amber-200 dark:hover:text-amber-100'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
         >
           {cta}
           <ArrowRight className="size-3" />

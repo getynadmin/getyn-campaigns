@@ -4,7 +4,7 @@ import { Sentry } from './sentry';
 import { createServer, type Server } from 'node:http';
 
 import { prisma } from '@getyn/db';
-import { QUEUE_NAMES } from '@getyn/types';
+import { JOB_NAMES, QUEUE_NAMES } from '@getyn/types';
 import { Queue, Worker } from 'bullmq';
 
 import { loadEnv } from './env';
@@ -39,6 +39,18 @@ import { handleWaWebhookEvent } from './handlers/wa-webhooks';
 import { handleGsuiteWebhookEvent } from './handlers/gsuite-webhooks';
 import { handleTenantPurge } from './handlers/tenant-purge';
 import { handleResendWebhook } from './handlers/webhooks';
+import { handleInboundEmailProcess } from './handlers/inbound-emails';
+import {
+  handleAutomationStep,
+  handleAutomationTick,
+  handleAutomationWake,
+} from './handlers/automation';
+import {
+  handleEmailAgentEnroll,
+  handleEmailAgentFollowupTick,
+  handleEmailAgentProcessReply,
+} from './handlers/email-agent';
+import { handleEmailAgentIngestKnowledgeSource } from './handlers/email-agent-ingest';
 import { createRedisConnection } from './redis';
 
 const env = loadEnv();
@@ -103,6 +115,75 @@ workers.push(
     lockDuration: 30_000,
   }),
 );
+
+// Inbound-emails queue — Phase 8 M1 reply routing.
+//
+// One job per InboundEmail row; the handler decodes the +token in
+// the To: address and fans out to the matching campaign / agent /
+// automation. Low concurrency — routing is idempotent but each job
+// touches multiple tables and we don't need throughput here (reply
+// volume is a small fraction of outbound volume).
+workers.push(
+  new Worker(QUEUE_NAMES.inboundEmails, handleInboundEmailProcess, {
+    connection,
+    concurrency: 4,
+    lockDuration: 30_000,
+  }),
+);
+
+// Automations queue — Phase 8 M3 Drip Campaigns engine.
+//
+// Three job types share the queue: tick (repeatable heartbeat, fans
+// out step jobs), step (per-enrollment), wake (DRAFT→LIVE nudge).
+// Concurrency 4 handles typical enrollment volumes cleanly — each
+// step touches a handful of rows and enqueues at most one downstream
+// send. Bump if the tick backlog grows.
+workers.push(
+  new Worker(
+    QUEUE_NAMES.automations,
+    async (job) => {
+      switch (job.name) {
+        case JOB_NAMES.automations.tick:
+          return handleAutomationTick();
+        case JOB_NAMES.automations.step:
+          return handleAutomationStep(job);
+        case JOB_NAMES.automations.wake:
+          return handleAutomationWake(job);
+        default:
+          throw new Error(`Unknown automations job: ${job.name}`);
+      }
+    },
+    { connection, concurrency: 4, lockDuration: 60_000 },
+  ),
+);
+const automationsQueue = new Queue(QUEUE_NAMES.automations, { connection });
+
+// Email-agent queue — Phase 8 M5 (enroll + follow-up tick + reply drafting).
+//
+// Concurrency 3 so parallel LLM calls don't spike Anthropic rate limits.
+// Each job may make one Sonnet or Haiku call; a small pool keeps
+// sustained throughput respectful.
+workers.push(
+  new Worker(
+    QUEUE_NAMES.emailAgent,
+    async (job) => {
+      switch (job.name) {
+        case JOB_NAMES.emailAgent.enroll:
+          return handleEmailAgentEnroll(job);
+        case JOB_NAMES.emailAgent.followupTick:
+          return handleEmailAgentFollowupTick();
+        case JOB_NAMES.emailAgent.processReply:
+          return handleEmailAgentProcessReply(job);
+        case JOB_NAMES.emailAgent.ingestKnowledgeSource:
+          return handleEmailAgentIngestKnowledgeSource(job);
+        default:
+          throw new Error(`Unknown email-agent job: ${job.name}`);
+      }
+    },
+    { connection, concurrency: 3, lockDuration: 120_000 },
+  ),
+);
+const emailAgentQueue = new Queue(QUEUE_NAMES.emailAgent, { connection });
 
 // Sends queue — Phase 3 M6's campaign send pipeline.
 //
@@ -406,6 +487,26 @@ async function setupCronJobs(): Promise<void> {
     {
       repeat: { pattern: '15 3 * * *', tz: 'UTC' },
       jobId: 'cron:attachment-cleanup',
+    },
+  );
+  // Phase 8 M3 — automation-tick every 60s. Cron pattern instead of
+  // `every: 60000` so scheduling is stable across worker restarts
+  // (BullMQ's `every` re-anchors each boot).
+  await automationsQueue.add(
+    JOB_NAMES.automations.tick,
+    {},
+    {
+      repeat: { pattern: '* * * * *', tz: 'UTC' }, // every minute
+      jobId: 'cron_automation-tick',
+    },
+  );
+  // Phase 8 M5 — email-agent follow-up tick every minute.
+  await emailAgentQueue.add(
+    JOB_NAMES.emailAgent.followupTick,
+    {},
+    {
+      repeat: { pattern: '* * * * *', tz: 'UTC' },
+      jobId: 'cron_email-agent-followup-tick',
     },
   );
 

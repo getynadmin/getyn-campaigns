@@ -6,9 +6,15 @@
  * IntegrationCredential row when enabled; falls back to the
  * ANTHROPIC_API_KEY env var so the previous deploy stays functional.
  */
-import { cache } from 'react';
+import { cache as reactCache } from 'react';
 
 import { loadIntegration } from './credential-store';
+
+// React's `cache` returns undefined in non-React runtimes (vitest node
+// env). Fall back to identity so this module loads cleanly under test
+// — production still gets per-request memoization.
+const cache: typeof reactCache =
+  typeof reactCache === 'function' ? reactCache : ((fn) => fn);
 
 const PROVIDER = 'anthropic_llm';
 

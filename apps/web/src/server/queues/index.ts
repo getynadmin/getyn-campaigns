@@ -4,13 +4,25 @@ import {
   JOB_NAMES,
   QUEUE_NAMES,
   attachmentParsePayloadSchema,
+  automationStepPayloadSchema,
+  automationWakePayloadSchema,
+  emailAgentEnrollPayloadSchema,
+  emailAgentIngestKnowledgeSourcePayloadSchema,
+  emailAgentProcessReplyPayloadSchema,
   importJobPayloadSchema,
+  inboundEmailProcessPayloadSchema,
   pollTemplateSubmissionPayloadSchema,
   prepareCampaignPayloadSchema,
   prepareWaCampaignPayloadSchema,
   resendWebhookPayloadSchema,
   type AttachmentParsePayload,
+  type AutomationStepPayload,
+  type AutomationWakePayload,
+  type EmailAgentEnrollPayload,
+  type EmailAgentIngestKnowledgeSourcePayload,
+  type EmailAgentProcessReplyPayload,
   type ImportJobPayload,
+  type InboundEmailProcessPayload,
   type PollTemplateSubmissionPayload,
   type PrepareCampaignPayload,
   type PrepareWaCampaignPayload,
@@ -34,6 +46,9 @@ let cachedConnection: Redis | null = null;
 let cachedImportsQueue: Queue<ImportJobPayload> | null = null;
 let cachedSendsQueue: Queue | null = null;
 let cachedWebhooksQueue: Queue<ResendWebhookPayload> | null = null;
+let cachedInboundEmailsQueue: Queue<InboundEmailProcessPayload> | null = null;
+let cachedAutomationsQueue: Queue | null = null;
+let cachedEmailAgentQueue: Queue | null = null;
 
 function getConnection(): Redis {
   if (cachedConnection) return cachedConnection;
@@ -125,6 +140,159 @@ export async function enqueueResendWebhookEvent(
   // encoding. Use `_` separators instead.
   await queue.add(JOB_NAMES.webhooks.processResendEvent, validated, {
     jobId: `resend_${validated.messageId}_${validated.eventType}`,
+  });
+}
+
+function getInboundEmailsQueue(): Queue<InboundEmailProcessPayload> {
+  if (cachedInboundEmailsQueue) return cachedInboundEmailsQueue;
+  cachedInboundEmailsQueue = new Queue<InboundEmailProcessPayload>(
+    QUEUE_NAMES.inboundEmails,
+    {
+      connection: getConnection(),
+      defaultJobOptions: {
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 2_000 },
+        removeOnComplete: { age: 60 * 60 * 24 * 3, count: 5000 },
+        removeOnFail: { age: 60 * 60 * 24 * 30 },
+      },
+    },
+  );
+  return cachedInboundEmailsQueue;
+}
+
+/**
+ * Phase 8 M1 — enqueue an inbound-email row for token-routing.
+ *
+ * The webhook receiver at /api/webhooks/inbound-email persists the
+ * raw payload synchronously (so nothing is lost on worker downtime)
+ * and hands the row id here. The worker re-reads the row, decodes
+ * the +token in the To: address, and fans out to CampaignSend /
+ * EmailAgentEnrollment / AutomationEnrollment.
+ *
+ * jobId is scoped on the inboundEmailId itself so duplicate provider
+ * retries collapse.
+ */
+export async function enqueueInboundEmailProcess(
+  payload: InboundEmailProcessPayload,
+): Promise<void> {
+  const validated = inboundEmailProcessPayloadSchema.parse(payload);
+  const queue = getInboundEmailsQueue();
+  await queue.add(JOB_NAMES.inboundEmails.process, validated, {
+    jobId: `inbound_${validated.inboundEmailId}`,
+  });
+}
+
+// -----------------------------------------------------------------
+// Phase 8 M3 — automations
+// -----------------------------------------------------------------
+
+function getAutomationsQueue(): Queue {
+  if (cachedAutomationsQueue) return cachedAutomationsQueue;
+  cachedAutomationsQueue = new Queue(QUEUE_NAMES.automations, {
+    connection: getConnection(),
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5_000 },
+      removeOnComplete: { age: 60 * 60 * 24 * 3, count: 5000 },
+      removeOnFail: { age: 60 * 60 * 24 * 14 },
+    },
+  });
+  return cachedAutomationsQueue;
+}
+
+/**
+ * Kick off a single enrollment step (fresh enroll, manual re-trigger,
+ * wake after DRAFT→LIVE). The 60s tick handles the routine case;
+ * this is for interactive nudges.
+ *
+ * jobId scoped so back-to-back nudges on the same enrollment collapse.
+ */
+export async function enqueueAutomationStep(
+  payload: AutomationStepPayload,
+): Promise<void> {
+  const validated = automationStepPayloadSchema.parse(payload);
+  const queue = getAutomationsQueue();
+  await queue.add(JOB_NAMES.automations.step, validated, {
+    jobId: `step_${validated.enrollmentId}_${Date.now()}`,
+  });
+}
+
+/**
+ * Wake enrollments paused at a specific DRAFT node after it flips
+ * LIVE. Idempotent — the handler sets nextActionAt=now on qualifying
+ * rows; duplicates just no-op.
+ */
+export async function enqueueAutomationWake(
+  payload: AutomationWakePayload,
+): Promise<void> {
+  const validated = automationWakePayloadSchema.parse(payload);
+  const queue = getAutomationsQueue();
+  await queue.add(JOB_NAMES.automations.wake, validated, {
+    jobId: `wake_${validated.automationId}_${validated.nodeId}`,
+  });
+}
+
+// -----------------------------------------------------------------
+// Phase 8 M5 — Email Agent
+// -----------------------------------------------------------------
+
+function getEmailAgentQueue(): Queue {
+  if (cachedEmailAgentQueue) return cachedEmailAgentQueue;
+  cachedEmailAgentQueue = new Queue(QUEUE_NAMES.emailAgent, {
+    connection: getConnection(),
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5_000 },
+      removeOnComplete: { age: 60 * 60 * 24 * 3, count: 5000 },
+      removeOnFail: { age: 60 * 60 * 24 * 30 },
+    },
+  });
+  return cachedEmailAgentQueue;
+}
+
+/**
+ * Trigger the initial outreach draft-and-send for one enrollment.
+ * Fired by emailAgent.enroll and by activate (for pre-existing
+ * enrollments). Idempotent on enrollmentId — the worker skips
+ * enrollments that already have an outbound message.
+ */
+export async function enqueueEmailAgentEnroll(
+  payload: EmailAgentEnrollPayload,
+): Promise<void> {
+  const validated = emailAgentEnrollPayloadSchema.parse(payload);
+  const queue = getEmailAgentQueue();
+  await queue.add(JOB_NAMES.emailAgent.enroll, validated, {
+    jobId: `enroll_${validated.enrollmentId}`,
+  });
+}
+
+/**
+ * Classify + draft a reply. Fired by the M1 inbound-email worker
+ * once it's matched the reply to an EmailAgentEnrollment.
+ */
+export async function enqueueEmailAgentProcessReply(
+  payload: EmailAgentProcessReplyPayload,
+): Promise<void> {
+  const validated = emailAgentProcessReplyPayloadSchema.parse(payload);
+  const queue = getEmailAgentQueue();
+  await queue.add(JOB_NAMES.emailAgent.processReply, validated, {
+    jobId: `reply_${validated.inboundEmailId}`,
+  });
+}
+
+/**
+ * Phase 8 M6 — pull + summarize a knowledge source. Fired on
+ * knowledge-source create (URL / FILE kinds) and on the Refresh
+ * button. Bucketed on knowledgeSourceId so back-to-back triggers
+ * collapse.
+ */
+export async function enqueueEmailAgentIngest(
+  payload: EmailAgentIngestKnowledgeSourcePayload,
+): Promise<void> {
+  const validated = emailAgentIngestKnowledgeSourcePayloadSchema.parse(payload);
+  const queue = getEmailAgentQueue();
+  await queue.add(JOB_NAMES.emailAgent.ingestKnowledgeSource, validated, {
+    jobId: `ingest_${validated.knowledgeSourceId}`,
   });
 }
 

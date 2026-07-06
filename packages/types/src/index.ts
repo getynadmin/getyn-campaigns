@@ -13,3 +13,4 @@ export * from './campaigns';
 export * from './whatsapp';
 export * from './sso';
 export * from './brand';
+export * from './automation';

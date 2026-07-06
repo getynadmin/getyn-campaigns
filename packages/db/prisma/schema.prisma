@@ -157,6 +157,8 @@ enum CampaignSendStatus {
   COMPLAINED
   FAILED
   SUPPRESSED
+  // Phase 8 M1 — inbound reply matched via reply-routing token.
+  REPLIED
 }
 
 enum AbVariant {
@@ -173,6 +175,8 @@ enum CampaignEventType {
   COMPLAINED
   UNSUBSCRIBED
   FAILED
+  // Phase 8 M1
+  REPLIED
 }
 
 // Full event vocabulary defined now. Phase 2 only emits the manual/import
@@ -203,6 +207,8 @@ enum ContactEventType {
   // Phase 4 additions — webhook ingestion + inbox flagging
   WHATSAPP_FAILED
   WHATSAPP_REPLIED
+  // Phase 8 M1 — inbound reply matched to a campaign send.
+  EMAIL_REPLIED
 }
 
 // ------------------------------------------------------------------
@@ -251,6 +257,11 @@ model User {
   // Phase 5.5 — upgrade requests submitted by this user (their tenant).
   planUpgradeRequests PlanUpgradeRequest[] @relation("PlanUpgradeRequestedBy")
 
+  // Phase 8
+  automationsCreated    Automation[]        @relation("AutomationsCreatedBy")
+  emailAgentsCreated    EmailAgent[]        @relation("EmailAgentsCreatedBy")
+  emailAgentApprovals   EmailAgentMessage[] @relation("EmailAgentApprovals")
+
   @@index([email])
 }
 
@@ -277,6 +288,10 @@ model Tenant {
   postalAddress      String? // CAN-SPAM-required physical address; M6 blocks sending if null
   companyDisplayName String? // shown in email footer
   defaultFromName    String? // pre-fills the campaign wizard "from name" field
+  // Trial / paid subscription expiry. null = no expiry. Daily cron
+  // suspends the tenant once expiresAt < now() by setting
+  // TenantSendingPolicy.suspendedAt with reason 'Subscription expired'.
+  expiresAt          DateTime?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -323,6 +338,14 @@ model Tenant {
   agentAttachments    AgentAttachment[]
   proposedImportPlans ProposedImportPlan[]
   emailVerifierRuns   EmailVerifierCleanupRun[]
+
+  // Phase 8 — Automation + Email Agent + Inbound
+  automations            Automation[]
+  automationEnrollments  AutomationEnrollment[]
+  emailAgents            EmailAgent[]
+  emailAgentEnrollments  EmailAgentEnrollment[]
+  emailAgentMessages     EmailAgentMessage[]
+  inboundEmails          InboundEmail[]
 
   @@index([slug])
 }
@@ -404,6 +427,9 @@ model Contact {
   // Phase 4 — WhatsApp campaign sends + inbox conversations
   whatsAppCampaignSends WhatsAppCampaignSend[]
   whatsAppConversations WhatsAppConversation[]
+  // Phase 8 — Automation + Email Agent
+  automationEnrollments AutomationEnrollment[]
+  emailAgentEnrollments EmailAgentEnrollment[]
   // Partial unique indexes on (tenantId, email) and (tenantId, phone) are
   // added via raw SQL in the migration because Prisma 5.22 cannot declare
   // partial indexes in the schema.
@@ -479,6 +505,8 @@ model Segment {
   createdBy User?      @relation("SegmentsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   // Phase 3 — campaigns target a segment
   campaigns Campaign[]
+  // Phase 8 — email agents target a segment for enrollment
+  emailAgents EmailAgent[]
 
   @@index([tenantId, createdAt])
 }
@@ -720,6 +748,8 @@ model CampaignSend {
   campaign Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   contact  Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
   events   CampaignEvent[]
+  // Phase 8 — inbound replies matched to this send via reply-routing token
+  inboundEmails InboundEmail[]
 
   @@index([tenantId, campaignId, status])
   @@index([tenantId, contactId])
@@ -1272,6 +1302,9 @@ enum PlanMetric {
   AI_CREDITS_PER_MONTH
   CUSTOM_SENDING_DOMAINS
   USER_SEATS
+  // Phase 8
+  AUTOMATION_ENROLLMENTS_PER_MONTH
+  AGENT_REPLIES_PER_MONTH
   // Phase 7 — AI Campaign Agents conversation cap.
   AI_AGENT_CONVERSATIONS_PER_MONTH
 }
@@ -1986,4 +2019,352 @@ model EmailVerifierCleanupRun {
   runBy  User?  @relation("EmailVerifierRunsBy", fields: [runByUserId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, createdAt(sort: Desc)])
+}
+
+// ==================================================================
+// Phase 8 — Automation (Drip Campaigns) + Email Agent + Inbound Email
+// ==================================================================
+//
+// Two product surfaces sharing three pieces of infrastructure:
+//   1. Enrollment state machines (per-contact cursor through a graph)
+//   2. Reply matching (InboundEmail parsed from reply.getyn.com)
+//   3. AI drafting + approval (Email Agent's manual-approval gate)
+//
+// The Drip Campaigns "workflow" itself lives in `Automation.definition`
+// as JSON (React Flow nodes + edges). Validated at write time via a
+// Zod schema in @getyn/types.
+
+enum AutomationStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  EXITED
+  FAILED
+  // Email Agent only — enrollment is halted at a reply awaiting a
+  // human approve/edit/reject on the drafted response.
+  PAUSED_AWAITING_APPROVAL
+}
+
+enum EmailAgentTone {
+  PROFESSIONAL
+  FRIENDLY
+  CASUAL
+  PLAYFUL
+  AUTHORITATIVE
+  EMPATHETIC
+}
+
+enum EmailAgentMessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum EmailAgentMessageStatus {
+  DRAFT_AWAITING_APPROVAL
+  APPROVED_QUEUED
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  REPLIED
+  BOUNCED
+  FAILED
+  REJECTED
+}
+
+enum KnowledgeSourceKind {
+  URL
+  FILE
+  TEXT
+}
+
+enum InboundEmailMatch {
+  CAMPAIGN_SEND
+  AGENT_ENROLLMENT
+  AUTOMATION_ENROLLMENT
+  UNMATCHED
+}
+
+enum ReplyClassification {
+  INTERESTED
+  QUESTION
+  OBJECTION
+  NOT_INTERESTED
+  OUT_OF_OFFICE
+  BOUNCE
+  OTHER
+}
+
+// ------------------------------------------------------------------
+// Drip Campaigns
+// ------------------------------------------------------------------
+//
+// `definition` shape (validated by `automationDefinitionSchema` in
+// @getyn/types):
+//   {
+//     nodes: [{ id, type: 'trigger'|'email'|'whatsapp'|'delay'|
+//                        'split'|'property_update'|'list_update'|
+//                        'internal_alert'|'exit',
+//               position: { x, y }, data: <type-specific config>,
+//               status?: 'DRAFT'|'LIVE'   // messages only
+//             }],
+//     edges: [{ id, source, target, sourceHandle?, targetHandle? }]
+//   }
+//
+// Message-node Draft/Live status lives on the node object in JSON —
+// not a column. Contacts pause at DRAFT nodes; a mutation that flips
+// the node to LIVE fires the wake-paused-enrollments job.
+model Automation {
+  id              String            @id @default(cuid())
+  tenantId        String
+  name            String
+  description     String?           @db.Text
+  status          AutomationStatus  @default(DRAFT)
+  /// Zod-validated at write time. See `automationTriggerSchema` in
+  /// @getyn/types — discriminated union on `kind`.
+  trigger         Json              @default("{\"kind\": \"manual_enrollment\"}")
+  /// React Flow graph. Validated at write time.
+  definition      Json              @default("{\"nodes\": [], \"edges\": []}")
+  /// Tenant-level policy for what happens when an enrolled contact
+  /// replies to an outbound email. See @getyn/types.
+  /// `{ onReply: 'STOP' | 'CONTINUE' | 'BRANCH' }`; default STOP.
+  settings        Json              @default("{\"onReply\": \"STOP\"}")
+  createdByUserId String?
+  lastEditedAt    DateTime          @default(now())
+  lastActivatedAt DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  tenant      Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy   User?                  @relation("AutomationsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  enrollments AutomationEnrollment[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, updatedAt(sort: Desc)])
+}
+
+// Per-contact cursor through an automation. `currentNodeId` matches
+// one of the node ids in `Automation.definition.nodes[].id`.
+//
+// Worker tick query:
+//   SELECT * FROM AutomationEnrollment
+//   WHERE status='ACTIVE' AND pausedAtDraftNode=false
+//         AND nextActionAt <= now()
+//   ORDER BY nextActionAt ASC LIMIT N
+// Partial index below indexes only that subset for fast scan.
+model AutomationEnrollment {
+  id                String           @id @default(cuid())
+  tenantId          String
+  automationId      String
+  contactId         String
+  status            EnrollmentStatus @default(ACTIVE)
+  currentNodeId     String
+  /// null when paused at a DRAFT node OR after a reply STOP; the
+  /// worker never wakes an enrollment with nextActionAt=null.
+  nextActionAt      DateTime?
+  /// Set when contact reaches a message node whose status='DRAFT'.
+  /// Enrollment stays ACTIVE but is skipped by the tick worker until
+  /// the node is flipped to LIVE.
+  pausedAtDraftNode Boolean          @default(false)
+  enrolledAt        DateTime         @default(now())
+  completedAt       DateTime?
+  exitReason        String?
+  /// Array of `{ nodeId, enteredAt, exitedAt?, result? }`. Capped at
+  /// 100 entries — worker trims oldest on overflow and fires a
+  /// Sentry warning (loop hint).
+  nodeStateHistory  Json             @default("[]")
+  metadata          Json             @default("{}")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  contact    Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, automationId, status])
+  // Ranked worker scan — partial index added via raw SQL in migration
+  // (Prisma 5.22 can't declare partial indexes in schema).
+  @@index([status, nextActionAt])
+  // De-dup: a contact should be enrolled at most once per automation
+  // at a time (re-enrollment allowed only after prior exit).
+  @@index([automationId, contactId, status])
+}
+
+// ------------------------------------------------------------------
+// Email Agent
+// ------------------------------------------------------------------
+
+model EmailAgent {
+  id                    String           @id @default(cuid())
+  tenantId              String
+  name                  String
+  status                AutomationStatus @default(DRAFT)
+  goal                  String           @db.Text
+  tone                  EmailAgentTone   @default(PROFESSIONAL)
+  systemInstructions    String           @db.Text
+  /// `{ initialDelayHours: number, followUpDays: number[],
+  ///    maxFollowUps: number, stopOnReply: boolean }`
+  outboundSchedule      Json             @default("{\"initialDelayHours\": 0, \"followUpDays\": [3, 7, 14], \"maxFollowUps\": 3, \"stopOnReply\": true}")
+  /// null = manual enrollment only; set = enroll contacts matching
+  /// this segment when `autoEnrollNewContacts=true`.
+  targetSegmentId       String?
+  autoEnrollNewContacts Boolean          @default(false)
+  signature             String           @db.Text
+  fromName              String
+  fromEmail             String
+  /// Auto-set at send time to `reply+<token>@reply.getyn.com`. Stored
+  /// so the wizard can show it, but the actual value used per-send is
+  /// computed fresh so token secrets can rotate.
+  replyToDisplay        String?
+  createdByUserId       String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  tenant           Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy        User?                      @relation("EmailAgentsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  targetSegment    Segment?                   @relation(fields: [targetSegmentId], references: [id], onDelete: SetNull)
+  knowledgeSources EmailAgentKnowledgeSource[]
+  enrollments      EmailAgentEnrollment[]
+
+  @@index([tenantId, status])
+}
+
+model EmailAgentKnowledgeSource {
+  id            String              @id @default(cuid())
+  tenantId      String
+  emailAgentId  String
+  kind          KnowledgeSourceKind
+  sourceUrl     String?
+  /// FK to AgentAttachment (Phase 7.1 attachment infra) for FILE kind.
+  assetId       String?
+  rawTitle      String
+  /// Full extracted text — used for reference, not shown in prompts.
+  /// Truncated to 50k chars at ingest.
+  extractedText String              @db.Text
+  /// Haiku-generated summary that goes into every agent prompt (keeps
+  /// context small). Regenerated on refresh.
+  summary       String              @db.Text
+  extractedAt   DateTime            @default(now())
+  metadata      Json                @default("{}")
+  createdAt     DateTime            @default(now())
+
+  emailAgent EmailAgent @relation(fields: [emailAgentId], references: [id], onDelete: Cascade)
+
+  @@index([emailAgentId])
+}
+
+model EmailAgentEnrollment {
+  id            String           @id @default(cuid())
+  tenantId      String
+  emailAgentId  String
+  contactId     String
+  status        EnrollmentStatus @default(ACTIVE)
+  /// 0 = initial send pending / sent; 1..N = follow-up step.
+  currentStep   Int              @default(0)
+  nextActionAt  DateTime?
+  lastSentAt    DateTime?
+  lastInboundAt DateTime?
+  enrolledAt    DateTime         @default(now())
+  completedAt   DateTime?
+  exitReason    String?
+
+  tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  emailAgent EmailAgent         @relation(fields: [emailAgentId], references: [id], onDelete: Cascade)
+  contact    Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages   EmailAgentMessage[]
+
+  @@index([tenantId, emailAgentId, status])
+  @@index([status, nextActionAt])
+  @@index([emailAgentId, contactId, status])
+}
+
+// Every outbound and inbound message for an agent enrollment.
+// Approval queue query:
+//   SELECT * FROM EmailAgentMessage
+//   WHERE tenantId=$1 AND status='DRAFT_AWAITING_APPROVAL'
+//   ORDER BY createdAt ASC
+// Partial index on that subset added in migration.
+model EmailAgentMessage {
+  id                    String                     @id @default(cuid())
+  tenantId              String
+  enrollmentId          String
+  direction             EmailAgentMessageDirection
+  subject               String
+  bodyHtml              String                     @db.Text
+  bodyText              String                     @db.Text
+  /// Resend's message id for outbound; inbound parse id for inbound.
+  messageId             String?                    @unique
+  /// Threading — points at prior EmailAgentMessage.messageId when known.
+  inReplyToMessageId    String?
+  status                EmailAgentMessageStatus    @default(DRAFT_AWAITING_APPROVAL)
+  /// Set by Haiku on inbound; drives the auto-draft decision.
+  inboundClassification ReplyClassification?
+  approvedByUserId      String?
+  approvedAt            DateTime?
+  rejectionReason       String?
+  /// `{ prompt, knowledgeSourceIds, model, costCents }` — debugging.
+  aiGenerationContext   Json                       @default("{}")
+  aiGenerationCostCents Int                        @default(0)
+  sentAt                DateTime?
+  lastEventAt           DateTime?
+  createdAt             DateTime                   @default(now())
+
+  tenant     Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  enrollment EmailAgentEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  approvedBy User?                @relation("EmailAgentApprovals", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@index([enrollmentId, createdAt])
+}
+
+// ------------------------------------------------------------------
+// Inbound Email (shared reply routing)
+// ------------------------------------------------------------------
+//
+// Every inbound webhook creates one row here. `matchedTo` is set by
+// the token-routing worker; downstream side-effects (emitting
+// CampaignEvent, enqueuing agent-process-reply, applying automation
+// reply policy) fan out from that decision.
+
+model InboundEmail {
+  id                     String            @id @default(cuid())
+  /// Null until routing succeeds (raw payloads are persisted first,
+  /// then classified). Backfilled on match.
+  tenantId               String?
+  /// Provider's inbound message id (Resend / SendGrid). May be null
+  /// on malformed payloads that still land in the raw table.
+  messageId              String?           @unique
+  fromAddress            String
+  fromName               String?
+  toAddress              String
+  subject                String
+  bodyHtml               String            @db.Text
+  bodyText               String            @db.Text
+  /// RFC 5322 In-Reply-To + References headers, used as a secondary
+  /// match signal when the +token route decodes badly.
+  inReplyTo              String?
+  referencesHeader       String[]          @default([])
+  matchedTo              InboundEmailMatch @default(UNMATCHED)
+  campaignSendId         String?
+  emailAgentEnrollmentId String?
+  automationEnrollmentId String?
+  /// Set when the worker finished processing (success or hard fail).
+  processedAt            DateTime?
+  processError           String?
+  /// Full webhook payload — kept for debugging + provider migration.
+  rawPayload             Json
+  receivedAt             DateTime          @default(now())
+  createdAt              DateTime          @default(now())
+
+  tenant       Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaignSend CampaignSend? @relation(fields: [campaignSendId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, receivedAt(sort: Desc)])
+  @@index([matchedTo, processedAt])
+  @@index([emailAgentEnrollmentId])
+  @@index([automationEnrollmentId])
 }

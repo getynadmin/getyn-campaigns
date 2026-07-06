@@ -271,6 +271,15 @@ const smtpRouter = createAdminRouter({
           incomingPassword === ''
             ? null
             : { password: incomingPassword };
+        // Guard: can't enable SMTP without a password on file. Either
+        // the request supplies one, or the existing row already has one.
+        if (input.enabled && secretsPayload === null && !existing?.hasSecrets) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message:
+              'Enter the SMTP password before enabling — no credentials are on file yet.',
+          });
+        }
         await saveIntegration(
           {
             provider: 'smtp_default',
@@ -298,8 +307,23 @@ const smtpRouter = createAdminRouter({
     .input(z.object({ to: z.string().trim().email() }))
     .mutation(async ({ input }) => {
       const smtp = await getSmtpCredentials();
-      if (!smtp.enabled) {
-        const error = 'SMTP integration is disabled.';
+      if (!smtp.enabled || !smtp.config || !smtp.password) {
+        // Diagnose more precisely than "disabled" — the row may be
+        // toggled enabled but missing host/password.
+        const row = await adminLoadIntegration<SmtpConfig, SmtpSecrets>(
+          'smtp_default',
+        );
+        let error: string;
+        if (!row || !row.enabled) {
+          error = 'SMTP integration is disabled. Toggle it on and save.';
+        } else if (!row.hasSecrets) {
+          error =
+            'SMTP password is missing. Re-enter the password and save before testing.';
+        } else if (!row.config?.host) {
+          error = 'SMTP host is not configured.';
+        } else {
+          error = 'SMTP credentials could not be decrypted — re-save the password.';
+        }
         await recordTestResult({ provider: 'smtp_default', ok: false, error });
         throw new TRPCError({ code: 'BAD_REQUEST', message: error });
       }

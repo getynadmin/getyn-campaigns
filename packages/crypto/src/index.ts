@@ -254,3 +254,8 @@ function isEncryptedField(value: unknown): value is EncryptedField {
 
 /** Type guard exported for callers that read raw Json columns. */
 export { isEncryptedField };
+
+// Phase 8 M1 — reply-routing token codec (HMAC-signed). Consumed by
+// both apps/web (encoding on outbound) and apps/worker (decoding on
+// inbound). Lives here because it's server-only + crypto-adjacent.
+export * from './reply-token';

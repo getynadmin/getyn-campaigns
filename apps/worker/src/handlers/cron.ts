@@ -26,6 +26,29 @@ import {
 export async function handleDailyReset(): Promise<void> {
   console.info('[cron:daily-reset] starting');
 
+  // Expire tenants whose subscription window has closed. Sets
+  // suspendedAt on the sending policy so the send pipeline rejects
+  // new dispatches; UI shows the standard suspended banner. Uses
+  // upsert because trial-only tenants may not yet have a policy row.
+  const now = new Date();
+  const expired = await prisma.tenant.findMany({
+    where: { expiresAt: { lt: now } },
+    select: { id: true, sendingPolicy: { select: { suspendedAt: true } } },
+  });
+  let expiredCount = 0;
+  for (const t of expired) {
+    if (t.sendingPolicy?.suspendedAt) continue; // already suspended
+    await prisma.tenantSendingPolicy.upsert({
+      where: { tenantId: t.id },
+      update: { suspendedAt: now, suspensionReason: 'Subscription expired' },
+      create: { tenantId: t.id, suspendedAt: now, suspensionReason: 'Subscription expired' },
+    });
+    expiredCount += 1;
+  }
+  if (expiredCount > 0) {
+    console.info(`[cron:daily-reset] suspended ${expiredCount} expired tenants`);
+  }
+
   // Zero everyone's daily counters.
   const reset = await prisma.tenantSendingPolicy.updateMany({
     data: {

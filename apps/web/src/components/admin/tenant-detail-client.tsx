@@ -49,6 +49,8 @@ const METRIC_LABEL: Record<PlanMetric, string> = {
   CUSTOM_SENDING_DOMAINS: 'Custom sending domains',
   USER_SEATS: 'User seats',
   AI_AGENT_CONVERSATIONS_PER_MONTH: 'AI agent conversations / month',
+  AUTOMATION_ENROLLMENTS_PER_MONTH: 'Automation enrollments / month',
+  AGENT_REPLIES_PER_MONTH: 'Email agent replies / month',
 };
 
 /**

@@ -8,9 +8,15 @@
  * is deferred until an openai_llm row actually exists — for now the
  * DALL-E row carries its own key.
  */
-import { cache } from 'react';
+import { cache as reactCache } from 'react';
 
 import { loadIntegration } from './credential-store';
+
+// React's `cache` returns undefined in non-React runtimes (vitest node
+// env). Fall back to identity so this module loads cleanly under test
+// — production still gets per-request memoization.
+const cache: typeof reactCache =
+  typeof reactCache === 'function' ? reactCache : ((fn) => fn);
 
 const PROVIDER = 'openai_dalle';
 

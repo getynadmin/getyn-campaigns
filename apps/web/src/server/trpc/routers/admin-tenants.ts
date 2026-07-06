@@ -4,11 +4,19 @@ import { z } from 'zod';
 import {
   CampaignStatus,
   PlanMetric,
+  Role,
   SubscriptionStatus,
   WAStatus,
   prisma,
   type Prisma,
 } from '@getyn/db';
+
+import { getSupabaseAdmin } from '@/server/auth/supabase-admin';
+import { appBaseUrl } from '@/server/auth/auth0';
+import {
+  generateTenantPassword,
+  sendTenantWelcomeEmail,
+} from '@/server/admin/welcome-email';
 
 import {
   auditStaffAccess,
@@ -525,5 +533,261 @@ export const adminTenantsRouter = createAdminRouter({
         };
       });
     }),
+
+  /**
+   * Manual tenant creation from /admin/tenants. Replaces the
+   * previously-noted "no tenant creation here" rule — staff now have
+   * a first-class create flow for onboarding outside SSO / self-serve
+   * signup (e.g. trial setup for sales-led deals).
+   *
+   * Steps (best-effort: failures partway leave a half-state that the
+   * staff user can clean up via the detail page — no transaction
+   * because we cross into Supabase Auth which isn't part of our DB):
+   *
+   *   1. Generate password (if auto-gen) or use the supplied one.
+   *   2. Create or fetch the Supabase auth user with that password.
+   *   3. Upsert the User row by email; link supabaseUserId.
+   *   4. Create the Tenant (with unique slug, planId, expiresAt).
+   *   5. Create the Subscription row pointing at the chosen plan.
+   *   6. Create the OWNER Membership.
+   *   7. Optional: write a TenantLimitOverride for EMAILS_PER_MONTH.
+   *   8. Optional: send the welcome email through SMTP.
+   */
+  create: supportAdminProcedure
+    .input(
+      z.object({
+        name: z.string().trim().min(1).max(120),
+        ownerEmail: z.string().trim().email().toLowerCase(),
+        ownerName: z.string().trim().max(120).optional(),
+        planId: z.string().min(1).max(64),
+        // null = no quota override (use plan default).
+        emailsPerMonthOverride: z.number().int().min(-1).max(50_000_000).nullable(),
+        // null = no expiry.
+        expiresAt: z.string().datetime().nullable(),
+        autoGeneratePassword: z.boolean().default(true),
+        // Required when autoGeneratePassword=false. Min 12 chars per
+        // Supabase defaults.
+        customPassword: z.string().min(12).max(128).optional(),
+        sendWelcomeEmail: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async (tx) => {
+        // Pre-flight checks before we touch Supabase.
+        const plan = await tx.plan.findUnique({
+          where: { id: input.planId },
+          select: { id: true, slug: true, name: true, isArchived: true },
+        });
+        if (!plan) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Plan not found.' });
+        }
+        if (plan.isArchived) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'That plan is archived — pick another.',
+          });
+        }
+        const password = input.autoGeneratePassword
+          ? generateTenantPassword()
+          : input.customPassword;
+        if (!password) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Provide a password or enable auto-generate.',
+          });
+        }
+
+        // 1. Supabase auth user. If they already exist we just reset
+        //    the password — manual creation should not silently
+        //    refuse just because the email was in the pool.
+        const supabase = getSupabaseAdmin();
+        let supabaseUserId: string;
+        const created = await supabase.auth.admin.createUser({
+          email: input.ownerEmail,
+          password,
+          email_confirm: true,
+          user_metadata: input.ownerName ? { name: input.ownerName } : undefined,
+        });
+        if (created.data?.user) {
+          supabaseUserId = created.data.user.id;
+        } else if (
+          created.error?.message?.toLowerCase().includes('already')
+        ) {
+          // Look up the existing user. listUsers paginates; we filter
+          // client-side because Supabase doesn't expose a by-email
+          // lookup on the admin API.
+          const list = await supabase.auth.admin.listUsers({ perPage: 200 });
+          const found = list.data?.users.find(
+            (u) => u.email?.toLowerCase() === input.ownerEmail,
+          );
+          if (!found) {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: `Supabase reported email exists but lookup failed: ${created.error.message}`,
+            });
+          }
+          supabaseUserId = found.id;
+          // Reset password so the welcome email creds work.
+          await supabase.auth.admin.updateUserById(found.id, { password });
+        } else {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: `Supabase auth user creation failed: ${created.error?.message ?? 'unknown'}`,
+          });
+        }
+
+        // 2. Upsert User by email. Link the Supabase id if not yet
+        //    linked. We do NOT clobber an existing supabaseUserId on
+        //    a returning user — that would unbind their current
+        //    sessions.
+        const user = await tx.user.upsert({
+          where: { email: input.ownerEmail },
+          create: {
+            email: input.ownerEmail,
+            name: input.ownerName ?? null,
+            supabaseUserId,
+          },
+          update: {
+            name: input.ownerName ?? undefined,
+            supabaseUserId: undefined, // leave as-is if set
+          },
+          select: { id: true, supabaseUserId: true },
+        });
+        if (!user.supabaseUserId) {
+          await tx.user.update({
+            where: { id: user.id },
+            data: { supabaseUserId },
+          });
+        }
+
+        // 3. Tenant + slug. Retry on slug collision (cheap, rare).
+        const baseSlug =
+          input.name
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 32) || 'workspace';
+        let slug = baseSlug;
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          const candidate =
+            attempt === 0
+              ? baseSlug
+              : `${baseSlug}-${Math.random().toString(36).slice(2, 6)}`;
+          const collision = await tx.tenant.findUnique({
+            where: { slug: candidate },
+            select: { id: true },
+          });
+          if (!collision) {
+            slug = candidate;
+            break;
+          }
+          if (attempt === 5) {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Could not generate a unique tenant slug.',
+            });
+          }
+        }
+        const tenant = await tx.tenant.create({
+          data: {
+            slug,
+            name: input.name,
+            provisioningSource: 'DIRECT',
+            expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+          },
+          select: { id: true, slug: true, name: true },
+        });
+
+        // 4. Subscription. Status defaults to ACTIVE; staff can flip
+        //    to TRIALING from the detail page if needed.
+        await tx.subscription.create({
+          data: {
+            tenantId: tenant.id,
+            planId: plan.id,
+            status: SubscriptionStatus.ACTIVE,
+            assignedByStaffUserId: ctx.staff.staffUserId,
+          },
+        });
+
+        // 5. OWNER membership.
+        await tx.membership.create({
+          data: { userId: user.id, tenantId: tenant.id, role: Role.OWNER },
+        });
+
+        // 6. Optional EMAILS_PER_MONTH override.
+        if (
+          input.emailsPerMonthOverride !== null &&
+          input.emailsPerMonthOverride !== undefined
+        ) {
+          await tx.tenantLimitOverride.create({
+            data: {
+              tenantId: tenant.id,
+              metric: PlanMetric.EMAILS_PER_MONTH,
+              included: input.emailsPerMonthOverride,
+              reason: `Manual create by staff: ${ctx.staff.staffEmail}`,
+              createdByStaffUserId: ctx.staff.staffUserId,
+            },
+          });
+        }
+
+        // 7. Optional welcome email. We don't fail the whole
+        //    operation if SMTP isn't configured — the staff user
+        //    sees the result in the response and can copy creds
+        //    from the success toast.
+        let emailResult: { ok: boolean; error?: string } | null = null;
+        if (input.sendWelcomeEmail) {
+          emailResult = await sendTenantWelcomeEmail({
+            to: input.ownerEmail,
+            ownerName: input.ownerName ?? null,
+            tenantName: tenant.name,
+            loginUrl: `${appBaseUrl()}/login`,
+            email: input.ownerEmail,
+            password,
+          });
+        }
+
+        return {
+          result: {
+            tenantId: tenant.id,
+            slug: tenant.slug,
+            // Returned so the success toast can show the temp password
+            // to staff if email send was skipped or failed.
+            password,
+            email: emailResult,
+          },
+          audit: {
+            action: 'admin.tenant.created',
+            targetTenantId: tenant.id,
+            afterSnapshot: {
+              name: tenant.name,
+              slug: tenant.slug,
+              ownerEmail: input.ownerEmail,
+              planId: plan.id,
+              planSlug: plan.slug,
+              expiresAt: input.expiresAt,
+              emailsPerMonthOverride: input.emailsPerMonthOverride,
+              autoGeneratedPassword: input.autoGeneratePassword,
+              welcomeEmailSent: emailResult?.ok ?? false,
+            },
+          },
+        };
+      });
+    }),
+
+  /**
+   * Plan options for the create-tenant dropdown. Only non-archived
+   * plans are returned, ordered by isDefault desc → name asc so the
+   * default lands first.
+   */
+  listPlanOptions: staffProcedure.query(async () => {
+    const plans = await prisma.plan.findMany({
+      where: { isArchived: false },
+      select: { id: true, slug: true, name: true, isDefault: true },
+      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+    });
+    return plans;
+  }),
 });
 

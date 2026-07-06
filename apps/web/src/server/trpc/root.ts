@@ -1,4 +1,5 @@
 import { agentRouter } from './routers/agent';
+import { automationRouter } from './routers/automation';
 import { agentAttachmentsRouter } from './routers/agent-attachments';
 import { emailVerifierRouter } from './routers/email-verifier';
 import { aiRouter } from './routers/ai';
@@ -6,6 +7,9 @@ import { authRouter } from './routers/auth';
 import { campaignsRouter } from './routers/campaigns';
 import { contactsRouter } from './routers/contacts';
 import { customFieldsRouter } from './routers/custom-fields';
+import { emailAgentRouter } from './routers/email-agent';
+import { emailAgentInboxRouter } from './routers/email-agent-inbox';
+import { emailInboxRouter } from './routers/email-inbox';
 import { emailTemplatesRouter } from './routers/email-templates';
 import { eventsRouter } from './routers/events';
 import { importsRouter } from './routers/imports';
@@ -44,7 +48,13 @@ export const appRouter = createTRPCRouter({
   suppression: suppressionRouter,
   sendingDomain: sendingDomainsRouter,
   emailTemplate: emailTemplatesRouter,
+  emailInbox: emailInboxRouter,
   campaign: campaignsRouter,
+  // Phase 8 — Automation (Drip Campaigns)
+  automation: automationRouter,
+  // Phase 8 M4 — Email Agent config
+  emailAgent: emailAgentRouter,
+  emailAgentInbox: emailAgentInboxRouter,
   // Phase 4 — WhatsApp Business
   whatsAppAccount: whatsAppAccountsRouter,
   whatsAppPhoneNumber: whatsAppPhoneNumbersRouter,

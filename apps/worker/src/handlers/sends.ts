@@ -27,6 +27,7 @@ import {
   type AbTest,
   type AbVariantValue,
 } from '@getyn/types';
+import { buildReplyToAddress } from '@getyn/crypto';
 
 import { renderForRecipient, setupBatchRender } from './render';
 
@@ -567,6 +568,19 @@ async function handleDispatchBatch(job: Job): Promise<void> {
       trackingLinks: setup.trackingLinks,
     });
 
+    // Phase 8 M1 — override Reply-To with a routed +token address so
+    // inbound replies land in our webhook + get matched back to this
+    // CampaignSend. Skipped (falls back to campaign-configured Reply-
+    // To) when routing isn't configured yet.
+    const routedReplyTo = buildReplyToAddress(
+      'c',
+      { id: send.id, tenantId },
+      {
+        secret: process.env.REPLY_ROUTING_SECRET ?? null,
+        inboundDomain: process.env.REPLY_INBOUND_DOMAIN ?? null,
+      },
+    );
+
     try {
       let messageId: string | null = null;
       if (resend) {
@@ -576,7 +590,7 @@ async function handleDispatchBatch(job: Job): Promise<void> {
           subject: rendered.subject,
           html: rendered.html,
           text: rendered.text,
-          replyTo: rendered.replyTo ?? undefined,
+          replyTo: routedReplyTo ?? rendered.replyTo ?? undefined,
           headers: {
             // RFC 8058 one-click unsubscribe. Mail clients POST to the
             // URL on the user's button press; our /api/unsubscribe/[token]

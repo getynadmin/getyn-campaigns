@@ -214,7 +214,7 @@ describe('composeUnlayerJson', () => {
         plan: [{ slug: 'hero_text_only', content: {} }],
         ctx: CTX,
       }),
-    ).rejects.toThrow(/placeholders.*weren't filled/);
+    ).rejects.toThrow(/fill.*placeholders/i);
   });
 
   it("doesn't count {{contact.unsubscribeToken}} as unresolved", async () => {
