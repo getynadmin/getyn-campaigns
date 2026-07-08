@@ -319,8 +319,23 @@ export function Sidebar({
         </div>
       )}
 
-      {/* Scrollable nav */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4">
+      {/* Scrollable nav. Custom-styled scrollbar (thin, translucent
+          thumb) so the default browser chrome doesn't render a white
+          gutter on the dark-themed sidebar. */}
+      <nav
+        className={cn(
+          'flex-1 overflow-y-auto px-3 py-4',
+          '[&::-webkit-scrollbar]:w-1.5',
+          '[&::-webkit-scrollbar-track]:bg-transparent',
+          '[&::-webkit-scrollbar-thumb]:rounded-full',
+          '[&::-webkit-scrollbar-thumb]:bg-foreground/10',
+          'hover:[&::-webkit-scrollbar-thumb]:bg-foreground/20',
+          '[html[data-sidebar-theme=dark]_&]:[&::-webkit-scrollbar-thumb]:bg-white/10',
+          '[html[data-sidebar-theme=dark]_&]:hover:[&::-webkit-scrollbar-thumb]:bg-white/20',
+          '[scrollbar-width:thin]',
+          '[scrollbar-color:rgba(255,255,255,0.10)_transparent]',
+        )}
+      >
         {sections.map((section) => (
           <div key={section.key} className={cn(collapsed ? 'mb-3' : 'mb-5')}>
             {!collapsed && (

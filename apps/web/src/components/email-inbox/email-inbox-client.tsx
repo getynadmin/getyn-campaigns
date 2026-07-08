@@ -36,7 +36,7 @@ export function EmailInboxClient(): JSX.Element {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
       <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-xl font-semibold">Email inbox</h1>
