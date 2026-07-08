@@ -608,17 +608,17 @@ export const automationRouter = createTRPCRouter({
           max_tokens: 8000,
           system: BUILDER_SYSTEM_PROMPT,
           messages: [
-            { role: 'user', content: `Brief: ${input.prompt}` },
-            // Prefill with the opening brace so the model has to
-            // continue as JSON — proper prefill pattern per Anthropic docs.
-            { role: 'assistant', content: '{' },
+            {
+              role: 'user',
+              content: `Brief: ${input.prompt}\n\nRespond with ONLY the JSON object. Your response's first character must be "{" and last must be "}". No markdown, no prose, no code fences.`,
+            },
           ],
         });
         const text = (res.content as { type: string; text?: string }[])
           .filter((c) => c.type === 'text')
           .map((c) => c.text ?? '')
           .join('');
-        raw = `{${text}`;
+        raw = text;
       } catch (err) {
         // Surface the real reason to the client rather than a
         // generic wrapper — the previous "Try again in a moment"
@@ -963,8 +963,5 @@ Your entire response MUST be a single valid JSON object, nothing else.
 - No trailing "// " comments inside the JSON.
 - All string values MUST be valid JSON strings — escape newlines as \\n,
   quotes as \\", backslashes as \\\\.
-- The first character of your response is "{" and the last is "}".
-
-The assistant turn will be prefilled with "{" — continue directly with
-the rest of the JSON.`;
+- The first character of your response is "{" and the last is "}".`;
 
