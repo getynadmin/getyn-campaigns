@@ -23,7 +23,6 @@ import { getAnthropicClient, isAiConfigured } from '@getyn/ai';
 import { assertWithinLimit } from '@/server/billing/assert-limit';
 import { getAnthropicCredentials } from '@/server/integrations/anthropic';
 import {
-  enqueueAutomationStep,
   enqueueAutomationSteps,
   enqueueAutomationWake,
 } from '@/server/queues';
