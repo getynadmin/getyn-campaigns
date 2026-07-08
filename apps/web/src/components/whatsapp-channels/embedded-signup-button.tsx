@@ -29,8 +29,11 @@ import { api } from '@/lib/trpc';
  * combined result, then call the server.
  */
 
-const META_APP_ID = process.env.NEXT_PUBLIC_META_APP_ID;
-const META_CONFIG_ID = process.env.NEXT_PUBLIC_META_CONFIG_ID;
+// Phase 4 M11 → Phase 8 followup: config now flows from
+// whatsAppAccount.embeddedSignupConfig (DB-backed, falls back to
+// META_APP_ID / META_CONFIG_ID env vars server-side). Removed the
+// build-time NEXT_PUBLIC_META_* reads so admins can rotate the app
+// without a redeploy.
 
 declare global {
   interface Window {
@@ -53,6 +56,10 @@ export function EmbeddedSignupButton({
 }: {
   onSuccess: () => void;
 }): JSX.Element | null {
+  const config = api.whatsAppAccount.embeddedSignupConfig.useQuery();
+  const metaAppId = config.data?.appId ?? null;
+  const metaConfigId = config.data?.configId ?? null;
+
   const [sdkReady, setSdkReady] = useState(false);
   const [pending, setPending] = useState(false);
   const wabaInfoRef = useRef<{
@@ -72,9 +79,9 @@ export function EmbeddedSignupButton({
     },
   });
 
-  // Load FB SDK once.
+  // Load FB SDK once the appId resolves from tRPC.
   useEffect(() => {
-    if (!META_APP_ID) return;
+    if (!metaAppId) return;
     if (typeof window === 'undefined') return;
     if (window.FB) {
       setSdkReady(true);
@@ -82,7 +89,7 @@ export function EmbeddedSignupButton({
     }
     window.fbAsyncInit = (): void => {
       window.FB!.init({
-        appId: META_APP_ID,
+        appId: metaAppId,
         version: 'v21.0',
         xfbml: false,
       });
@@ -96,7 +103,7 @@ export function EmbeddedSignupButton({
     script.defer = true;
     script.src = 'https://connect.facebook.net/en_US/sdk.js';
     document.body.appendChild(script);
-  }, []);
+  }, [metaAppId]);
 
   // Listen for Embedded-Signup postMessage events that carry the
   // chosen wabaId + phoneNumberId.
@@ -127,7 +134,10 @@ export function EmbeddedSignupButton({
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
-  if (!META_APP_ID || !META_CONFIG_ID) return null;
+  // Hide until config resolves — server may still return nulls if
+  // the admin hasn't finished configuring the whatsapp_meta row.
+  if (config.isLoading) return null;
+  if (!metaAppId || !metaConfigId) return null;
 
   const onClick = (): void => {
     if (!window.FB) {
@@ -175,7 +185,7 @@ export function EmbeddedSignupButton({
         }, 100);
       },
       {
-        config_id: META_CONFIG_ID,
+        config_id: metaConfigId,
         response_type: 'code',
         override_default_response_type: true,
         extras: {

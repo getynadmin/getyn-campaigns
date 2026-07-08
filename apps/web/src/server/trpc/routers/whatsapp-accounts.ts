@@ -124,6 +124,27 @@ export const whatsAppAccountsRouter = createTRPCRouter({
    * config) for now since one app handles all tenants in MVP. We'll
    * revisit per-tenant secret storage if multi-app deployments appear.
    */
+  /**
+   * Configuration for the client-side Embedded Signup button.
+   *
+   * Returns the Meta App ID + Config ID from the DB-stored
+   * `whatsapp_meta` integration when enabled, else falls back to
+   * META_APP_ID / META_CONFIG_ID env vars. The button hides itself
+   * when appId or configId are null — the manual connection flow
+   * stays available regardless.
+   *
+   * Any tenant member can read this (no secrets are exposed —
+   * only public identifiers Meta shows in its own UI).
+   */
+  embeddedSignupConfig: tenantProcedure.query(async () => {
+    const creds = await getWhatsAppCredentials();
+    return {
+      appId: creds.appId,
+      configId: creds.configId,
+      available: Boolean(creds.appId && creds.configId),
+    };
+  }),
+
   connectManually: tenantProcedure
     .use(enforceRole(Role.OWNER, Role.ADMIN))
     .input(whatsAppAccountConnectManuallySchema)
