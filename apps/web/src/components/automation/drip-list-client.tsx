@@ -4,7 +4,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Plus, Workflow } from 'lucide-react';
+import {
+  Loader2,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Send,
+  Workflow,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +22,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -34,6 +47,12 @@ export function DripAutomationsListClient({
   slug: string;
 }): JSX.Element {
   const [createOpen, setCreateOpen] = useState(false);
+  const [renameFor, setRenameFor] = useState<{ id: string; name: string } | null>(
+    null,
+  );
+  const [testSendFor, setTestSendFor] = useState<{ id: string; name: string } | null>(
+    null,
+  );
   const { data, isLoading } = api.automation.list.useQuery();
   // Live per-automation status breakdown. Polls every 30s while the
   // page is open; single query returns counts for every row.
@@ -78,51 +97,82 @@ export function DripAutomationsListClient({
       ) : (
         <ul className="divide-y rounded-lg border bg-card">
           {data?.items.map((row) => (
-            <li key={row.id}>
+            <li
+              key={row.id}
+              className="flex items-start justify-between gap-2 px-4 py-3 transition-colors hover:bg-muted/40"
+            >
               <Link
                 href={`/t/${slug}/automation/drip/${row.id}/edit`}
-                className="flex items-start justify-between gap-4 px-4 py-3 transition-colors hover:bg-muted/40"
+                className="min-w-0 flex-1"
               >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{row.name}</span>
-                    <StatusBadge status={row.status} />
-                  </div>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {triggerSummary(row.trigger)} ·{' '}
-                    {row._count.enrollments.toLocaleString()} enrolled
-                    {(() => {
-                      const s = bulkStats.data?.[row.id];
-                      if (!s || s.active + s.completed === 0) return null;
-                      return (
-                        <>
-                          {' · '}
-                          <span className="text-emerald-700 dark:text-emerald-400">
-                            {s.active.toLocaleString()} active
-                          </span>
-                          {s.completed > 0 && (
-                            <>
-                              {' · '}
-                              <span className="text-muted-foreground">
-                                {s.completed.toLocaleString()} completed
-                              </span>
-                            </>
-                          )}
-                        </>
-                      );
-                    })()}
-                    {row.lastActivatedAt && (
-                      <>
-                        {' · Activated '}
-                        {new Date(row.lastActivatedAt).toLocaleDateString()}
-                      </>
-                    )}
-                  </p>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{row.name}</span>
+                  <StatusBadge status={row.status} />
                 </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {triggerSummary(row.trigger)} ·{' '}
+                  {row._count.enrollments.toLocaleString()} enrolled
+                  {(() => {
+                    const s = bulkStats.data?.[row.id];
+                    if (!s || s.active + s.completed === 0) return null;
+                    return (
+                      <>
+                        {' · '}
+                        <span className="text-emerald-700 dark:text-emerald-400">
+                          {s.active.toLocaleString()} active
+                        </span>
+                        {s.completed > 0 && (
+                          <>
+                            {' · '}
+                            <span className="text-muted-foreground">
+                              {s.completed.toLocaleString()} completed
+                            </span>
+                          </>
+                        )}
+                      </>
+                    );
+                  })()}
+                  {row.lastActivatedAt && (
+                    <>
+                      {' · Activated '}
+                      {new Date(row.lastActivatedAt).toLocaleDateString()}
+                    </>
+                  )}
+                </p>
+              </Link>
+              <div className="flex shrink-0 items-center gap-1">
                 <span className="whitespace-nowrap text-xs text-muted-foreground">
                   Edited {relTime(row.lastEditedAt)}
                 </span>
-              </Link>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      aria-label="Row actions"
+                    >
+                      <MoreHorizontal className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        setRenameFor({ id: row.id, name: row.name })
+                      }
+                    >
+                      <Pencil className="mr-2 size-3.5" /> Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        setTestSendFor({ id: row.id, name: row.name })
+                      }
+                    >
+                      <Send className="mr-2 size-3.5" /> Send test emails
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </li>
           ))}
         </ul>
@@ -133,7 +183,168 @@ export function DripAutomationsListClient({
         onOpenChange={setCreateOpen}
         slug={slug}
       />
+      <RenameAutomationDialog
+        target={renameFor}
+        onClose={() => setRenameFor(null)}
+      />
+      <SendTestDialog
+        target={testSendFor}
+        onClose={() => setTestSendFor(null)}
+      />
     </div>
+  );
+}
+
+function RenameAutomationDialog({
+  target,
+  onClose,
+}: {
+  target: { id: string; name: string } | null;
+  onClose: () => void;
+}): JSX.Element {
+  const [name, setName] = useState('');
+  const utils = api.useUtils();
+  const rename = api.automation.rename.useMutation({
+    onSuccess: () => {
+      toast.success('Renamed.');
+      void utils.automation.list.invalidate();
+      onClose();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  // Sync input with target when dialog opens.
+  if (target && name === '' && rename.status === 'idle') {
+    setName(target.name);
+  }
+  return (
+    <Dialog
+      open={target !== null}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+          setName('');
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Rename automation</DialogTitle>
+          <DialogDescription>
+            This only changes the display name. Everything else stays intact.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Name</Label>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+            maxLength={120}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() =>
+              target && rename.mutate({ id: target.id, name: name.trim() })
+            }
+            disabled={rename.isPending || name.trim().length === 0}
+          >
+            {rename.isPending && (
+              <Loader2 className="mr-1 size-4 animate-spin" />
+            )}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SendTestDialog({
+  target,
+  onClose,
+}: {
+  target: { id: string; name: string } | null;
+  onClose: () => void;
+}): JSX.Element {
+  const [recipients, setRecipients] = useState('');
+  const sendTest = api.automation.sendTestEmails.useMutation({
+    onSuccess: (data) => {
+      const msg =
+        data.errors.length > 0
+          ? `Sent ${data.sent} of ${data.emailNodes * data.recipients}. Some failed: ${data.errors.slice(0, 2).join('; ')}`
+          : `Sent ${data.sent} preview emails (${data.emailNodes} node${
+              data.emailNodes === 1 ? '' : 's'
+            } × ${data.recipients} recipient${
+              data.recipients === 1 ? '' : 's'
+            }).`;
+      toast.success(msg);
+      onClose();
+      setRecipients('');
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  return (
+    <Dialog
+      open={target !== null}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+          setRecipients('');
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Send test emails</DialogTitle>
+          <DialogDescription>
+            Fires every Email node in <strong>{target?.name}</strong> to the
+            recipients below. Merge tags are replaced with sample values;
+            subjects are prefixed <span className="font-mono">[TEST · Step N]</span>{' '}
+            so the step order is obvious in the inbox.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label className="text-xs">
+            Recipients{' '}
+            <span className="font-normal text-muted-foreground">
+              (comma-separated, up to 10)
+            </span>
+          </Label>
+          <Input
+            value={recipients}
+            onChange={(e) => setRecipients(e.target.value)}
+            placeholder="you@example.com, colleague@example.com"
+            autoFocus
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => {
+              const list = recipients
+                .split(',')
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0);
+              if (!target || list.length === 0) return;
+              sendTest.mutate({ id: target.id, recipients: list });
+            }}
+            disabled={sendTest.isPending || recipients.trim().length === 0}
+          >
+            {sendTest.isPending && (
+              <Loader2 className="mr-1 size-4 animate-spin" />
+            )}
+            <Send className="mr-1 size-4" />
+            Send test
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -15,6 +15,7 @@ import {
   automationTriggerSchema,
   validateAutomationDefinition,
   type AutomationDefinition,
+  type AutomationNode,
 } from '@getyn/types';
 
 import { getAnthropicClient, isAiConfigured } from '@getyn/ai';
@@ -1083,6 +1084,174 @@ export const automationRouter = createTRPCRouter({
    * Cheaper than a full round-trip through the design composer for
    * the common "pick a template" flow.
    */
+  /**
+   * Fire a preview of every Email node in the workflow to the given
+   * recipients. Regardless of DRAFT / LIVE — the operator is
+   * previewing content, not running the flow. Subjects are prefixed
+   * with the step number so multi-email drips arrive in a legible
+   * order in the inbox.
+   *
+   * Uses the workflow's own from-name / from-email when configured
+   * so previews look identical to real sends. Falls back to the
+   * NOTIFICATIONS_FROM env / tenant-default identity otherwise —
+   * same fallback chain the engine uses.
+   */
+  sendTestEmails: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        id: z.string().min(1),
+        recipients: z
+          .array(z.string().trim().email())
+          .min(1, 'Add at least one recipient email')
+          .max(10, 'Up to 10 recipients per test'),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return withTenant(tenantId, async (tx) => {
+        const row = await tx.automation.findFirst({
+          where: { id: input.id, tenantId },
+          select: {
+            id: true,
+            name: true,
+            definition: true,
+            settings: true,
+            tenant: {
+              select: { name: true, companyDisplayName: true },
+            },
+          },
+        });
+        if (!row) throw new TRPCError({ code: 'NOT_FOUND' });
+        const parsed = automationDefinitionSchema.safeParse(row.definition);
+        if (!parsed.success) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Automation definition is malformed.',
+          });
+        }
+        const emailNodes = parsed.data.nodes.filter(
+          (n): n is Extract<AutomationNode, { type: 'email' }> =>
+            n.type === 'email',
+        );
+        if (emailNodes.length === 0) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'This workflow has no Email nodes to preview.',
+          });
+        }
+
+        const settings = row.settings as {
+          fromName?: string | null;
+          fromEmail?: string | null;
+        } | null;
+        const fromEmail =
+          settings?.fromEmail ??
+          process.env.NOTIFICATIONS_FROM ??
+          'noreply@getyn.com';
+        const fromName =
+          settings?.fromName ??
+          row.tenant.companyDisplayName ??
+          row.tenant.name;
+
+        const apiKey = process.env.RESEND_API_KEY;
+        if (!apiKey) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'RESEND_API_KEY is not configured on this deployment.',
+          });
+        }
+        const { Resend } = await import('resend');
+        const client = new Resend(apiKey);
+
+        // Sample merge tags — matches the automation engine's
+        // buildMergeTags shape closely enough for preview.
+        const merge: Record<string, string> = {
+          'contact.firstName': 'Alex',
+          'contact.lastName': 'Rivera',
+          'contact.email': ctx.user.email ?? 'preview@example.com',
+          'tenant.name': row.tenant.name,
+          'tenant.company': row.tenant.companyDisplayName ?? row.tenant.name,
+          firstName: 'Alex',
+          lastName: 'Rivera',
+          email: ctx.user.email ?? 'preview@example.com',
+        };
+        function render(template: string): string {
+          return template.replace(
+            /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g,
+            (m, key: string) => (key in merge ? merge[key]! : m),
+          );
+        }
+        function stripHtml(html: string): string {
+          return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        }
+        function textToHtml(text: string): string {
+          const escaped = text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+          return escaped
+            .split(/\n{2,}/)
+            .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+            .join('\n');
+        }
+
+        let sent = 0;
+        const errors: string[] = [];
+        for (let i = 0; i < emailNodes.length; i += 1) {
+          const node = emailNodes[i]!;
+          const subject = render(
+            node.data.subject || `(untitled) — step ${i + 1}`,
+          );
+          const html = render(
+            node.data.renderedHtml || textToHtml(node.data.textBody || ''),
+          );
+          const text = render(
+            node.data.textBody || stripHtml(node.data.renderedHtml || ''),
+          );
+          for (const to of input.recipients) {
+            try {
+              const { error } = await client.emails.send({
+                from: `${fromName} <${fromEmail}>`,
+                to,
+                subject: `[TEST · Step ${i + 1}] ${subject}`,
+                html: html || textToHtml('(empty)'),
+                text: text || '(empty)',
+                headers: {
+                  'X-Getyn-Test-Preview': 'automation',
+                  'X-Getyn-Automation-Id': row.id,
+                  'X-Getyn-Node-Id': node.id,
+                },
+              });
+              if (error) {
+                errors.push(`${node.data.label ?? `step ${i + 1}`}: ${error.message}`);
+              } else {
+                sent += 1;
+              }
+            } catch (err) {
+              errors.push(
+                `${node.data.label ?? `step ${i + 1}`}: ${
+                  (err as Error).message ?? 'unknown'
+                }`,
+              );
+            }
+          }
+        }
+        if (sent === 0 && errors.length > 0) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: `All test sends failed. First error: ${errors[0]}`,
+          });
+        }
+        return {
+          sent,
+          emailNodes: emailNodes.length,
+          recipients: input.recipients.length,
+          errors,
+        };
+      });
+    }),
+
   loadTemplateIntoNode: tenantProcedure
     .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
     .input(
