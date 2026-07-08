@@ -17,6 +17,8 @@ import { Role } from '@getyn/db';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+
+import { FormattedSegmentRules } from './format-rules';
 import {
   Dialog,
   DialogContent,
@@ -51,6 +53,8 @@ export function SegmentDetail({
   const utils = api.useUtils();
 
   const { data, isLoading } = api.segments.get.useQuery({ id: segmentId });
+  const customFieldsQuery = api.customFields.list.useQuery();
+  const [showRawJson, setShowRawJson] = useState(false);
 
   const canEdit =
     currentRole === Role.OWNER ||
@@ -134,13 +138,30 @@ export function SegmentDetail({
           <CardHeader>
             <CardTitle className="text-base">Rules</CardTitle>
           </CardHeader>
-          <CardContent>
-            <pre className="overflow-x-auto rounded-md bg-muted/50 p-3 text-xs">
-              {JSON.stringify(data.rules, null, 2)}
-            </pre>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Hit “Edit” to change these rules in the builder.
-            </p>
+          <CardContent className="space-y-3">
+            <FormattedSegmentRules
+              rules={data.rules}
+              customFields={(customFieldsQuery.data ?? []).map((f) => ({
+                id: f.id,
+                key: f.key,
+                label: f.label,
+              }))}
+            />
+            <div className="flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
+              <span>Hit &ldquo;Edit&rdquo; to change these rules in the builder.</span>
+              <button
+                type="button"
+                className="text-xs underline underline-offset-2 hover:text-foreground"
+                onClick={() => setShowRawJson((v) => !v)}
+              >
+                {showRawJson ? 'Hide raw JSON' : 'View raw JSON'}
+              </button>
+            </div>
+            {showRawJson && (
+              <pre className="overflow-x-auto rounded-md bg-muted/50 p-3 text-xs">
+                {JSON.stringify(data.rules, null, 2)}
+              </pre>
+            )}
           </CardContent>
         </Card>
 
