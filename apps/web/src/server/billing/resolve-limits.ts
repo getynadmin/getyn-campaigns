@@ -28,6 +28,9 @@ const ALL_METRICS: PlanMetric[] = [
   PlanMetric.CUSTOM_SENDING_DOMAINS,
   PlanMetric.USER_SEATS,
   PlanMetric.AI_AGENT_CONVERSATIONS_PER_MONTH,
+  // Phase 8 — automation + email agent
+  PlanMetric.AUTOMATION_ENROLLMENTS_PER_MONTH,
+  PlanMetric.AGENT_REPLIES_PER_MONTH,
 ];
 
 export type ResolvedLimits = Record<PlanMetric, number>;
