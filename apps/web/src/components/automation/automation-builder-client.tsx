@@ -21,7 +21,7 @@ import {
   type Node,
   type NodeChange,
 } from '@xyflow/react';
-import { ArrowLeft, Loader2, Pause, Play, Save } from 'lucide-react';
+import { ArrowLeft, Loader2, Pause, Play, Save, Settings } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,6 +38,7 @@ import { computeDayLabels } from './day-counter';
 import { nodeTypes } from './nodes';
 import { AiAssistantBar } from './ai-assistant-bar';
 import { AutomationPalette } from './palette';
+import { WorkflowSettingsDialog } from './workflow-settings-dialog';
 import { PropertiesPanel } from './properties-panel';
 
 /**
@@ -85,6 +86,7 @@ function BuilderInner({
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [status, setStatus] = useState<'DRAFT' | 'ACTIVE' | 'PAUSED' | 'ARCHIVED'>('DRAFT');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const hydratedRef = useRef(false);
 
   // Hydrate from server exactly once — otherwise autosave-triggered
@@ -420,6 +422,13 @@ function BuilderInner({
               <Loader2 className="mr-1 inline size-3 animate-spin" /> Saving…
             </span>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings className="mr-1 size-4" /> Settings
+          </Button>
           <Button variant="outline" size="sm" onClick={saveNow}>
             <Save className="mr-1 size-4" /> Save
           </Button>
@@ -500,6 +509,19 @@ function BuilderInner({
           />
         </aside>
       </div>
+
+      <WorkflowSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        automationId={automationId}
+        initialSettings={
+          (row?.settings ?? {}) as {
+            onReply?: 'STOP' | 'CONTINUE' | 'BRANCH';
+            fromName?: string | null;
+            fromEmail?: string | null;
+          }
+        }
+      />
     </div>
   );
 }

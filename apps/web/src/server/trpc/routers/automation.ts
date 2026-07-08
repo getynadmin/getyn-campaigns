@@ -271,6 +271,22 @@ export const automationRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
       return withTenant(tenantId, async (tx) => {
+        // Sender guard: if fromEmail is set it must live on a VERIFIED
+        // SendingDomain. Same enforcement as Email Agent activation.
+        if (input.settings.fromEmail) {
+          const at = input.settings.fromEmail.lastIndexOf('@');
+          const domain = input.settings.fromEmail.slice(at + 1).toLowerCase();
+          const verified = await tx.sendingDomain.findFirst({
+            where: { tenantId, domain, status: 'VERIFIED' },
+            select: { id: true },
+          });
+          if (!verified) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: `Domain "${domain}" isn't a verified sending domain. Add it under Settings → Sending domains first.`,
+            });
+          }
+        }
         const result = await tx.automation.updateMany({
           where: { id: input.id, tenantId },
           data: { settings: input.settings as object, lastEditedAt: new Date() },
@@ -279,6 +295,22 @@ export const automationRouter = createTRPCRouter({
         return { ok: true as const };
       });
     }),
+
+  /**
+   * Verified sending domains for the settings picker. Matches
+   * emailAgent.fromEmailOptions.
+   */
+  sendingDomainOptions: tenantProcedure.query(async ({ ctx }) => {
+    const tenantId = ctx.tenantContext.tenant.id;
+    return withTenant(tenantId, async (tx) => {
+      const domains = await tx.sendingDomain.findMany({
+        where: { tenantId, status: 'VERIFIED' },
+        select: { domain: true },
+        orderBy: { domain: 'asc' },
+      });
+      return domains.map((d) => d.domain);
+    });
+  }),
 
   /**
    * Flip a single node's status (DRAFT ↔ LIVE) — used by the toggle
@@ -357,7 +389,7 @@ export const automationRouter = createTRPCRouter({
       return withTenant(tenantId, async (tx) => {
         const row = await tx.automation.findFirst({
           where: { id: input.id, tenantId },
-          select: { id: true, definition: true, status: true },
+          select: { id: true, definition: true, status: true, settings: true },
         });
         if (!row) throw new TRPCError({ code: 'NOT_FOUND' });
         const parsed = automationDefinitionSchema.safeParse(row.definition);
@@ -374,6 +406,17 @@ export const automationRouter = createTRPCRouter({
           throw new TRPCError({
             code: 'BAD_REQUEST',
             message: issues.map((i) => i.message).join(' '),
+          });
+        }
+        // Sender guard: if the workflow has any Email nodes, require
+        // a from address configured in settings.
+        const hasEmailNode = parsed.data.nodes.some((n) => n.type === 'email');
+        const settings = row.settings as { fromEmail?: string | null };
+        if (hasEmailNode && !settings?.fromEmail) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message:
+              'Set a from-name and from-email under Workflow settings before activating — otherwise emails would ship from the platform default.',
           });
         }
         await tx.automation.update({

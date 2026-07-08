@@ -276,6 +276,22 @@ export const automationSettingsSchema = z.object({
    * are "until customer responds."
    */
   onReply: z.enum(['STOP', 'CONTINUE', 'BRANCH']).default('STOP'),
+  /**
+   * Sender identity for every Email node in the workflow. Left null
+   * on new automations; the engine falls back to the
+   * NOTIFICATIONS_FROM env + tenant company name so activations
+   * pre-configuration still send. Once configured, the tRPC
+   * updateSettings mutation verifies fromEmail belongs to a
+   * VERIFIED SendingDomain.
+   */
+  fromName: z.string().trim().max(120).nullable().default(null),
+  fromEmail: z
+    .string()
+    .trim()
+    .email()
+    .max(200)
+    .nullable()
+    .default(null),
 });
 export type AutomationSettings = z.infer<typeof automationSettingsSchema>;
 

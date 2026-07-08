@@ -450,11 +450,21 @@ async function processEmail(
     },
   );
 
-  // Compose a from-address. Automations don't (yet) have per-node
-  // from-name/from-email — use tenant defaults. Failing that, use the
-  // env default noreply.
-  const fromEmail = process.env.NOTIFICATIONS_FROM ?? 'noreply@getyn.com';
-  const fromName = ctx.tenant.companyDisplayName ?? ctx.tenant.name;
+  // Sender identity — per-automation settings take precedence.
+  // The tRPC `updateSettings` mutation verifies fromEmail lives on
+  // a verified SendingDomain, and `activate` blocks activation when
+  // an Email node is present without a from address configured, so
+  // in practice the fallback only kicks in during pre-activation
+  // preview sends or when settings are stale.
+  const settings =
+    (ctx.automationSettings as {
+      fromName?: string | null;
+      fromEmail?: string | null;
+    } | null) ?? null;
+  const fromEmail =
+    settings?.fromEmail ?? process.env.NOTIFICATIONS_FROM ?? 'noreply@getyn.com';
+  const fromName =
+    settings?.fromName ?? ctx.tenant.companyDisplayName ?? ctx.tenant.name;
 
   if (resend) {
     try {
