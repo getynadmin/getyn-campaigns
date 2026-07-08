@@ -519,27 +519,44 @@ export const automationRouter = createTRPCRouter({
           customFields,
         });
 
-        // Fetch matching contacts + already-active enrollments in one
-        // pass so we can filter and quota-check accurately.
-        const [contacts, existing] = await Promise.all([
-          tx.contact.findMany({
+        // Fetch matching contacts in cursor-paginated batches so we
+        // don't silently truncate on large segments (there was a
+        // 5k safety cap here previously — it caused 18k-contact
+        // segments to enroll only 5k with no explanation).
+        //
+        // 50k per batch keeps peak memory bounded (~1.5MB of cuids)
+        // while still finishing typical enrollments in a couple of
+        // round-trips.
+        const BATCH_SIZE = 50_000;
+        const contactIds: string[] = [];
+        let cursor: string | undefined;
+        let more = true;
+        while (more) {
+          const batch = await tx.contact.findMany({
             where: { ...where, tenantId, deletedAt: null },
             select: { id: true },
-            take: 5_000, // safety cap; matches segment preview limits
-          }),
-          tx.automationEnrollment.findMany({
-            where: {
-              tenantId,
-              automationId: input.automationId,
-              status: EnrollmentStatus.ACTIVE,
-            },
-            select: { contactId: true },
-          }),
-        ]);
+            orderBy: { id: 'asc' },
+            take: BATCH_SIZE,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+          });
+          for (const c of batch) contactIds.push(c.id);
+          if (batch.length < BATCH_SIZE) {
+            more = false;
+          } else {
+            cursor = batch[batch.length - 1]!.id;
+          }
+        }
+        const existing = await tx.automationEnrollment.findMany({
+          where: {
+            tenantId,
+            automationId: input.automationId,
+            status: EnrollmentStatus.ACTIVE,
+          },
+          select: { contactId: true },
+        });
         const active = new Set(existing.map((e) => e.contactId));
-        const eligible = contacts
-          .map((c) => c.id)
-          .filter((id) => !active.has(id));
+        const contacts = contactIds.map((id) => ({ id }));
+        const eligible = contactIds.filter((id) => !active.has(id));
         if (eligible.length === 0) {
           return { enrolled: 0, skipped: contacts.length, matched: contacts.length };
         }
