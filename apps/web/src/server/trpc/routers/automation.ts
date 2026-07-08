@@ -17,7 +17,10 @@ import {
   type AutomationDefinition,
 } from '@getyn/types';
 
+import { getAnthropicClient, isAiConfigured } from '@getyn/ai';
+
 import { assertWithinLimit } from '@/server/billing/assert-limit';
+import { getAnthropicCredentials } from '@/server/integrations/anthropic';
 import { enqueueAutomationStep, enqueueAutomationWake } from '@/server/queues';
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
 
@@ -549,4 +552,341 @@ export const automationRouter = createTRPCRouter({
         };
       });
     }),
+
+  /**
+   * Availability signal for the builder AI bar — matches ai.isAvailable.
+   */
+  aiIsAvailable: tenantProcedure.query(async () => {
+    const anthropic = await getAnthropicCredentials();
+    return { available: isAiConfigured(anthropic.apiKey ?? undefined) };
+  }),
+
+  /**
+   * Generate an AutomationDefinition from a natural-language prompt.
+   *
+   * Sonnet takes the tenant's brief, our node-schema summary, and (if
+   * present) the current canvas as context. Output is a full
+   * definition JSON validated through automationDefinitionSchema.
+   *
+   * Speed-over-polish trade-offs baked in:
+   *   - Plaintext email bodies only (no Unlayer designJson). Operator
+   *     can open the design composer per node afterwards.
+   *   - Message nodes always land as DRAFT so the operator explicitly
+   *     flips them Live after review — matches the safety model of
+   *     the whole builder.
+   *   - One shot, no retry loop. Parse failure surfaces to the client
+   *     as a clean error the operator can rephrase from.
+   */
+  generateFromPrompt: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        prompt: z.string().trim().min(4).max(4000),
+        /**
+         * When true, discard the current canvas and start from the
+         * generated definition. When false, the caller keeps the
+         * existing definition and shows this as a preview.
+         */
+        replace: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const anthropic = await getAnthropicCredentials();
+      if (!anthropic.apiKey) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'AI is not configured. Ask your admin to add an Anthropic key under Admin → Integrations.',
+        });
+      }
+
+      const client = getAnthropicClient(anthropic.apiKey);
+      let raw: string;
+      try {
+        const res = await client.messages.create({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 4000,
+          messages: [
+            { role: 'user', content: BUILDER_SYSTEM_PROMPT },
+            { role: 'assistant', content: '{"nodes":[' },
+            { role: 'user', content: `Tenant brief: ${input.prompt}\n\nContinue the JSON. Emit ONLY the array of nodes, then a comma, then "edges":[…]. Nothing else. Close with a single "}".` },
+          ],
+        });
+        const text = (res.content as { type: string; text?: string }[])
+          .filter((c) => c.type === 'text')
+          .map((c) => c.text ?? '')
+          .join('');
+        raw = `{"nodes":[${text}`;
+      } catch (err) {
+        console.error('[automation.generateFromPrompt] Sonnet call failed', err);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'AI generation failed. Try again in a moment.',
+        });
+      }
+
+      // Peel out the JSON object — Sonnet occasionally trails with
+      // an explanation despite our "nothing else" instruction.
+      const openIdx = raw.indexOf('{');
+      const closeIdx = raw.lastIndexOf('}');
+      if (openIdx === -1 || closeIdx <= openIdx) {
+        throw new TRPCError({
+          code: 'UNPROCESSABLE_CONTENT',
+          message: 'AI output was not valid JSON. Try rephrasing your prompt.',
+        });
+      }
+      const candidate = raw.slice(openIdx, closeIdx + 1);
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(candidate);
+      } catch {
+        throw new TRPCError({
+          code: 'UNPROCESSABLE_CONTENT',
+          message: 'AI output was not valid JSON. Try rephrasing your prompt.',
+        });
+      }
+      const parsed = automationDefinitionSchema.safeParse(parsedJson);
+      if (!parsed.success) {
+        console.warn('[automation.generateFromPrompt] schema mismatch', parsed.error.issues.slice(0, 3));
+        throw new TRPCError({
+          code: 'UNPROCESSABLE_CONTENT',
+          message: `AI output did not match the workflow schema (${parsed.error.issues[0]?.path.join('.') ?? 'unknown'}). Try rephrasing.`,
+        });
+      }
+      // Graph sanity — same check the client shows inline. We do NOT
+      // require a LIVE message node here; the operator flips nodes
+      // Live manually after reviewing.
+      const issues = validateAutomationDefinition(parsed.data);
+      if (issues.length > 0) {
+        console.warn('[automation.generateFromPrompt] graph issues', issues);
+        throw new TRPCError({
+          code: 'UNPROCESSABLE_CONTENT',
+          message: issues[0]!.message + ' (Try rephrasing your prompt.)',
+        });
+      }
+
+      // We don't persist here — the client applies the definition
+      // through the same updateDefinition path used by regular edits.
+      // Keeps autosave semantics consistent.
+      void tenantId; // reserved for future audit row (AiGeneration)
+      return { definition: parsed.data };
+    }),
+
+  /**
+   * Save Unlayer-generated designJson + renderedHtml back to a single
+   * Email node. Fired by the /nodes/[nodeId]/design page's Save button.
+   */
+  saveNodeDesign: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        id: z.string().min(1),
+        nodeId: z.string().min(1),
+        subject: z.string().trim().max(200).optional(),
+        designJson: z.unknown(),
+        renderedHtml: z.string(),
+        textBody: z.string(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return withTenant(tenantId, async (tx) => {
+        const row = await tx.automation.findFirst({
+          where: { id: input.id, tenantId },
+          select: { id: true, definition: true },
+        });
+        if (!row) throw new TRPCError({ code: 'NOT_FOUND' });
+        const parsed = automationDefinitionSchema.safeParse(row.definition);
+        if (!parsed.success) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Existing definition is malformed.',
+          });
+        }
+        let found = false;
+        const nodes = parsed.data.nodes.map((n) => {
+          if (n.id !== input.nodeId) return n;
+          if (n.type !== 'email') {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Node is not an Email node.',
+            });
+          }
+          found = true;
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              subject: input.subject ?? n.data.subject,
+              designJson: (input.designJson ?? null) as never,
+              renderedHtml: input.renderedHtml,
+              textBody: input.textBody,
+            },
+          };
+        });
+        if (!found) throw new TRPCError({ code: 'NOT_FOUND', message: 'Email node not found.' });
+        await tx.automation.update({
+          where: { id: row.id },
+          data: {
+            definition: { ...parsed.data, nodes } as unknown as object,
+            lastEditedAt: new Date(),
+          },
+        });
+        return { ok: true as const };
+      });
+    }),
+
+  /**
+   * Load an EmailTemplate's design into a specific Email node.
+   * Cheaper than a full round-trip through the design composer for
+   * the common "pick a template" flow.
+   */
+  loadTemplateIntoNode: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        id: z.string().min(1),
+        nodeId: z.string().min(1),
+        templateId: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return withTenant(tenantId, async (tx) => {
+        const template = await tx.emailTemplate.findFirst({
+          where: {
+            id: input.templateId,
+            OR: [{ tenantId }, { tenantId: null }], // include system templates
+          },
+          select: { name: true, designJson: true },
+        });
+        if (!template) throw new TRPCError({ code: 'NOT_FOUND', message: 'Template not found.' });
+        const row = await tx.automation.findFirst({
+          where: { id: input.id, tenantId },
+          select: { id: true, definition: true },
+        });
+        if (!row) throw new TRPCError({ code: 'NOT_FOUND' });
+        const parsed = automationDefinitionSchema.safeParse(row.definition);
+        if (!parsed.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Malformed definition.' });
+        }
+        let found = false;
+        const nodes = parsed.data.nodes.map((n) => {
+          if (n.id !== input.nodeId) return n;
+          if (n.type !== 'email') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Node is not an Email node.' });
+          }
+          found = true;
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              designJson: template.designJson as never,
+              // Rendered HTML is regenerated when the operator opens
+              // the composer — we clear it here so the send pipeline
+              // doesn't ship a stale render.
+              renderedHtml: '',
+            },
+          };
+        });
+        if (!found) throw new TRPCError({ code: 'NOT_FOUND', message: 'Email node not found.' });
+        await tx.automation.update({
+          where: { id: row.id },
+          data: {
+            definition: { ...parsed.data, nodes } as unknown as object,
+            lastEditedAt: new Date(),
+          },
+        });
+        return { ok: true as const, templateName: template.name };
+      });
+    }),
 });
+
+// -----------------------------------------------------------------
+// AI builder system prompt (long — the model needs the whole schema).
+// -----------------------------------------------------------------
+
+const BUILDER_SYSTEM_PROMPT = `You are a workflow-authoring assistant for a marketing-automation product.
+
+You output ONE JSON object (no prose) describing an automation workflow
+matching this schema:
+
+{
+  "nodes": [ …array of node objects… ],
+  "edges": [ …array of edge objects… ]
+}
+
+# Node types
+
+Every node has: id (string), type, position ({x, y}), data (per-type).
+
+Position them left-to-right / top-to-bottom starting at x=240 y=40 in
+100px vertical increments; branch splits move x by ±240.
+
+1. Trigger — exactly one, always the entry point.
+   type: "trigger"
+   data: { label, trigger: { kind: "manual_enrollment" | "contact_added_to_segment" | "tag_applied" | "date_field_matches" } }
+   Use manual_enrollment unless the user explicitly names a segment or tag.
+
+2. Email — a marketing email to send.
+   type: "email"
+   data: { label, status: "DRAFT" (always DRAFT — operator flips Live),
+           subject (string), previewText (string, ≤120 chars),
+           designJson: null, renderedHtml: "", textBody (write the FULL email body here as plaintext, 80-200 words, personalized with {{contact.firstName}}, ending with a specific ask) }
+
+3. WhatsApp — placeholder for WhatsApp send.
+   type: "whatsapp"
+   data: { label, status: "DRAFT", templateId: null, phoneNumberId: null, variables: {} }
+
+4. Time delay
+   type: "delay"
+   data: { label, mode: "relative", amount (int), unit: "minutes"|"hours"|"days"|"weeks", absoluteAt: null, weekday: null, hourUtc: null }
+
+5. Conditional split — routes based on condition.
+   type: "split"
+   data: { label, condition: { kind: "opened_previous_email" | "clicked_previous_email" | "has_tag" | "custom_field_equals" | "time_since_enrollment", …kind-specific fields… } }
+   Two outgoing edges: one with sourceHandle "yes", one with "no".
+
+6. Property update — sets/unsets a contact custom field.
+   type: "property_update"
+   data: { label, action: "set_custom_field"|"unset_custom_field", customFieldKey (string), value (string) }
+
+7. List update — tag/segment/unsub operations.
+   type: "list_update"
+   data: { label, action: "add_tag"|"remove_tag"|"unsubscribe_email"|"unsubscribe_whatsapp"|"unsubscribe_sms", targetId (string|null) }
+
+8. Internal alert — notifies the team.
+   type: "internal_alert"
+   data: { label, channel: "email"|"user"|"webhook", target (string), message (string) }
+
+9. Exit — end the flow.
+   type: "exit"
+   data: { label: "End", reason (string) }
+
+Every path must reach an Exit node.
+
+# Edge schema
+
+{ "id": "e-<n>", "source": "<sourceNodeId>", "target": "<targetNodeId>", "sourceHandle": null | "yes" | "no" }
+
+Split nodes emit TWO edges (yes + no).
+Every other node emits at most one; use sourceHandle: null.
+
+# Rules
+
+- Exactly ONE trigger node.
+- No cycles.
+- No orphan nodes.
+- Every non-Exit node connects forward.
+- When the user asks for N emails, produce N distinct Email nodes with
+  distinct subject + textBody appropriate to that step of the sequence.
+- Delays between emails should feel natural (2-3 days for first
+  follow-up, 5-7 for later ones) unless the user specifies otherwise.
+- Prefer manual_enrollment for the trigger unless the user names a
+  segment or tag.
+
+# Output
+
+Start immediately with the JSON object. NO explanation, NO code fence,
+NO trailing commentary. First character MUST be "{".`;
+

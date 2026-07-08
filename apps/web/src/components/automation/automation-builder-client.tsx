@@ -36,6 +36,7 @@ import { validateAutomationDefinition } from '@getyn/types';
 
 import { computeDayLabels } from './day-counter';
 import { nodeTypes } from './nodes';
+import { AiAssistantBar } from './ai-assistant-bar';
 import { AutomationPalette } from './palette';
 import { PropertiesPanel } from './properties-panel';
 
@@ -334,6 +335,27 @@ function BuilderInner({
     setSelectedNodeId(null);
   }
 
+  function applyGeneratedDefinition(def: AutomationDefinition): void {
+    const nextNodes: Node[] = def.nodes.map((n) => ({
+      id: n.id,
+      type: n.type,
+      position: n.position,
+      data: n.data,
+    })) as Node[];
+    const nextEdges: Edge[] = def.edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle ?? undefined,
+    }));
+    setNodes(nextNodes);
+    setEdges(nextEdges);
+    setSelectedNodeId(null);
+    scheduleSave(nextNodes, nextEdges);
+    // Recenter the graph on the new nodes.
+    setTimeout(() => reactFlow.fitView({ padding: 0.2, duration: 300 }), 0);
+  }
+
   function saveNow(): void {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     const definition: AutomationDefinition = {
@@ -449,6 +471,23 @@ function BuilderInner({
             <Controls />
             <MiniMap pannable zoomable />
           </ReactFlow>
+          <AiAssistantBar
+            currentDefinition={{
+              nodes: nodes.map((n) => ({
+                id: n.id,
+                type: n.type as AutomationNodeType,
+                position: n.position,
+                data: n.data,
+              })) as AutomationNode[],
+              edges: edges.map((e) => ({
+                id: e.id,
+                source: e.source,
+                target: e.target,
+                sourceHandle: (e.sourceHandle as 'yes' | 'no' | null) ?? null,
+              })),
+            }}
+            onApply={applyGeneratedDefinition}
+          />
         </div>
         <aside className="border-l bg-card">
           <PropertiesPanel
@@ -456,6 +495,8 @@ function BuilderInner({
             onChange={patchNodeData}
             onFlipStatus={handleFlipStatus}
             onDeleteNode={handleDeleteNode}
+            automationId={automationId}
+            slug={slug}
           />
         </aside>
       </div>

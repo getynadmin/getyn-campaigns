@@ -4,6 +4,14 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -13,6 +21,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+import { api } from '@/lib/trpc';
 import type { AutomationNode } from '@getyn/types';
 
 /**
@@ -31,11 +41,16 @@ export function PropertiesPanel({
   onChange,
   onFlipStatus,
   onDeleteNode,
+  automationId,
+  slug,
 }: {
   node: AutomationNode | null;
   onChange: (nodeId: string, patch: Partial<AutomationNode['data']>) => void;
   onFlipStatus: (nodeId: string, status: 'DRAFT' | 'LIVE') => void;
   onDeleteNode: (nodeId: string) => void;
+  /** For the Email node "Open design composer" + "Load template" buttons. */
+  automationId: string;
+  slug: string;
 }): JSX.Element {
   if (!node) {
     return (
@@ -61,7 +76,7 @@ export function PropertiesPanel({
             maxLength={80}
           />
         </Field>
-        {renderPerType(node, onChange, onFlipStatus)}
+        {renderPerType(node, onChange, onFlipStatus, { automationId, slug })}
       </div>
       {node.type !== 'trigger' && node.type !== 'exit' && (
         <div className="border-t p-3">
@@ -103,12 +118,21 @@ function renderPerType(
   node: AutomationNode,
   onChange: (id: string, patch: Partial<AutomationNode['data']>) => void,
   onFlipStatus: (id: string, status: 'DRAFT' | 'LIVE') => void,
+  ctx: { automationId: string; slug: string },
 ): JSX.Element | null {
   switch (node.type) {
     case 'trigger':
       return <TriggerForm node={node} onChange={onChange} />;
     case 'email':
-      return <EmailForm node={node} onChange={onChange} onFlipStatus={onFlipStatus} />;
+      return (
+        <EmailForm
+          node={node}
+          onChange={onChange}
+          onFlipStatus={onFlipStatus}
+          automationId={ctx.automationId}
+          slug={ctx.slug}
+        />
+      );
     case 'whatsapp':
       return <WhatsAppForm node={node} onChange={onChange} onFlipStatus={onFlipStatus} />;
     case 'property_update':
@@ -236,11 +260,16 @@ function EmailForm({
   node,
   onChange,
   onFlipStatus,
+  automationId,
+  slug,
 }: {
   node: NodeWithType<'email'>;
   onChange: (id: string, patch: Partial<AutomationNode['data']>) => void;
   onFlipStatus: (id: string, status: 'DRAFT' | 'LIVE') => void;
+  automationId: string;
+  slug: string;
 }): JSX.Element {
+  const [templateOpen, setTemplateOpen] = useState(false);
   return (
     <>
       <StatusToggle
@@ -269,16 +298,32 @@ function EmailForm({
           rows={4}
         />
       </Field>
-      <Button
-        variant="outline"
-        size="sm"
-        className="w-full"
-        onClick={() =>
-          toast.info('Design composer opens here — wired in M3.')
-        }
-      >
-        Open design composer
-      </Button>
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          asChild
+          variant="outline"
+          size="sm"
+        >
+          <a
+            href={`/t/${slug}/automation/drip/${automationId}/nodes/${node.id}/design`}
+          >
+            Open design composer
+          </a>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setTemplateOpen(true)}
+        >
+          Load template
+        </Button>
+      </div>
+      <TemplatePickerDialog
+        open={templateOpen}
+        onOpenChange={setTemplateOpen}
+        automationId={automationId}
+        nodeId={node.id}
+      />
     </>
   );
 }
@@ -801,5 +846,101 @@ function StatusButton({
     >
       {children}
     </button>
+  );
+}
+
+// -----------------------------------------------------------------
+// Template picker for Email nodes
+// -----------------------------------------------------------------
+
+function TemplatePickerDialog({
+  open,
+  onOpenChange,
+  automationId,
+  nodeId,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  automationId: string;
+  nodeId: string;
+}): JSX.Element {
+  const [search, setSearch] = useState('');
+  const templates = api.emailTemplate.list.useQuery(
+    { limit: 30, scope: 'ALL' as const, ...(search.length >= 2 ? { search } : {}) },
+    { enabled: open },
+  );
+  const utils = api.useUtils();
+  const load = api.automation.loadTemplateIntoNode.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Loaded template "${data.templateName}".`);
+      onOpenChange(false);
+      void utils.automation.get.invalidate({ id: automationId });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Load an email template</DialogTitle>
+          <DialogDescription>
+            The design + rendered HTML are copied onto this node. You can
+            still open the design composer to tweak it.
+          </DialogDescription>
+        </DialogHeader>
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search templates…"
+          className="mb-2"
+        />
+        {templates.isLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 w-full" />
+            ))}
+          </div>
+        ) : (templates.data?.items.length ?? 0) === 0 ? (
+          <p className="p-6 text-center text-sm text-muted-foreground">
+            No templates match. Save a design from Campaigns → Templates first.
+          </p>
+        ) : (
+          <ul className="max-h-96 divide-y overflow-y-auto rounded-md border">
+            {templates.data?.items.map((t) => (
+              <li key={t.id}>
+                <button
+                  onClick={() =>
+                    load.mutate({
+                      id: automationId,
+                      nodeId,
+                      templateId: t.id,
+                    })
+                  }
+                  disabled={load.isPending}
+                  className="flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/40 disabled:opacity-60"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{t.name}</p>
+                    {t.description && (
+                      <p className="line-clamp-1 text-xs text-muted-foreground">
+                        {t.description}
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    {t.tenantId ? 'Custom' : 'System'}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
