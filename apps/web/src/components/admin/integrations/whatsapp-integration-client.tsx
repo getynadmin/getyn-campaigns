@@ -179,15 +179,35 @@ export function WhatsAppIntegrationClient(): JSX.Element {
             Test connection
           </Button>
           <Button
-            onClick={() =>
-              save.mutate({
+            onClick={() => {
+              // Send whatever's typed. Server treats empty string as
+              // "keep the existing ciphertext" — so first-time setup
+              // (no editAppSecret flip needed) works AND "click Replace
+              // but don't retype" preserves the current secret.
+              const payload = {
                 appId,
                 configId,
-                appSecret: editAppSecret ? appSecret : '',
-                webhookVerifyToken: editVerifyToken ? verifyToken : '',
+                appSecret,
+                webhookVerifyToken: verifyToken,
                 enabled,
-              })
-            }
+              };
+              // Guard: refuse to enable when neither the DB nor the
+              // request supplies both secrets. Matches SMTP's guard —
+              // otherwise the tenant ends up with enabled=true and
+              // has_secrets=false which silently breaks webhooks.
+              if (
+                payload.enabled &&
+                !data.hasSecrets &&
+                (!payload.appSecret.trim() ||
+                  !payload.webhookVerifyToken.trim())
+              ) {
+                toast.error(
+                  'Enter both App Secret and Webhook Verify Token before enabling.',
+                );
+                return;
+              }
+              save.mutate(payload);
+            }}
             disabled={save.isPending}
           >
             {save.isPending ? (

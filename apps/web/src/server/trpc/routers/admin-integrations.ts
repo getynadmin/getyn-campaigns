@@ -155,6 +155,26 @@ const whatsAppRouter = createAdminRouter({
           };
         }
 
+        // Refuse to flip enabled=true without both secrets on file —
+        // otherwise the webhook receiver silently 503s and Meta's
+        // verify-callback test fails with no visible cause. Matches
+        // the SMTP integration's guard.
+        const resolvedAppSecret =
+          incomingAppSecret !== ''
+            ? incomingAppSecret
+            : (existing?.secrets?.appSecret ?? '');
+        const resolvedVerifyToken =
+          incomingVerifyToken !== ''
+            ? incomingVerifyToken
+            : (existing?.secrets?.webhookVerifyToken ?? '');
+        if (input.enabled && (!resolvedAppSecret || !resolvedVerifyToken)) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message:
+              'Enter both App Secret and Webhook Verify Token before enabling — otherwise the webhook receiver would reject Meta\'s callback with 503.',
+          });
+        }
+
         await saveIntegration(
           {
             provider: 'whatsapp_meta',
