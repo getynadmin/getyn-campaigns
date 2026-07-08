@@ -620,10 +620,20 @@ export const automationRouter = createTRPCRouter({
           .join('');
         raw = `{${text}`;
       } catch (err) {
-        console.error('[automation.generateFromPrompt] Sonnet call failed', err);
+        // Surface the real reason to the client rather than a
+        // generic wrapper — the previous "Try again in a moment"
+        // message hid actionable errors like "model not found" and
+        // "credit balance too low".
+        const detail =
+          (err as { message?: string })?.message ?? 'unknown error';
+        const status = (err as { status?: number })?.status ?? 500;
+        console.error(
+          '[automation.generateFromPrompt] Sonnet call failed',
+          { status, detail, err },
+        );
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
-          message: 'AI generation failed. Try again in a moment.',
+          message: `AI generation failed: ${detail}`,
         });
       }
 
