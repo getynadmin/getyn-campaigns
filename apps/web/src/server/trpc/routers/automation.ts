@@ -605,18 +605,20 @@ export const automationRouter = createTRPCRouter({
       try {
         const res = await client.messages.create({
           model: 'claude-sonnet-4-6',
-          max_tokens: 4000,
+          max_tokens: 8000,
+          system: BUILDER_SYSTEM_PROMPT,
           messages: [
-            { role: 'user', content: BUILDER_SYSTEM_PROMPT },
-            { role: 'assistant', content: '{"nodes":[' },
-            { role: 'user', content: `Tenant brief: ${input.prompt}\n\nContinue the JSON. Emit ONLY the array of nodes, then a comma, then "edges":[…]. Nothing else. Close with a single "}".` },
+            { role: 'user', content: `Brief: ${input.prompt}` },
+            // Prefill with the opening brace so the model has to
+            // continue as JSON — proper prefill pattern per Anthropic docs.
+            { role: 'assistant', content: '{' },
           ],
         });
         const text = (res.content as { type: string; text?: string }[])
           .filter((c) => c.type === 'text')
           .map((c) => c.text ?? '')
           .join('');
-        raw = `{"nodes":[${text}`;
+        raw = `{${text}`;
       } catch (err) {
         console.error('[automation.generateFromPrompt] Sonnet call failed', err);
         throw new TRPCError({
@@ -625,21 +627,29 @@ export const automationRouter = createTRPCRouter({
         });
       }
 
-      // Peel out the JSON object — Sonnet occasionally trails with
-      // an explanation despite our "nothing else" instruction.
-      const openIdx = raw.indexOf('{');
-      const closeIdx = raw.lastIndexOf('}');
-      if (openIdx === -1 || closeIdx <= openIdx) {
+      const candidate = extractJsonObject(raw);
+      if (!candidate) {
+        console.warn(
+          '[automation.generateFromPrompt] no JSON in output. First 500 chars:',
+          raw.slice(0, 500),
+        );
         throw new TRPCError({
           code: 'UNPROCESSABLE_CONTENT',
           message: 'AI output was not valid JSON. Try rephrasing your prompt.',
         });
       }
-      const candidate = raw.slice(openIdx, closeIdx + 1);
       let parsedJson: unknown;
       try {
         parsedJson = JSON.parse(candidate);
-      } catch {
+      } catch (err) {
+        console.warn(
+          '[automation.generateFromPrompt] JSON.parse failed. Slice head:',
+          candidate.slice(0, 300),
+          'tail:',
+          candidate.slice(-200),
+          'err:',
+          (err as Error).message,
+        );
         throw new TRPCError({
           code: 'UNPROCESSABLE_CONTENT',
           message: 'AI output was not valid JSON. Try rephrasing your prompt.',
@@ -806,6 +816,56 @@ export const automationRouter = createTRPCRouter({
 // AI builder system prompt (long — the model needs the whole schema).
 // -----------------------------------------------------------------
 
+/**
+ * Robust JSON-object extractor. Sonnet outputs sometimes come wrapped
+ * in markdown fences (```json … ```) or trail with prose. We:
+ *   1. Strip fenced code blocks if we can find one.
+ *   2. Brace-count from the first `{` to find the matching close,
+ *      respecting strings so an unescaped `}` inside a string doesn't
+ *      confuse us.
+ *   3. Fall back to the naive first-`{` / last-`}` slice as a last resort.
+ */
+function extractJsonObject(input: string): string | null {
+  // Try fenced first — Sonnet occasionally wraps despite instructions.
+  const fenceMatch = input.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const source = fenceMatch?.[1] ?? input;
+
+  const openIdx = source.indexOf('{');
+  if (openIdx === -1) return null;
+
+  // Brace-count with string awareness.
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = openIdx; i < source.length; i += 1) {
+    const ch = source[i]!;
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (inString) {
+      if (ch === '\\') escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(openIdx, i + 1);
+      }
+    }
+  }
+  // Unclosed — as a last resort, hand back everything from `{` to
+  // the final `}` and let JSON.parse decide.
+  const closeIdx = source.lastIndexOf('}');
+  return closeIdx > openIdx ? source.slice(openIdx, closeIdx + 1) : null;
+}
+
 const BUILDER_SYSTEM_PROMPT = `You are a workflow-authoring assistant for a marketing-automation product.
 
 You output ONE JSON object (no prose) describing an automation workflow
@@ -885,8 +945,16 @@ Every other node emits at most one; use sourceHandle: null.
 - Prefer manual_enrollment for the trigger unless the user names a
   segment or tag.
 
-# Output
+# Output format — CRITICAL
 
-Start immediately with the JSON object. NO explanation, NO code fence,
-NO trailing commentary. First character MUST be "{".`;
+Your entire response MUST be a single valid JSON object, nothing else.
+- No prose before or after.
+- No markdown code fences.
+- No trailing "// " comments inside the JSON.
+- All string values MUST be valid JSON strings — escape newlines as \\n,
+  quotes as \\", backslashes as \\\\.
+- The first character of your response is "{" and the last is "}".
+
+The assistant turn will be prefilled with "{" — continue directly with
+the rest of the JSON.`;
 
