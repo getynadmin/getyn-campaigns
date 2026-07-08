@@ -56,7 +56,12 @@ const NODE_HISTORY_CAP = 100;
  * they land on the next tick — bounded fan-out keeps a slow batch
  * from choking Redis with hundreds of parallel step jobs.
  */
-const TICK_BATCH_SIZE = 200;
+// Bumped 200 → 5000 after the 18k-segment enrollment case where the
+// tick was the sole rate limiter and 90 minutes went by before the
+// last contact left the Trigger node. Step jobs are cheap (single
+// DB update for non-message nodes) — the real send bottleneck sits
+// at Resend's per-second cap inside the Email processor, not here.
+const TICK_BATCH_SIZE = 5_000;
 
 interface StepContext {
   enrollmentId: string;
@@ -468,6 +473,8 @@ async function processEmail(
 
   if (resend) {
     try {
+      const { claimSendSlot } = await import('../utils/send-rate-limit');
+      await claimSendSlot();
       await resend.emails.send({
         from: `${fromName} <${fromEmail}>`,
         to: ctx.contact.email,
@@ -704,6 +711,8 @@ async function processInternalAlert(
         signal: AbortSignal.timeout(10_000),
       });
     } else if (node.data.channel === 'email' && resend) {
+      const { claimSendSlot } = await import('../utils/send-rate-limit');
+      await claimSendSlot();
       const fromEmail = process.env.NOTIFICATIONS_FROM ?? 'noreply@getyn.com';
       await resend.emails.send({
         from: `Getyn Campaigns <${fromEmail}>`,
@@ -718,6 +727,8 @@ async function processInternalAlert(
         select: { user: { select: { email: true } } },
       });
       if (member?.user.email && resend) {
+        const { claimSendSlot } = await import('../utils/send-rate-limit');
+        await claimSendSlot();
         const fromEmail = process.env.NOTIFICATIONS_FROM ?? 'noreply@getyn.com';
         await resend.emails.send({
           from: `Getyn Campaigns <${fromEmail}>`,

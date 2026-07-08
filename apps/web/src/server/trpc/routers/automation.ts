@@ -22,7 +22,11 @@ import { getAnthropicClient, isAiConfigured } from '@getyn/ai';
 
 import { assertWithinLimit } from '@/server/billing/assert-limit';
 import { getAnthropicCredentials } from '@/server/integrations/anthropic';
-import { enqueueAutomationStep, enqueueAutomationWake } from '@/server/queues';
+import {
+  enqueueAutomationStep,
+  enqueueAutomationSteps,
+  enqueueAutomationWake,
+} from '@/server/queues';
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
 
 /**
@@ -578,8 +582,11 @@ export const automationRouter = createTRPCRouter({
           })),
           skipDuplicates: true,
         });
-        // Fire step jobs asynchronously — same pattern as automation.enroll.
-        void (async () => {
+        // Bulk-enqueue immediate step jobs. Single Redis roundtrip
+        // via addBulk so 18k+ enrollments land before the response
+        // returns; on Vercel serverless the previous fire-and-forget
+        // loop got truncated at return time.
+        try {
           const rows = await prisma.automationEnrollment.findMany({
             where: {
               tenantId,
@@ -589,18 +596,15 @@ export const automationRouter = createTRPCRouter({
             },
             select: { id: true },
           });
-          for (const r of rows) {
-            void enqueueAutomationStep({
-              enrollmentId: r.id,
-              tenantId,
-            }).catch((err) =>
-              console.error(
-                '[automation.enrollFromSegment] step enqueue failed',
-                err,
-              ),
-            );
-          }
-        })();
+          await enqueueAutomationSteps(
+            rows.map((r) => ({ enrollmentId: r.id, tenantId })),
+          );
+        } catch (err) {
+          console.error(
+            '[automation.enrollFromSegment] bulk step enqueue failed; falling back to tick',
+            err,
+          );
+        }
         return {
           enrolled: eligible.length,
           skipped: contacts.length - eligible.length,
@@ -869,7 +873,12 @@ export const automationRouter = createTRPCRouter({
         // is bounded. Best-effort — the repeatable tick will pick these
         // up either way; the direct enqueue just eliminates the ~60s
         // wait for interactive testing.
-        void (async () => {
+        //
+        // Use addBulk (one Redis roundtrip) instead of a fire-and-
+        // forget loop — on Vercel serverless the async loop got
+        // truncated when the response returned and most enqueues
+        // never fired.
+        try {
           const rows = await prisma.automationEnrollment.findMany({
             where: {
               tenantId,
@@ -879,12 +888,15 @@ export const automationRouter = createTRPCRouter({
             },
             select: { id: true },
           });
-          for (const r of rows) {
-            void enqueueAutomationStep({ enrollmentId: r.id, tenantId }).catch(
-              (err) => console.error('[automation.enroll] step enqueue failed', err),
-            );
-          }
-        })();
+          await enqueueAutomationSteps(
+            rows.map((r) => ({ enrollmentId: r.id, tenantId })),
+          );
+        } catch (err) {
+          console.error(
+            '[automation.enroll] bulk step enqueue failed; falling back to tick',
+            err,
+          );
+        }
 
         return {
           enrolled: eligible.length,

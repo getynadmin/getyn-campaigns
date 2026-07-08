@@ -59,6 +59,7 @@ function ResendTab(): JSX.Element {
   const { data, isLoading } = adminApi.integrations.resend.get.useQuery();
   const [hydrated, setHydrated] = useState(false);
   const [defaultFromEmail, setDefaultFromEmail] = useState('');
+  const [sendRatePerHour, setSendRatePerHour] = useState(0);
   const [enabled, setEnabled] = useState(false);
   const [editKey, setEditKey] = useState(false);
   const [apiKey, setApiKey] = useState('');
@@ -70,6 +71,7 @@ function ResendTab(): JSX.Element {
   useEffect(() => {
     if (!data || hydrated) return;
     setDefaultFromEmail(data.config.defaultFromEmail);
+    setSendRatePerHour(data.config.sendRatePerHour ?? 0);
     setEnabled(data.enabled);
     setHydrated(true);
   }, [data, hydrated]);
@@ -134,6 +136,52 @@ function ResendTab(): JSX.Element {
           />
         </div>
 
+        <div className="space-y-2 rounded-md border bg-muted/30 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Outbound send rate cap</p>
+              <p className="text-xs text-muted-foreground">
+                Global ceiling on emails per hour across all tenants and
+                surfaces (campaigns, drip automations, email agent). 0 =
+                unlimited (fall back to Resend&apos;s per-account limit).
+                Applied via a Redis-backed sliding-window counter — extra
+                sends wait for the next-hour rollover.
+              </p>
+            </div>
+            <span className="ml-4 shrink-0 rounded-full bg-background px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+              Live: {data.liveSendRatePerHour === 0 ? 'unlimited' : `${data.liveSendRatePerHour.toLocaleString()}/hr`}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={0}
+              max={1_000_000}
+              step={100}
+              value={sendRatePerHour}
+              onChange={(e) =>
+                setSendRatePerHour(Math.max(0, Number(e.target.value) || 0))
+              }
+              className="w-40"
+              placeholder="0 = unlimited"
+            />
+            <span className="text-xs text-muted-foreground">emails / hour</span>
+            <div className="ml-auto flex gap-1">
+              {[0, 200, 500, 1000, 2000, 5000, 10_000].map((preset) => (
+                <Button
+                  key={preset}
+                  variant={sendRatePerHour === preset ? 'default' : 'outline'}
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => setSendRatePerHour(preset)}
+                >
+                  {preset === 0 ? '∞' : preset >= 1000 ? `${preset / 1000}k` : preset}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </div>
+
         <label className="flex items-start gap-3 rounded-md border p-3 text-sm">
           <input
             type="checkbox"
@@ -168,6 +216,7 @@ function ResendTab(): JSX.Element {
                 apiKey: editKey ? apiKey : '',
                 defaultFromEmail,
                 webhookSigningSecret: editHook ? webhookSigningSecret : '',
+                sendRatePerHour,
                 enabled,
               })
             }

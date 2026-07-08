@@ -389,6 +389,11 @@ async function sendWithResendRetry(
   client: Resend,
   opts: Parameters<Resend['emails']['send']>[0],
 ): Promise<{ messageId: string | null }> {
+  // Global rate throttle — blocks until a slot is available under the
+  // admin-configured emails/hour cap. Skipped when the cap is 0.
+  const { claimSendSlot } = await import('../utils/send-rate-limit');
+  await claimSendSlot();
+
   const maxAttempts = 5;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const { data, error } = await client.emails.send(opts);

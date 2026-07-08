@@ -17,6 +17,13 @@ const PROVIDER = 'resend';
 
 export interface ResendConfig {
   defaultFromEmail: string;
+  /**
+   * Global outbound rate cap in emails per hour. 0 = unlimited (fall
+   * back to Resend's per-account cap). Enforced by the worker's
+   * claimSendSlot() helper across campaigns + drip automations +
+   * email-agent sends.
+   */
+  sendRatePerHour?: number;
 }
 
 export interface ResendSecrets {
@@ -28,6 +35,7 @@ export interface ResolvedResend {
   apiKey: string | null;
   defaultFromEmail: string | null;
   webhookSigningSecret: string | null;
+  sendRatePerHour: number;
   source: 'db' | 'env';
 }
 
@@ -38,13 +46,18 @@ async function load(): Promise<ResolvedResend> {
       apiKey: row.secrets.apiKey,
       defaultFromEmail: row.config.defaultFromEmail ?? null,
       webhookSigningSecret: row.secrets.webhookSigningSecret ?? null,
+      sendRatePerHour: Number(row.config.sendRatePerHour ?? 0),
       source: 'db',
     };
   }
+  // Env fallback also honours SEND_RATE_PER_HOUR so ops can throttle
+  // without touching the DB.
+  const envRate = Number(process.env.SEND_RATE_PER_HOUR ?? 0);
   return {
     apiKey: process.env.RESEND_API_KEY ?? null,
     defaultFromEmail: process.env.RESEND_FROM_EMAIL ?? null,
     webhookSigningSecret: process.env.RESEND_WEBHOOK_SECRET ?? null,
+    sendRatePerHour: Number.isFinite(envRate) && envRate > 0 ? envRate : 0,
     source: 'env',
   };
 }

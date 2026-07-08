@@ -728,6 +728,8 @@ async function sendAndPersistOutbound(
   let messageId: string | null = null;
   if (resend) {
     try {
+      const { claimSendSlot } = await import('../utils/send-rate-limit');
+      await claimSendSlot();
       const result = await resend.emails.send({
         from: `${ctx.emailAgent.fromName} <${ctx.emailAgent.fromEmail}>`,
         to: ctx.contact.email,

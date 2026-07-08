@@ -480,6 +480,13 @@ const resendUpdateSchema = z.object({
   apiKey: z.string().max(2_000).default(''),
   defaultFromEmail: z.string().trim().email().or(z.literal('')).default(''),
   webhookSigningSecret: z.string().max(2_000).default(''),
+  /**
+   * Global outbound rate cap in emails per hour. 0 = unlimited (fall
+   * back to Resend's per-account rate limit). Applied across
+   * campaigns + drip automations + email-agent sends via
+   * util/send-rate-limit's claimSendSlot() helper.
+   */
+  sendRatePerHour: z.number().int().min(0).max(1_000_000).default(0),
   enabled: z.boolean(),
 });
 
@@ -494,12 +501,14 @@ const resendRouter = createAdminRouter({
       enabled: row?.enabled ?? false,
       config: {
         defaultFromEmail: row?.config.defaultFromEmail ?? '',
+        sendRatePerHour: Number(row?.config.sendRatePerHour ?? 0),
       },
       hasSecrets: row?.hasSecrets ?? false,
       lastTestedAt: row?.lastTestedAt ?? null,
       lastTestStatus: row?.lastTestStatus ?? ('UNTESTED' as const),
       lastTestError: row?.lastTestError ?? null,
       liveSource: live.source,
+      liveSendRatePerHour: live.sendRatePerHour,
       webhookUrlHint: new URL(
         '/api/webhooks/resend',
         adminOrigin(ctx.headers),
@@ -515,7 +524,10 @@ const resendRouter = createAdminRouter({
           'resend',
           tx,
         );
-        const config = { defaultFromEmail: input.defaultFromEmail };
+        const config = {
+          defaultFromEmail: input.defaultFromEmail,
+          sendRatePerHour: input.sendRatePerHour,
+        };
         const incomingKey = input.apiKey.trim();
         const incomingHook = input.webhookSigningSecret.trim();
         const keepBoth = incomingKey === '' && incomingHook === '';

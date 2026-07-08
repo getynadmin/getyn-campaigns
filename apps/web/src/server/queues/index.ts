@@ -218,6 +218,30 @@ export async function enqueueAutomationStep(
 }
 
 /**
+ * Bulk-enqueue step jobs — one Redis roundtrip via BullMQ's addBulk.
+ * Used by enrollFromSegment where a single mutation may want to fire
+ * thousands of step jobs. On Vercel serverless the previous
+ * fire-and-forget-loop pattern got killed mid-flight when the
+ * function returned; addBulk lets the mutation await a single call
+ * that finishes cleanly before response.
+ */
+export async function enqueueAutomationSteps(
+  payloads: AutomationStepPayload[],
+): Promise<void> {
+  if (payloads.length === 0) return;
+  const validated = payloads.map((p) => automationStepPayloadSchema.parse(p));
+  const queue = getAutomationsQueue();
+  const now = Date.now();
+  await queue.addBulk(
+    validated.map((p, i) => ({
+      name: JOB_NAMES.automations.step,
+      data: p,
+      opts: { jobId: `step_${p.enrollmentId}_${now}_${i}` },
+    })),
+  );
+}
+
+/**
  * Wake enrollments paused at a specific DRAFT node after it flips
  * LIVE. Idempotent — the handler sets nextActionAt=now on qualifying
  * rows; duplicates just no-op.

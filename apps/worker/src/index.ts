@@ -153,7 +153,11 @@ workers.push(
           throw new Error(`Unknown automations job: ${job.name}`);
       }
     },
-    { connection, concurrency: 4, lockDuration: 60_000 },
+    // Bumped concurrency 4→12 alongside the TICK_BATCH_SIZE bump so
+    // trigger/delay/split advances (which are cheap DB updates)
+    // drain quickly. Email sends are gated by the global send-rate
+    // throttle regardless of worker parallelism.
+    { connection, concurrency: 12, lockDuration: 60_000 },
   ),
 );
 const automationsQueue = new Queue(QUEUE_NAMES.automations, { connection });
