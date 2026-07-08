@@ -283,20 +283,32 @@ function BuilderInner({
     }
   }, [nodes, edges]);
 
+  // Poll node-level stats every 15s while the builder is open. Only
+  // fetches once we know the automation has enrollments — for fresh
+  // DRAFT flows this is a no-op.
+  const statsQuery = api.automation.stats.useQuery(
+    { id: automationId },
+    { refetchInterval: 15_000, enabled: status !== 'DRAFT' || (row?._count?.enrollments ?? 0) > 0 },
+  );
+  const nodeStats = statsQuery.data?.nodeStats ?? {};
+  const aggregate = statsQuery.data?.aggregate;
+
   const enrichedNodes = useMemo(
     () =>
       nodes.map((n) => {
         const issue = validationIssues.find((i) => i.nodeId === n.id);
+        const s = nodeStats[n.id];
         return {
           ...n,
           data: {
             ...n.data,
             __dayLabel: dayLabels.get(n.id) ?? (n.type === 'trigger' ? 'Day 0' : undefined),
             __hasError: issue?.message,
+            __stats: s,
           },
         };
       }),
-    [nodes, dayLabels, validationIssues],
+    [nodes, dayLabels, validationIssues, nodeStats],
   );
 
   const selectedNode = useMemo(() => {
@@ -415,6 +427,26 @@ function BuilderInner({
             className="h-8 max-w-md border-transparent bg-transparent px-2 text-sm font-semibold shadow-none hover:border-border"
           />
           <StatusPill status={status} />
+          {aggregate && aggregate.total > 0 && (
+            <span className="ml-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+              <span title="Currently active enrollments">
+                {aggregate.active.toLocaleString()} active
+              </span>
+              <span className="text-muted-foreground/50">·</span>
+              <span title="Completed enrollments">
+                {aggregate.completed.toLocaleString()} completed
+              </span>
+              {aggregate.exited + aggregate.failed > 0 && (
+                <>
+                  <span className="text-muted-foreground/50">·</span>
+                  <span title="Exited or failed enrollments">
+                    {(aggregate.exited + aggregate.failed).toLocaleString()}{' '}
+                    exited
+                  </span>
+                </>
+              )}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {updateDefinition.isPending && (
@@ -514,11 +546,13 @@ function BuilderInner({
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         automationId={automationId}
+        automationStatus={status}
         initialSettings={
           (row?.settings ?? {}) as {
             onReply?: 'STOP' | 'CONTINUE' | 'BRANCH';
             fromName?: string | null;
             fromEmail?: string | null;
+            targetSegmentId?: string | null;
           }
         }
       />

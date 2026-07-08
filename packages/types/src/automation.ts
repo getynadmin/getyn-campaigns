@@ -292,6 +292,14 @@ export const automationSettingsSchema = z.object({
     .max(200)
     .nullable()
     .default(null),
+  /**
+   * Target audience for the workflow. Null = manual enrollment only.
+   * When set, the Workflow Settings dialog exposes a "Bulk enroll from
+   * segment" action; a future automatic-enroll cron can also honour
+   * this. The engine itself doesn't gate on it — enrollments carry a
+   * contactId directly.
+   */
+  targetSegmentId: z.string().min(1).max(64).nullable().default(null),
 });
 export type AutomationSettings = z.infer<typeof automationSettingsSchema>;
 

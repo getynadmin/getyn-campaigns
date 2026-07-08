@@ -36,6 +36,7 @@ export function WorkflowSettingsDialog({
   open,
   onOpenChange,
   automationId,
+  automationStatus,
   initialSettings,
 }: {
   open: boolean;
@@ -45,10 +46,15 @@ export function WorkflowSettingsDialog({
     onReply?: 'STOP' | 'CONTINUE' | 'BRANCH';
     fromName?: string | null;
     fromEmail?: string | null;
+    targetSegmentId?: string | null;
   };
+  automationStatus: 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'ARCHIVED';
 }): JSX.Element {
   const utils = api.useUtils();
   const domains = api.automation.sendingDomainOptions.useQuery(undefined, {
+    enabled: open,
+  });
+  const segments = api.automation.segmentOptions.useQuery(undefined, {
     enabled: open,
   });
 
@@ -57,6 +63,9 @@ export function WorkflowSettingsDialog({
   );
   const [fromName, setFromName] = useState<string>(initialSettings.fromName ?? '');
   const [fromEmail, setFromEmail] = useState<string>(initialSettings.fromEmail ?? '');
+  const [targetSegmentId, setTargetSegmentId] = useState<string | null>(
+    initialSettings.targetSegmentId ?? null,
+  );
 
   // Hydrate again on re-open so we always show what's actually saved.
   useEffect(() => {
@@ -64,6 +73,7 @@ export function WorkflowSettingsDialog({
       setOnReply(initialSettings.onReply ?? 'STOP');
       setFromName(initialSettings.fromName ?? '');
       setFromEmail(initialSettings.fromEmail ?? '');
+      setTargetSegmentId(initialSettings.targetSegmentId ?? null);
     }
   }, [open, initialSettings]);
 
@@ -77,6 +87,20 @@ export function WorkflowSettingsDialog({
       toast.success('Workflow settings saved.');
       void utils.automation.get.invalidate({ id: automationId });
       onOpenChange(false);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const bulkEnroll = api.automation.enrollFromSegment.useMutation({
+    onSuccess: (data) => {
+      toast.success(
+        `Enrolled ${data.enrolled.toLocaleString()} contact${data.enrolled === 1 ? '' : 's'}` +
+          (data.skipped > 0
+            ? ` · skipped ${data.skipped.toLocaleString()} already active`
+            : ''),
+      );
+      void utils.automation.stats.invalidate({ id: automationId });
+      void utils.automation.get.invalidate({ id: automationId });
     },
     onError: (err) => toast.error(err.message),
   });
@@ -156,6 +180,63 @@ export function WorkflowSettingsDialog({
             </Select>
           </div>
 
+          <div className="space-y-1 rounded-md border bg-muted/30 p-3">
+            <Label className="text-xs">Target audience</Label>
+            <Select
+              value={targetSegmentId ?? 'none'}
+              onValueChange={(v) =>
+                setTargetSegmentId(v === 'none' ? null : v)
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Pick a segment…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">
+                  No segment (manual enrollment only)
+                </SelectItem>
+                {(segments.data ?? []).map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name}
+                    {s.cachedCount !== null
+                      ? ` (${s.cachedCount.toLocaleString()})`
+                      : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              Marks the intended audience for this workflow. Use the button
+              below to enrol every matching contact — active enrollments are
+              skipped, quota is enforced.
+            </p>
+            {targetSegmentId && automationStatus === 'ACTIVE' && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-1 w-full"
+                disabled={bulkEnroll.isPending}
+                onClick={() =>
+                  bulkEnroll.mutate({
+                    automationId,
+                    segmentId: targetSegmentId,
+                  })
+                }
+              >
+                {bulkEnroll.isPending && (
+                  <Loader2 className="mr-1 size-3.5 animate-spin" />
+                )}
+                Enrol all matching contacts now
+              </Button>
+            )}
+            {targetSegmentId && automationStatus !== 'ACTIVE' && (
+              <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                Activate the workflow before enrolling contacts.
+              </p>
+            )}
+          </div>
+
           <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
             <span className="font-medium">Reply-To:</span> replies route back through{' '}
             <code>reply.getyn.com</code> so we can match them to this workflow. No
@@ -175,6 +256,7 @@ export function WorkflowSettingsDialog({
                   onReply,
                   fromName: fromName.trim() || null,
                   fromEmail: fromEmail.trim().toLowerCase() || null,
+                  targetSegmentId,
                 },
               })
             }

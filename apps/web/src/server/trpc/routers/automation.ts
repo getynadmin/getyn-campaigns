@@ -313,6 +313,285 @@ export const automationRouter = createTRPCRouter({
   }),
 
   /**
+   * Segment picker for the Workflow Settings dialog. Includes the
+   * cached count so the operator can see roughly how many contacts
+   * they'd enroll before hitting the button.
+   */
+  segmentOptions: tenantProcedure.query(async ({ ctx }) => {
+    const tenantId = ctx.tenantContext.tenant.id;
+    return withTenant(tenantId, async (tx) => {
+      return tx.segment.findMany({
+        where: { tenantId },
+        select: { id: true, name: true, cachedCount: true },
+        orderBy: { name: 'asc' },
+      });
+    });
+  }),
+
+  /**
+   * Per-node stats for the builder canvas + aggregate totals for the
+   * top bar. Computed from AutomationEnrollment.currentNodeId +
+   * status + nodeStateHistory. Polled every 15s from the client so
+   * the operator sees a live picture of who's where in the flow.
+   *
+   * Aggregation is done in JS across the enrollment set rather than
+   * via multiple grouped queries — for realistic enrollment counts
+   * (<10K per automation) this is fast enough and avoids N queries.
+   */
+  stats: tenantProcedure
+    .input(idSchema)
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return withTenant(tenantId, async (tx) => {
+        const rows = await tx.automationEnrollment.findMany({
+          where: { tenantId, automationId: input.id },
+          select: {
+            currentNodeId: true,
+            status: true,
+            pausedAtDraftNode: true,
+            nextActionAt: true,
+            nodeStateHistory: true,
+          },
+        });
+        const now = Date.now();
+        const perNode = new Map<
+          string,
+          { waiting: number; paused: number; sent: number; failed: number }
+        >();
+        function bump(
+          nodeId: string,
+          key: 'waiting' | 'paused' | 'sent' | 'failed',
+        ): void {
+          const cur = perNode.get(nodeId) ?? {
+            waiting: 0,
+            paused: 0,
+            sent: 0,
+            failed: 0,
+          };
+          cur[key] += 1;
+          perNode.set(nodeId, cur);
+        }
+        let total = 0;
+        let active = 0;
+        let completed = 0;
+        let exited = 0;
+        let failed = 0;
+        for (const r of rows) {
+          total += 1;
+          if (r.status === EnrollmentStatus.ACTIVE) {
+            active += 1;
+            if (r.pausedAtDraftNode) {
+              bump(r.currentNodeId, 'paused');
+            } else {
+              bump(r.currentNodeId, 'waiting');
+            }
+          } else if (r.status === EnrollmentStatus.COMPLETED) {
+            completed += 1;
+          } else if (r.status === EnrollmentStatus.EXITED) {
+            exited += 1;
+          } else if (r.status === EnrollmentStatus.FAILED) {
+            failed += 1;
+          }
+          // Walk history to tally sent/failed per node.
+          const history = Array.isArray(r.nodeStateHistory)
+            ? (r.nodeStateHistory as Array<{ nodeId: string; result?: string }>)
+            : [];
+          for (const h of history) {
+            if (!h?.nodeId) continue;
+            if (h.result === 'sent') bump(h.nodeId, 'sent');
+            else if (h.result === 'send_failed') bump(h.nodeId, 'failed');
+          }
+        }
+        // Map → plain object for tRPC serialization.
+        const nodeStats: Record<
+          string,
+          { waiting: number; paused: number; sent: number; failed: number }
+        > = {};
+        for (const [k, v] of perNode) nodeStats[k] = v;
+        return {
+          aggregate: { total, active, completed, exited, failed },
+          nodeStats,
+          computedAt: now,
+        };
+      });
+    }),
+
+  /**
+   * Bulk aggregate stats for the list page — one query per row would
+   * be N+1. This fetches every automation's total enrollment counts by
+   * status in a single group-by.
+   */
+  aggregateStatsBulk: tenantProcedure.query(async ({ ctx }) => {
+    const tenantId = ctx.tenantContext.tenant.id;
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.automationEnrollment.groupBy({
+        by: ['automationId', 'status'],
+        where: { tenantId },
+        _count: { _all: true },
+      });
+      const byAutomation: Record<
+        string,
+        { active: number; completed: number; exited: number; failed: number }
+      > = {};
+      for (const r of rows) {
+        const cur = (byAutomation[r.automationId] ??= {
+          active: 0,
+          completed: 0,
+          exited: 0,
+          failed: 0,
+        });
+        if (r.status === EnrollmentStatus.ACTIVE) cur.active = r._count._all;
+        else if (r.status === EnrollmentStatus.COMPLETED)
+          cur.completed = r._count._all;
+        else if (r.status === EnrollmentStatus.EXITED)
+          cur.exited = r._count._all;
+        else if (r.status === EnrollmentStatus.FAILED)
+          cur.failed = r._count._all;
+      }
+      return byAutomation;
+    });
+  }),
+
+  /**
+   * Materialise every contact matching a saved segment as an
+   * enrollment. Runs the segment compiler with the tenant's custom
+   * field registry so segment rules resolve correctly (matches the
+   * segments router pattern).
+   */
+  enrollFromSegment: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        automationId: z.string().min(1),
+        segmentId: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const { compileSegmentRules } = await import('@getyn/db');
+      const { segmentRulesSchema } = await import('@getyn/types');
+      return withTenant(tenantId, async (tx) => {
+        const automation = await tx.automation.findFirst({
+          where: { id: input.automationId, tenantId },
+          select: { id: true, status: true, definition: true },
+        });
+        if (!automation) throw new TRPCError({ code: 'NOT_FOUND' });
+        if (automation.status !== AutomationStatus.ACTIVE) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Automation must be Active to enroll contacts.',
+          });
+        }
+        const parsedDef = automationDefinitionSchema.safeParse(
+          automation.definition,
+        );
+        if (!parsedDef.success) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Automation definition is malformed.',
+          });
+        }
+        const trigger = parsedDef.data.nodes.find((n) => n.type === 'trigger');
+        if (!trigger) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Automation is missing a Trigger node.',
+          });
+        }
+        const segment = await tx.segment.findFirst({
+          where: { id: input.segmentId, tenantId },
+          select: { rules: true },
+        });
+        if (!segment) throw new TRPCError({ code: 'NOT_FOUND' });
+        const rulesParsed = segmentRulesSchema.safeParse(segment.rules);
+        if (!rulesParsed.success) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Segment rules are malformed.',
+          });
+        }
+        const customFields = await tx.customField.findMany({
+          where: { tenantId },
+          select: { id: true, key: true, type: true },
+        });
+        const where = compileSegmentRules(rulesParsed.data, {
+          customFields,
+        });
+
+        // Fetch matching contacts + already-active enrollments in one
+        // pass so we can filter and quota-check accurately.
+        const [contacts, existing] = await Promise.all([
+          tx.contact.findMany({
+            where: { ...where, tenantId, deletedAt: null },
+            select: { id: true },
+            take: 5_000, // safety cap; matches segment preview limits
+          }),
+          tx.automationEnrollment.findMany({
+            where: {
+              tenantId,
+              automationId: input.automationId,
+              status: EnrollmentStatus.ACTIVE,
+            },
+            select: { contactId: true },
+          }),
+        ]);
+        const active = new Set(existing.map((e) => e.contactId));
+        const eligible = contacts
+          .map((c) => c.id)
+          .filter((id) => !active.has(id));
+        if (eligible.length === 0) {
+          return { enrolled: 0, skipped: contacts.length, matched: contacts.length };
+        }
+        await assertWithinLimit(
+          tenantId,
+          PlanMetric.AUTOMATION_ENROLLMENTS_PER_MONTH,
+          eligible.length,
+        );
+        const now = new Date();
+        await tx.automationEnrollment.createMany({
+          data: eligible.map((contactId) => ({
+            tenantId,
+            automationId: input.automationId,
+            contactId,
+            currentNodeId: trigger.id,
+            status: EnrollmentStatus.ACTIVE,
+            nextActionAt: now,
+            pausedAtDraftNode: false,
+          })),
+          skipDuplicates: true,
+        });
+        // Fire step jobs asynchronously — same pattern as automation.enroll.
+        void (async () => {
+          const rows = await prisma.automationEnrollment.findMany({
+            where: {
+              tenantId,
+              automationId: input.automationId,
+              contactId: { in: eligible },
+              status: EnrollmentStatus.ACTIVE,
+            },
+            select: { id: true },
+          });
+          for (const r of rows) {
+            void enqueueAutomationStep({
+              enrollmentId: r.id,
+              tenantId,
+            }).catch((err) =>
+              console.error(
+                '[automation.enrollFromSegment] step enqueue failed',
+                err,
+              ),
+            );
+          }
+        })();
+        return {
+          enrolled: eligible.length,
+          skipped: contacts.length - eligible.length,
+          matched: contacts.length,
+        };
+      });
+    }),
+
+  /**
    * Flip a single node's status (DRAFT ↔ LIVE) — used by the toggle
    * on message-node cards. Runs alone (not via updateDefinition) so
    * the M3 worker's "wake paused enrollments at this node" hook can

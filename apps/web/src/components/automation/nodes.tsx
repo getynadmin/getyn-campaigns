@@ -30,10 +30,18 @@ import { cn } from '@/lib/utils';
  * two output handles (yes/no).
  */
 
+type NodeStats = {
+  waiting: number;
+  paused: number;
+  sent: number;
+  failed: number;
+};
+
 type Common = {
   label?: string;
   __dayLabel?: string;
   __hasError?: string; // set by client-side validator
+  __stats?: NodeStats; // set by the builder poll
 };
 
 // -----------------------------------------------------------------
@@ -48,6 +56,7 @@ function Card({
   selected,
   dayLabel,
   errorHint,
+  stats,
   tone = 'neutral',
 }: {
   icon: React.ReactNode;
@@ -57,6 +66,7 @@ function Card({
   selected?: boolean;
   dayLabel?: string;
   errorHint?: string;
+  stats?: NodeStats;
   tone?: 'neutral' | 'trigger' | 'exit' | 'message' | 'data' | 'logic';
 }): JSX.Element {
   const toneStyles: Record<string, string> = {
@@ -102,6 +112,41 @@ function Card({
           )}
         </div>
       )}
+      {stats &&
+        (stats.waiting > 0 ||
+          stats.paused > 0 ||
+          stats.sent > 0 ||
+          stats.failed > 0) && (
+          <div
+            className="flex items-center gap-2 border-t px-3 py-1 text-[10px] text-muted-foreground"
+            title="Real-time counts (updates every ~15s)"
+          >
+            {stats.waiting > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-sky-700 dark:text-sky-300">
+                <span aria-hidden>⏳</span>
+                {stats.waiting.toLocaleString()}
+              </span>
+            )}
+            {stats.paused > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-amber-700 dark:text-amber-300">
+                <span aria-hidden>⏸</span>
+                {stats.paused.toLocaleString()}
+              </span>
+            )}
+            {stats.sent > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-emerald-700 dark:text-emerald-300">
+                <span aria-hidden>✉</span>
+                {stats.sent.toLocaleString()}
+              </span>
+            )}
+            {stats.failed > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-rose-700 dark:text-rose-300">
+                <span aria-hidden>⚠</span>
+                {stats.failed.toLocaleString()}
+              </span>
+            )}
+          </div>
+        )}
     </div>
   );
 }
@@ -137,6 +182,7 @@ export function TriggerNode(props: NodeProps): JSX.Element {
         tone="trigger"
         dayLabel={data.__dayLabel}
         errorHint={data.__hasError}
+        stats={data.__stats}
       />
       <Handle type="source" position={Position.Bottom} />
     </>
@@ -160,6 +206,7 @@ export function EmailNode(props: NodeProps): JSX.Element {
         tone="message"
         dayLabel={data.__dayLabel}
         errorHint={data.__hasError}
+        stats={data.__stats}
       />
       <Handle type="source" position={Position.Bottom} />
     </>
@@ -185,6 +232,7 @@ export function WhatsAppNode(props: NodeProps): JSX.Element {
         tone="message"
         dayLabel={data.__dayLabel}
         errorHint={data.__hasError}
+        stats={data.__stats}
       />
       <Handle type="source" position={Position.Bottom} />
     </>
@@ -211,6 +259,7 @@ export function PropertyUpdateNode(props: NodeProps): JSX.Element {
         tone="data"
         dayLabel={data.__dayLabel}
         errorHint={data.__hasError}
+        stats={data.__stats}
       />
       <Handle type="source" position={Position.Bottom} />
     </>
@@ -230,6 +279,7 @@ export function ListUpdateNode(props: NodeProps): JSX.Element {
         tone="data"
         dayLabel={data.__dayLabel}
         errorHint={data.__hasError}
+        stats={data.__stats}
       />
       <Handle type="source" position={Position.Bottom} />
     </>
@@ -251,6 +301,7 @@ export function InternalAlertNode(props: NodeProps): JSX.Element {
         tone="data"
         dayLabel={data.__dayLabel}
         errorHint={data.__hasError}
+        stats={data.__stats}
       />
       <Handle type="source" position={Position.Bottom} />
     </>
@@ -275,6 +326,7 @@ export function DelayNode(props: NodeProps): JSX.Element {
         tone="logic"
         dayLabel={data.__dayLabel}
         errorHint={data.__hasError}
+        stats={data.__stats}
       />
       <Handle type="source" position={Position.Bottom} />
     </>
@@ -294,6 +346,7 @@ export function SplitNode(props: NodeProps): JSX.Element {
         tone="logic"
         dayLabel={data.__dayLabel}
         errorHint={data.__hasError}
+        stats={data.__stats}
       />
       {/* Two output handles: yes (left) / no (right) */}
       <Handle
@@ -325,6 +378,7 @@ export function ExitNode(props: NodeProps): JSX.Element {
         tone="exit"
         dayLabel={data.__dayLabel}
         errorHint={data.__hasError}
+        stats={data.__stats}
       />
     </>
   );

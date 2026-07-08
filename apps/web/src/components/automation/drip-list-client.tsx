@@ -35,6 +35,11 @@ export function DripAutomationsListClient({
 }): JSX.Element {
   const [createOpen, setCreateOpen] = useState(false);
   const { data, isLoading } = api.automation.list.useQuery();
+  // Live per-automation status breakdown. Polls every 30s while the
+  // page is open; single query returns counts for every row.
+  const bulkStats = api.automation.aggregateStatsBulk.useQuery(undefined, {
+    refetchInterval: 30_000,
+  });
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
@@ -86,6 +91,26 @@ export function DripAutomationsListClient({
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     {triggerSummary(row.trigger)} ·{' '}
                     {row._count.enrollments.toLocaleString()} enrolled
+                    {(() => {
+                      const s = bulkStats.data?.[row.id];
+                      if (!s || s.active + s.completed === 0) return null;
+                      return (
+                        <>
+                          {' · '}
+                          <span className="text-emerald-700 dark:text-emerald-400">
+                            {s.active.toLocaleString()} active
+                          </span>
+                          {s.completed > 0 && (
+                            <>
+                              {' · '}
+                              <span className="text-muted-foreground">
+                                {s.completed.toLocaleString()} completed
+                              </span>
+                            </>
+                          )}
+                        </>
+                      );
+                    })()}
                     {row.lastActivatedAt && (
                       <>
                         {' · Activated '}
