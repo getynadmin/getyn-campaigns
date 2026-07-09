@@ -91,6 +91,17 @@ export function WorkflowSettingsDialog({
     onError: (err) => toast.error(err.message),
   });
 
+  const resetEnrollments = api.automation.resetEnrollments.useMutation({
+    onSuccess: (data) => {
+      toast.success(
+        `Deleted ${data.deleted.toLocaleString()} enrollment${data.deleted === 1 ? '' : 's'}. You can now re-enroll.`,
+      );
+      void utils.automation.stats.invalidate({ id: automationId });
+      void utils.automation.get.invalidate({ id: automationId });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const bulkEnroll = api.automation.enrollFromSegment.useMutation({
     onSuccess: (data) => {
       toast.success(
@@ -242,6 +253,37 @@ export function WorkflowSettingsDialog({
             <code>reply.getyn.com</code> so we can match them to this workflow. No
             extra configuration needed.
           </p>
+
+          <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+            <div>
+              <p className="text-xs font-medium text-destructive">Danger zone</p>
+              <p className="text-[11px] text-muted-foreground">
+                Delete every enrollment for this workflow (queued, waiting,
+                sent, failed). Use when a bad configuration left contacts
+                stuck and you want a clean re-run. Contacts stay in your
+                audience; you can re-enrol them afterwards.
+              </p>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    'Delete all enrollments for this workflow? This cannot be undone.',
+                  )
+                )
+                  return;
+                resetEnrollments.mutate({ id: automationId });
+              }}
+              disabled={resetEnrollments.isPending}
+            >
+              {resetEnrollments.isPending && (
+                <Loader2 className="mr-1 size-4 animate-spin" />
+              )}
+              Reset all enrollments
+            </Button>
+          </div>
         </div>
 
         <DialogFooter>

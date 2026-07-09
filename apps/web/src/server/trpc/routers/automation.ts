@@ -775,6 +775,31 @@ export const automationRouter = createTRPCRouter({
     }),
 
   /**
+   * Hard-reset every enrollment for this automation — used when a bad
+   * config (rate limit, malformed Reply-To, template error) has left
+   * thousands of enrollments failed or stuck and the operator wants a
+   * clean re-run. Deletes rows outright so a subsequent enrollFromSegment
+   * doesn't hit the (automationId, contactId) unique-skip.
+   */
+  resetEnrollments: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN))
+    .input(idSchema)
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return withTenant(tenantId, async (tx) => {
+        const automation = await tx.automation.findFirst({
+          where: { id: input.id, tenantId },
+          select: { id: true },
+        });
+        if (!automation) throw new TRPCError({ code: 'NOT_FOUND' });
+        const result = await tx.automationEnrollment.deleteMany({
+          where: { automationId: input.id, tenantId },
+        });
+        return { deleted: result.count };
+      });
+    }),
+
+  /**
    * Return the automationTriggerSchema-shaped default we plant when
    * the builder needs a fresh Trigger node's data. Client uses this
    * for adding a new Trigger after deletion.
