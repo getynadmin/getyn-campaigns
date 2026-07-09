@@ -1446,7 +1446,7 @@ Position them left-to-right / top-to-bottom starting at x=240 y=40 in
    type: "email"
    data: { label, status: "DRAFT" (always DRAFT — operator flips Live),
            subject (string), previewText (string, ≤120 chars),
-           designJson: null, renderedHtml: "", textBody (write the FULL email body here as plaintext, 80-200 words, personalized with {{contact.firstName}}, ending with a specific ask) }
+           designJson: null, renderedHtml: "", textBody (write the FULL email body here as plaintext, 80-200 words, personalized with {{contact.firstName}}, ending with a specific ask. MUST format as 3-5 short paragraphs separated by BLANK LINES (two newline characters between paragraphs). Never one wall-of-text blob — the reader must be able to skim it. Open with "Hi {{contact.firstName}}," on its own line, blank line, then paragraphs, blank line, then sign-off.) }
 
 3. WhatsApp — placeholder for WhatsApp send.
    type: "whatsapp"

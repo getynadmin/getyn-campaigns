@@ -442,8 +442,13 @@ async function processEmail(
   // Prepare payload.
   const merge = buildMergeTags(ctx);
   const subject = renderTemplate(node.data.subject || '(no subject)', merge);
-  const html = renderTemplate(node.data.renderedHtml || node.data.textBody || '', merge);
-  const text = renderTemplate(node.data.textBody || stripHtml(node.data.renderedHtml || ''), merge);
+  const rawHtml = node.data.renderedHtml || '';
+  const rawText = node.data.textBody || '';
+  const htmlSource = rawHtml && hasHtmlTags(rawHtml)
+    ? rawHtml
+    : textToHtml(rawText || stripHtml(rawHtml));
+  const html = renderTemplate(htmlSource, merge);
+  const text = renderTemplate(rawText || stripHtml(rawHtml), merge);
 
   // Reply-To routes replies back to us so onReply policy fires.
   const replyToAddress = buildReplyToAddress(
@@ -827,6 +832,38 @@ function renderTemplate(template: string, vars: Record<string, string>): string 
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Wrap plain-text into paragraphed HTML. Splits on blank lines for
+ * `<p>` and single newlines for `<br>`. Escapes `&<>` first so
+ * merge-tag output that contains angle brackets doesn't break layout.
+ * Also inserts a hard break every ~2 sentences when a paragraph has
+ * no newlines at all — the AI generator sometimes emits one continuous
+ * blob, which renders as a wall of text.
+ */
+function textToHtml(text: string): string {
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const paras = escaped.split(/\n{2,}/).map((p) => {
+    if (p.includes('\n')) return p.replace(/\n/g, '<br>');
+    // No newlines at all — split into ~2-sentence chunks so long AI
+    // paragraphs don't render as an unreadable wall.
+    const sentences = p.match(/[^.!?]+[.!?]+\s*/g);
+    if (!sentences || sentences.length <= 2) return p;
+    const chunks: string[] = [];
+    for (let i = 0; i < sentences.length; i += 2) {
+      chunks.push(sentences.slice(i, i + 2).join('').trim());
+    }
+    return chunks.join('</p><p>');
+  });
+  return paras.map((p) => `<p>${p}</p>`).join('\n');
+}
+
+function hasHtmlTags(s: string): boolean {
+  return /<(p|div|br|h[1-6]|table|img|a|span|ul|ol|li)\b/i.test(s);
 }
 
 // -----------------------------------------------------------------
