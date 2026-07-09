@@ -34,7 +34,8 @@ import { createRedisConnection } from '../redis';
 const CACHE_TTL_MS = 30_000;
 const MAX_WAIT_MS = 65 * 60 * 1000; // absolute upper bound
 
-let cached: { rate: number; expiresAt: number } | null = null;
+let cached: { rate: number; perSecond: number; expiresAt: number } | null = null;
+const DEFAULT_PER_SECOND = 2; // Resend free tier
 let redisSingleton: Redis | null = null;
 
 function asEnvelope(value: Prisma.JsonValue | null): EncryptedField | null {
@@ -60,19 +61,24 @@ function asEnvelope(value: Prisma.JsonValue | null): EncryptedField | null {
  * Resolve the current rate cap (emails / hour). 0 = unlimited.
  * Cached for 30s so a burst of sends doesn't hammer Postgres.
  */
-export async function getSendRatePerHour(): Promise<number> {
-  if (cached && cached.expiresAt > Date.now()) return cached.rate;
+async function loadRates(): Promise<{ rate: number; perSecond: number }> {
+  if (cached && cached.expiresAt > Date.now())
+    return { rate: cached.rate, perSecond: cached.perSecond };
   let rate = 0;
+  let perSecond = DEFAULT_PER_SECOND;
   try {
     const row = await prisma.integrationCredential.findUnique({
       where: { provider: 'resend' },
     });
     if (row?.enabled) {
-      const cfg = row.config as { sendRatePerHour?: number } | null;
+      const cfg = row.config as {
+        sendRatePerHour?: number;
+        sendRatePerSecond?: number;
+      } | null;
       const dbRate = Number(cfg?.sendRatePerHour ?? 0);
       if (Number.isFinite(dbRate) && dbRate >= 0) rate = dbRate;
-      // secrets envelope isn't relevant here — just kept so we
-      // fail loudly if the row shape ever changes unexpectedly.
+      const dbPs = Number(cfg?.sendRatePerSecond ?? DEFAULT_PER_SECOND);
+      if (Number.isFinite(dbPs) && dbPs > 0) perSecond = dbPs;
       void asEnvelope(row.secrets);
     }
   } catch (err) {
@@ -82,8 +88,12 @@ export async function getSendRatePerHour(): Promise<number> {
     const envRate = Number(process.env.SEND_RATE_PER_HOUR ?? 0);
     if (Number.isFinite(envRate) && envRate > 0) rate = envRate;
   }
-  cached = { rate, expiresAt: Date.now() + CACHE_TTL_MS };
-  return rate;
+  cached = { rate, perSecond, expiresAt: Date.now() + CACHE_TTL_MS };
+  return { rate, perSecond };
+}
+
+export async function getSendRatePerHour(): Promise<number> {
+  return (await loadRates()).rate;
 }
 
 /**
@@ -132,28 +142,34 @@ async function getRedis(): Promise<Redis | null> {
  * blip must not block sends.
  */
 export async function claimSendSlot(): Promise<boolean> {
-  const rate = await getSendRatePerHour();
-  if (rate === 0) return true; // unlimited
+  const { rate, perSecond } = await loadRates();
   const redis = await getRedis();
   if (!redis) return true; // fail-open
+
+  // Per-second gate first (Resend caps at ~2/s on free tier).
+  if (perSecond > 0) {
+    while (true) {
+      const sec = Math.floor(Date.now() / 1000);
+      const psKey = `send_throttle_s:${sec}`;
+      const c = await redis.incr(psKey);
+      if (c === 1) await redis.expire(psKey, 5);
+      if (c <= perSecond) break;
+      await redis.decr(psKey);
+      // Sleep until the next whole second.
+      const waitMs = 1000 - (Date.now() % 1000) + 10;
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+
+  if (rate === 0) return true; // hourly unlimited
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < MAX_WAIT_MS) {
     const key = bucketKey();
-    // INCR is atomic; set expiry once so the key auto-cleans two hours
-    // later. Race-safe: if two INCRs land at once, both get a number,
-    // but only the one that hits (rate + 1) exceeds the cap.
     const count = await redis.incr(key);
-    if (count === 1) {
-      // Fresh bucket — pin an expiry a bit past the next hour.
-      await redis.expire(key, 3600 + 300);
-    }
+    if (count === 1) await redis.expire(key, 3600 + 300);
     if (count <= rate) return true;
-
-    // Over cap — sleep until the top of the next hour and retry.
     const waitMs = Math.min(msUntilNextHour() + 100, 60_000);
-    // Roll back this over-cap increment so we don't strand credits.
-    // decr is safe because incr succeeded on this instance already.
     await redis.decr(key);
     await new Promise((r) => setTimeout(r, waitMs));
   }

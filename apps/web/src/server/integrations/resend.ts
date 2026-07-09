@@ -24,6 +24,8 @@ export interface ResendConfig {
    * email-agent sends.
    */
   sendRatePerHour?: number;
+  /** Per-second burst cap. Default 2 (Resend free tier). */
+  sendRatePerSecond?: number;
 }
 
 export interface ResendSecrets {

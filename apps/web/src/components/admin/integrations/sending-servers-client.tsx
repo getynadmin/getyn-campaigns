@@ -60,6 +60,7 @@ function ResendTab(): JSX.Element {
   const [hydrated, setHydrated] = useState(false);
   const [defaultFromEmail, setDefaultFromEmail] = useState('');
   const [sendRatePerHour, setSendRatePerHour] = useState(0);
+  const [sendRatePerSecond, setSendRatePerSecond] = useState(2);
   const [enabled, setEnabled] = useState(false);
   const [editKey, setEditKey] = useState(false);
   const [apiKey, setApiKey] = useState('');
@@ -72,6 +73,7 @@ function ResendTab(): JSX.Element {
     if (!data || hydrated) return;
     setDefaultFromEmail(data.config.defaultFromEmail);
     setSendRatePerHour(data.config.sendRatePerHour ?? 0);
+    setSendRatePerSecond(data.config.sendRatePerSecond ?? 2);
     setEnabled(data.enabled);
     setHydrated(true);
   }, [data, hydrated]);
@@ -180,6 +182,42 @@ function ResendTab(): JSX.Element {
               ))}
             </div>
           </div>
+          <div className="mt-3 border-t pt-3">
+            <p className="text-xs font-medium">Per-second burst cap</p>
+            <p className="text-[11px] text-muted-foreground">
+              Resend free tier = 2/s, Pro = 10/s. Applied alongside the
+              hourly cap to prevent 429 rate-limit errors.
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <Input
+                type="number"
+                min={1}
+                max={1000}
+                step={1}
+                value={sendRatePerSecond}
+                onChange={(e) =>
+                  setSendRatePerSecond(
+                    Math.max(1, Number(e.target.value) || 1),
+                  )
+                }
+                className="w-24"
+              />
+              <span className="text-xs text-muted-foreground">emails / second</span>
+              <div className="ml-auto flex gap-1">
+                {[2, 5, 10, 25, 50].map((preset) => (
+                  <Button
+                    key={preset}
+                    variant={sendRatePerSecond === preset ? 'default' : 'outline'}
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => setSendRatePerSecond(preset)}
+                  >
+                    {preset}/s
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
 
         <label className="flex items-start gap-3 rounded-md border p-3 text-sm">
@@ -217,6 +255,7 @@ function ResendTab(): JSX.Element {
                 defaultFromEmail,
                 webhookSigningSecret: editHook ? webhookSigningSecret : '',
                 sendRatePerHour,
+                sendRatePerSecond,
                 enabled,
               })
             }

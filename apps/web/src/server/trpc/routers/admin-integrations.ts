@@ -487,6 +487,11 @@ const resendUpdateSchema = z.object({
    * util/send-rate-limit's claimSendSlot() helper.
    */
   sendRatePerHour: z.number().int().min(0).max(1_000_000).default(0),
+  /**
+   * Per-second burst cap. Resend free tier = 2/s; Pro = 10/s. Applied
+   * alongside the hourly cap to prevent 429s.
+   */
+  sendRatePerSecond: z.number().int().min(1).max(1_000).default(2),
   enabled: z.boolean(),
 });
 
@@ -502,6 +507,7 @@ const resendRouter = createAdminRouter({
       config: {
         defaultFromEmail: row?.config.defaultFromEmail ?? '',
         sendRatePerHour: Number(row?.config.sendRatePerHour ?? 0),
+        sendRatePerSecond: Number(row?.config.sendRatePerSecond ?? 2),
       },
       hasSecrets: row?.hasSecrets ?? false,
       lastTestedAt: row?.lastTestedAt ?? null,
@@ -527,6 +533,7 @@ const resendRouter = createAdminRouter({
         const config = {
           defaultFromEmail: input.defaultFromEmail,
           sendRatePerHour: input.sendRatePerHour,
+          sendRatePerSecond: input.sendRatePerSecond,
         };
         const incomingKey = input.apiKey.trim();
         const incomingHook = input.webhookSigningSecret.trim();
