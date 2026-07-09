@@ -187,7 +187,15 @@ export function buildReplyToAddress(
 ): string | null {
   if (!opts.secret || !opts.inboundDomain) return null;
   const token = encodeReplyToken(kind, payload, opts.secret);
-  return `reply+${token}@${opts.inboundDomain}`;
+  const localPart = `reply+${token}`;
+  // RFC 5321 caps the local-part at 64 chars. Our HMAC token often
+  // exceeds that (payload JSON + 32-byte sig ≈ 180 b64 chars), and
+  // strict validators (Resend among them) return 422. Skip the header
+  // when we'd overflow — replies won't route by token, but the send
+  // succeeds. Phase 8 follow-up: switch to a short random id + Redis
+  // lookup table to preserve routing.
+  if (localPart.length > 64) return null;
+  return `${localPart}@${opts.inboundDomain}`;
 }
 
 /**
