@@ -164,9 +164,25 @@ export async function saveIntegration(
       data.secrets = env as unknown as Prisma.InputJsonValue;
     }
   }
-  await client.integrationCredential.update({
+  // Upsert so the first save of a new provider (e.g. xpay) works
+  // without pre-seeding a row. `data` is an UpdateInput; the create
+  // path needs the same fields plus provider + createdByStaffUserId.
+  await client.integrationCredential.upsert({
     where: { provider: args.provider },
-    data,
+    update: data,
+    create: {
+      provider: args.provider,
+      config: args.config as Prisma.InputJsonValue,
+      enabled: args.enabled,
+      secrets:
+        args.secrets && Object.keys(args.secrets).length > 0
+          ? (encrypt(
+              JSON.stringify(args.secrets),
+              ad(args.provider),
+            ) as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+      lastUpdatedByStaffUserId: args.staffUserId,
+    },
   });
 }
 
