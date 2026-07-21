@@ -42,6 +42,7 @@ const METRIC_LABEL: Record<PlanMetric, string> = {
   AI_AGENT_CONVERSATIONS_PER_MONTH: 'AI agent conversations / month',
   AUTOMATION_ENROLLMENTS_PER_MONTH: 'Automation enrollments / month',
   AGENT_REPLIES_PER_MONTH: 'Email agent replies / month',
+  MESSAGES_PER_MONTH: 'Messages (email + WhatsApp) / month',
 };
 
 const ORDERED_METRICS: PlanMetric[] = [

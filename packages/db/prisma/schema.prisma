@@ -1307,6 +1307,9 @@ enum PlanMetric {
   AGENT_REPLIES_PER_MONTH
   // Phase 7 — AI Campaign Agents conversation cap.
   AI_AGENT_CONVERSATIONS_PER_MONTH
+  // Phase 9 — unified email + WhatsApp bucket. New dynamic plans
+  // enforce this instead of the per-channel counters.
+  MESSAGES_PER_MONTH
 }
 
 model Plan {

@@ -215,6 +215,14 @@ export async function getCurrentUsage(
       return countAutomationEnrollmentsThisMonth(tenantId);
     case PlanMetric.AGENT_REPLIES_PER_MONTH:
       return countAgentRepliesThisMonth(tenantId);
+    case PlanMetric.MESSAGES_PER_MONTH: {
+      // Unified email+WA bucket used by dynamic-pricing plans.
+      const [em, wa] = await Promise.all([
+        countEmailsThisMonth(tenantId),
+        countWaMessagesThisMonth(tenantId),
+      ]);
+      return em + wa;
+    }
   }
 }
 
@@ -236,6 +244,7 @@ export async function getAllCurrentUsage(
     PlanMetric.AI_AGENT_CONVERSATIONS_PER_MONTH,
     PlanMetric.AUTOMATION_ENROLLMENTS_PER_MONTH,
     PlanMetric.AGENT_REPLIES_PER_MONTH,
+    PlanMetric.MESSAGES_PER_MONTH,
   ];
   const values = await Promise.all(
     metrics.map((m) => getCurrentUsage(tenantId, m)),

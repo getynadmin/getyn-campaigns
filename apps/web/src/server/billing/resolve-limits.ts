@@ -31,6 +31,8 @@ const ALL_METRICS: PlanMetric[] = [
   // Phase 8 — automation + email agent
   PlanMetric.AUTOMATION_ENROLLMENTS_PER_MONTH,
   PlanMetric.AGENT_REPLIES_PER_MONTH,
+  // Phase 9 — unified email + WhatsApp bucket for dynamic plans
+  PlanMetric.MESSAGES_PER_MONTH,
 ];
 
 export type ResolvedLimits = Record<PlanMetric, number>;
