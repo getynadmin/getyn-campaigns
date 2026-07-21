@@ -13,7 +13,7 @@
 import { TRPCError } from '@trpc/server';
 import * as Sentry from '@sentry/nextjs';
 
-import type { PlanMetric } from '@getyn/db';
+import { PlanMetric } from '@getyn/db';
 
 import { getCurrentUsage } from './measure-usage';
 import { resolveTenantLimit } from './resolve-limits';
@@ -63,25 +63,48 @@ export async function checkLimit(
   return { metric, limit, current, delta, allowed };
 }
 
+/**
+ * Metrics that also participate in the unified MESSAGES_PER_MONTH
+ * bucket. Callers gating on either of these will additionally get
+ * checked against the shared cap so dynamic plans work without
+ * touching every send path.
+ */
+const CONTRIBUTES_TO_MESSAGES: ReadonlySet<PlanMetric> = new Set([
+  PlanMetric.EMAILS_PER_MONTH,
+  PlanMetric.WA_MESSAGES_PER_MONTH,
+]);
+
 export async function assertWithinLimit(
   tenantId: string,
   metric: PlanMetric,
   delta = 1,
 ): Promise<void> {
   const result = await checkLimit(tenantId, metric, delta);
-  if (result.allowed) return;
-  const label = METRIC_LABEL[metric];
+  if (!result.allowed) {
+    throwLimitError(result);
+  }
+  // Also gate on the unified bucket when the per-channel metric feeds
+  // into it. resolveTenantLimit defaults MESSAGES_PER_MONTH to
+  // unlimited (-1) on legacy plans, so this is a no-op there.
+  if (CONTRIBUTES_TO_MESSAGES.has(metric)) {
+    const unified = await checkLimit(
+      tenantId,
+      PlanMetric.MESSAGES_PER_MONTH,
+      delta,
+    );
+    if (!unified.allowed) throwLimitError(unified);
+  }
+}
+
+function throwLimitError(result: LimitCheckResult): never {
+  const label = METRIC_LABEL[result.metric];
   const message =
     result.limit === 0
       ? `Your plan doesn't include ${label}. Upgrade to unlock this feature.`
       : `You'd exceed your ${label} limit (${result.current}/${result.limit}). Upgrade your plan or request a higher limit.`;
-  // Phase 5.5 M8: observability hook so cap-hits land as breadcrumbs
-  // on the surrounding tRPC error trace AND we can grep Sentry by
-  // tenantId + metric to spot tenants chronically at-cap (upgrade
-  // pipeline signal).
   Sentry.captureMessage('billing.limit.exceeded', {
     level: 'warning',
-    tags: { metric, tenantId, kind: 'plan_limit' },
+    tags: { metric: result.metric, kind: 'plan_limit' },
     extra: {
       limit: result.limit,
       current: result.current,

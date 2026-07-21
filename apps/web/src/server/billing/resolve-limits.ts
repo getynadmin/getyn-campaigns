@@ -71,8 +71,12 @@ export async function resolveTenantLimits(
       out[metric] = feature.included;
       continue;
     }
-    // 3) default to 0
-    out[metric] = 0;
+    // 3) default. MESSAGES_PER_MONTH is a Phase 9 addition — legacy
+    //    plans without a feature row for it should behave as if
+    //    unlimited (so per-channel EMAILS_PER_MONTH / WA_MESSAGES_PER_MONTH
+    //    remain the effective caps). Every other metric defaults to 0
+    //    to fail-closed on missing configuration.
+    out[metric] = metric === PlanMetric.MESSAGES_PER_MONTH ? -1 : 0;
   }
   return out;
 }
