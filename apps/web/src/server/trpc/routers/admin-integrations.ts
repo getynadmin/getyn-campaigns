@@ -53,6 +53,12 @@ import {
   type WhatsAppSecrets,
 } from '@/server/integrations/whatsapp';
 import {
+  getXpayCredentials,
+  testXpayCredentials,
+  type XpayConfig,
+  type XpaySecrets,
+} from '@/server/integrations/xpay';
+import {
   getAnthropicCredentials,
   testAnthropicCredentials,
   type AnthropicConfig,
@@ -977,6 +983,128 @@ const dalleRouter = createAdminRouter({
 
 void SENTINEL; // reserved for future "no-op on update" cases
 
+// ---------------------------------------------------------------------
+// XPay Checkout — payment gateway used by the public /checkout page.
+// ---------------------------------------------------------------------
+const xpayUpdateSchema = z.object({
+  environment: z.enum(['sandbox', 'production']).default('sandbox'),
+  publicKey: z.string().trim().max(200).default(''),
+  privateKey: z.string().max(2_000).default(''),
+  webhookSecret: z.string().max(2_000).default(''),
+  callbackBaseUrl: z
+    .string()
+    .trim()
+    .url()
+    .or(z.literal(''))
+    .default(''),
+  enabled: z.boolean(),
+});
+
+const xpayRouter = createAdminRouter({
+  get: staffProcedure.query(async ({ ctx }) => {
+    const row = await adminLoadIntegration<XpayConfig, XpaySecrets>('xpay');
+    const live = await getXpayCredentials();
+    return {
+      provider: 'xpay' as const,
+      enabled: row?.enabled ?? false,
+      config: {
+        environment: row?.config.environment ?? 'sandbox',
+        publicKey: row?.config.publicKey ?? '',
+        callbackBaseUrl: row?.config.callbackBaseUrl ?? '',
+      },
+      hasSecrets: row?.hasSecrets ?? false,
+      lastTestedAt: row?.lastTestedAt ?? null,
+      lastTestStatus: row?.lastTestStatus ?? ('UNTESTED' as const),
+      lastTestError: row?.lastTestError ?? null,
+      liveSource: live.source,
+      liveEnvironment: live.environment,
+      webhookUrlHint: new URL(
+        '/api/payments/xpay/webhook',
+        adminOrigin(ctx.headers),
+      ).toString(),
+      returnUrlHint: new URL(
+        '/api/payments/xpay/return',
+        adminOrigin(ctx.headers),
+      ).toString(),
+    };
+  }),
+
+  update: supportAdminProcedure
+    .input(xpayUpdateSchema)
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async () => {
+        const existing = await adminLoadIntegration<XpayConfig, XpaySecrets>(
+          'xpay',
+        );
+        const config: XpayConfig = {
+          environment: input.environment,
+          publicKey: input.publicKey.trim() || undefined,
+          callbackBaseUrl: input.callbackBaseUrl.trim() || undefined,
+        };
+        const incomingPriv = input.privateKey.trim();
+        const incomingHook = input.webhookSecret.trim();
+        const keepBoth = incomingPriv === '' && incomingHook === '';
+        const secretsPayload = keepBoth
+          ? null
+          : {
+              privateKey:
+                incomingPriv !== ''
+                  ? incomingPriv
+                  : (existing?.secrets?.privateKey ?? ''),
+              webhookSecret:
+                incomingHook !== ''
+                  ? incomingHook
+                  : (existing?.secrets?.webhookSecret ?? ''),
+            };
+        if (input.enabled && (!config.publicKey || !secretsPayload?.privateKey) && !existing?.secrets?.privateKey) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message:
+              'Cannot enable XPay without both a public key and a private key.',
+          });
+        }
+        await saveIntegration({
+          provider: 'xpay',
+          enabled: input.enabled,
+          config: config as unknown as Record<string, unknown>,
+          secrets: secretsPayload as Record<string, unknown> | null,
+          staffUserId: ctx.staff.staffUserId,
+        });
+        return {
+          result: { ok: true as const },
+          audit: {
+            action: 'admin.integration.xpay.updated',
+            targetEntityId: 'xpay',
+            afterSnapshot: { enabled: input.enabled, environment: input.environment },
+          },
+        };
+      });
+    }),
+
+  test: supportAdminProcedure.mutation(async ({ ctx }) => {
+    return withAdminContext(ctx.staff, async () => {
+      const creds = await getXpayCredentials();
+      const result = await testXpayCredentials(creds);
+      await recordTestResult({
+        provider: 'xpay',
+        ok: result.ok,
+        error: result.ok ? undefined : result.message,
+      });
+      if (!result.ok) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: result.message });
+      }
+      return {
+        result,
+        audit: {
+          action: 'admin.integration.xpay.tested',
+          targetEntityId: 'xpay',
+          afterSnapshot: result,
+        },
+      };
+    });
+  }),
+});
+
 export const adminIntegrationsRouter = createAdminRouter({
   whatsApp: whatsAppRouter,
   smtp: smtpRouter,
@@ -985,4 +1113,5 @@ export const adminIntegrationsRouter = createAdminRouter({
   railway: railwayRouter,
   anthropic: anthropicRouter,
   dalle: dalleRouter,
+  xpay: xpayRouter,
 });

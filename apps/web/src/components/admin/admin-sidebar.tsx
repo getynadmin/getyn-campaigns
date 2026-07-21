@@ -223,6 +223,16 @@ const RAIL: RailEntry[] = [
           ],
         },
         {
+          title: 'Billing',
+          items: [
+            {
+              href: '/admin/integrations/payment-gateways',
+              label: 'Payment Gateways',
+              icon: CreditCard,
+            },
+          ],
+        },
+        {
           title: 'AI',
           items: [
             {
