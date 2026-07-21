@@ -29,7 +29,7 @@ export default async function CheckoutPage({
     getSiteBranding(),
   ]);
   const logoUrl =
-    branding.defaultSidebarLogoLightUrl ?? branding.loginPageLogoUrl ?? null;
+    branding.loginPageLogoUrl ?? branding.defaultSidebarLogoLightUrl ?? null;
 
   const planSlug = searchParams.plan ?? pricing.planSlug ?? 'campaigns-pro';
   const volume = Math.max(

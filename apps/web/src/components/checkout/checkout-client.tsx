@@ -33,7 +33,7 @@ export interface CheckoutInitial {
 
 function fmtMoney(cents: number, currency: string): string {
   return (cents / 100).toLocaleString(undefined, {
-    style: 'currency',
+    style: 'currency', currencyDisplay: 'narrowSymbol',
     currency,
   });
 }
@@ -428,7 +428,7 @@ function OrderSummary(props: {
         </div>
         <div className="text-right text-sm font-medium">
           {(props.amountCents / 100).toLocaleString(undefined, {
-            style: 'currency',
+            style: 'currency', currencyDisplay: 'narrowSymbol',
             currency: props.currency,
           })}
         </div>
@@ -439,7 +439,7 @@ function OrderSummary(props: {
           <dt className="text-muted-foreground">Subtotal</dt>
           <dd>
             {(props.amountCents / 100).toLocaleString(undefined, {
-              style: 'currency',
+              style: 'currency', currencyDisplay: 'narrowSymbol',
               currency: props.currency,
             })}
           </dd>
@@ -454,7 +454,7 @@ function OrderSummary(props: {
         <span className="text-sm font-semibold">Total</span>
         <span className="text-xl font-bold text-emerald-600">
           {(props.amountCents / 100).toLocaleString(undefined, {
-            style: 'currency',
+            style: 'currency', currencyDisplay: 'narrowSymbol',
             currency: props.currency,
           })}
         </span>

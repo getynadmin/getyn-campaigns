@@ -33,6 +33,7 @@ function fmtMoney(cents: number, currency: string): string {
   return (cents / 100).toLocaleString(undefined, {
     style: 'currency',
     currency,
+    currencyDisplay: 'narrowSymbol',
     minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
     maximumFractionDigits: 2,
   });

@@ -61,12 +61,12 @@ const SOCIAL = [
 
 export function DocsFooter(): JSX.Element {
   return (
-    <footer className="border-t bg-muted/30">
+    <footer className="border-t border-zinc-800 bg-zinc-950 text-zinc-300">
       <div className="mx-auto max-w-7xl px-6 py-12">
         <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
           {COLUMNS.map((col) => (
             <div key={col.title}>
-              <h3 className="mb-3 font-display text-sm font-semibold tracking-tight">
+              <h3 className="mb-3 font-display text-sm font-semibold tracking-tight text-white">
                 {col.title}
               </h3>
               <ul className="space-y-2 text-sm">
@@ -77,14 +77,14 @@ export function DocsFooter(): JSX.Element {
                       {external ? (
                         <a
                           href={l.href}
-                          className="text-foreground/70 transition-colors hover:text-foreground"
+                          className="text-zinc-400 transition-colors hover:text-white"
                         >
                           {l.label}
                         </a>
                       ) : (
                         <Link
                           href={l.href}
-                          className="text-foreground/70 transition-colors hover:text-foreground"
+                          className="text-zinc-400 transition-colors hover:text-white"
                         >
                           {l.label}
                         </Link>
@@ -97,34 +97,34 @@ export function DocsFooter(): JSX.Element {
           ))}
         </div>
 
-        <div className="mt-10 flex flex-col gap-4 border-t pt-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-4 text-xs text-foreground/60">
+        <div className="mt-10 flex flex-col gap-4 border-t border-zinc-800 pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-4 text-xs text-zinc-500">
             <span>© {new Date().getFullYear()} Getyn Technologies</span>
-            <a href="https://getyn.com/privacy" className="hover:text-foreground">
+            <a href="https://getyn.com/privacy" className="hover:text-white">
               Privacy Policy
             </a>
-            <a href="https://getyn.com/terms" className="hover:text-foreground">
+            <a href="https://getyn.com/terms" className="hover:text-white">
               Terms &amp; Conditions
             </a>
-            <a href="https://getyn.com/sitemap" className="hover:text-foreground">
+            <a href="https://getyn.com/sitemap" className="hover:text-white">
               Sitemap
             </a>
-            <span className="inline-flex items-center gap-1.5 rounded border px-2 py-0.5">
+            <span className="inline-flex items-center gap-1.5 rounded border border-zinc-700 px-2 py-0.5">
               GDPR
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded border px-2 py-0.5">
+            <span className="inline-flex items-center gap-1.5 rounded border border-zinc-700 px-2 py-0.5">
               SOC 2
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded border px-2 py-0.5">
+            <span className="inline-flex items-center gap-1.5 rounded border border-zinc-700 px-2 py-0.5">
               HIPAA
             </span>
           </div>
-          <div className="flex items-center gap-3 text-sm text-foreground/60">
+          <div className="flex items-center gap-3 text-sm text-zinc-400">
             {SOCIAL.map((s) => (
               <a
                 key={s.href}
                 href={s.href}
-                className="transition-colors hover:text-foreground"
+                className="transition-colors hover:text-white"
               >
                 {s.label}
               </a>

@@ -37,7 +37,7 @@ export default async function CheckoutConfirmationPage({
   }
 
   const money = (order.amountCents / 100).toLocaleString(undefined, {
-    style: 'currency',
+    style: 'currency', currencyDisplay: 'narrowSymbol',
     currency: order.currency,
   });
 

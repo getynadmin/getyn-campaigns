@@ -25,7 +25,7 @@ export default async function PricingPage(): Promise<JSX.Element> {
     getSiteBranding(),
   ]);
   const logoUrl =
-    branding.defaultSidebarLogoLightUrl ?? branding.loginPageLogoUrl ?? null;
+    branding.loginPageLogoUrl ?? branding.defaultSidebarLogoLightUrl ?? null;
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">

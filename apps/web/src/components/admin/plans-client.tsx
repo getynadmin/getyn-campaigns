@@ -115,27 +115,33 @@ function readPlanPricing(metadata: unknown): PlanPricing | null {
   };
 }
 
+/**
+ * Admin UI now edits prices in DOLLARS (`basePriceCents` +
+ * `pricePerBlockCents` string fields hold dollar amounts like "19"
+ * or "19.99"). Conversion to cents happens at save time in `onSave`,
+ * and hydration from the DB divides by 100.
+ */
 function previewPrice(
   volume: number,
   p: FormState['pricing'],
 ): { monthly: number; yearly: number } {
-  const base = Number.parseInt(p.basePriceCents, 10) || 0;
+  const baseDollars = Number.parseFloat(p.basePriceCents) || 0;
   const baseIncl = Number.parseInt(p.baseIncludedMessages, 10) || 5000;
   const block = Number.parseInt(p.blockSize, 10) || 5000;
-  const perBlock = Number.parseInt(p.pricePerBlockCents, 10) || 0;
+  const perBlockDollars = Number.parseFloat(p.pricePerBlockCents) || 0;
   const discount = Number.parseInt(p.annualDiscountPercent, 10) || 0;
   const extra = Math.max(0, volume - baseIncl);
   const blocks = extra > 0 ? Math.ceil(extra / block) : 0;
-  const monthly = base + blocks * perBlock;
-  const yearly = Math.round(monthly * 12 * (1 - discount / 100));
+  const monthly = baseDollars + blocks * perBlockDollars;
+  const yearly = monthly * 12 * (1 - discount / 100);
   return { monthly, yearly };
 }
 
 const EMPTY_PRICING = {
-  basePriceCents: '1900',
+  basePriceCents: '19',
   baseIncludedMessages: '5000',
   blockSize: '5000',
-  pricePerBlockCents: '1000',
+  pricePerBlockCents: '10',
   annualDiscountPercent: '25',
   minMessages: '5000',
   maxMessages: '500000',
@@ -173,6 +179,7 @@ function formatPrice(cents: number | null, currency: string): string {
   return `${(cents / 100).toLocaleString(undefined, {
     style: 'currency',
     currency,
+    currencyDisplay: 'narrowSymbol',
   })}`;
 }
 
@@ -238,10 +245,11 @@ export function AdminPlansClient(): JSX.Element {
       slug: plan.slug,
       name: plan.name,
       description: plan.description ?? '',
+      // Inputs are in dollars — convert cents → dollars on hydrate.
       priceMonthlyCents:
-        plan.priceMonthlyCents === null ? '' : String(plan.priceMonthlyCents),
+        plan.priceMonthlyCents === null ? '' : String(plan.priceMonthlyCents / 100),
       priceYearlyCents:
-        plan.priceYearlyCents === null ? '' : String(plan.priceYearlyCents),
+        plan.priceYearlyCents === null ? '' : String(plan.priceYearlyCents / 100),
       currency: plan.currency,
       features,
       pricingEnabled: !!readPlanPricing(plan.metadata),
@@ -249,10 +257,11 @@ export function AdminPlansClient(): JSX.Element {
         const p = readPlanPricing(plan.metadata);
         if (!p) return { ...EMPTY_PRICING };
         return {
-          basePriceCents: String(p.basePriceCents),
+          // Dollar values on the form; DB stores cents.
+          basePriceCents: String(p.basePriceCents / 100),
           baseIncludedMessages: String(p.baseIncludedMessages),
           blockSize: String(p.blockSize),
-          pricePerBlockCents: String(p.pricePerBlockCents),
+          pricePerBlockCents: String(p.pricePerBlockCents / 100),
           annualDiscountPercent: String(p.annualDiscountPercent),
           minMessages: String(p.minMessages),
           maxMessages: String(p.maxMessages),
@@ -282,23 +291,28 @@ export function AdminPlansClient(): JSX.Element {
       slug: form.slug.trim(),
       name: form.name.trim(),
       description: form.description.trim() ? form.description.trim() : null,
+      // Form values are DOLLARS; DB stores cents.
       priceMonthlyCents: form.priceMonthlyCents.trim()
-        ? Number.parseInt(form.priceMonthlyCents, 10)
+        ? Math.round(Number.parseFloat(form.priceMonthlyCents) * 100)
         : null,
       priceYearlyCents: form.priceYearlyCents.trim()
-        ? Number.parseInt(form.priceYearlyCents, 10)
+        ? Math.round(Number.parseFloat(form.priceYearlyCents) * 100)
         : null,
       currency: form.currency.trim().toUpperCase() || 'USD',
       features,
       pricing: form.pricingEnabled
         ? {
             model: 'dynamic' as const,
-            basePriceCents: Number.parseInt(form.pricing.basePriceCents, 10) || 0,
+            // Dollars → cents at the API boundary.
+            basePriceCents: Math.round(
+              (Number.parseFloat(form.pricing.basePriceCents) || 0) * 100,
+            ),
             baseIncludedMessages:
               Number.parseInt(form.pricing.baseIncludedMessages, 10) || 5000,
             blockSize: Number.parseInt(form.pricing.blockSize, 10) || 5000,
-            pricePerBlockCents:
-              Number.parseInt(form.pricing.pricePerBlockCents, 10) || 0,
+            pricePerBlockCents: Math.round(
+              (Number.parseFloat(form.pricing.pricePerBlockCents) || 0) * 100,
+            ),
             annualDiscountPercent:
               Number.parseInt(form.pricing.annualDiscountPercent, 10) || 0,
             minMessages: Number.parseInt(form.pricing.minMessages, 10) || 5000,
@@ -459,25 +473,25 @@ export function AdminPlansClient(): JSX.Element {
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Price / month (cents)</Label>
+              <Label className="text-xs">Price / month ($)</Label>
               <Input
                 inputMode="numeric"
                 value={form.priceMonthlyCents}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, priceMonthlyCents: e.target.value }))
                 }
-                placeholder="4900"
+                placeholder="49"
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Price / year (cents)</Label>
+              <Label className="text-xs">Price / year ($)</Label>
               <Input
                 inputMode="numeric"
                 value={form.priceYearlyCents}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, priceYearlyCents: e.target.value }))
                 }
-                placeholder="49000"
+                placeholder="490"
               />
             </div>
             <div className="col-span-2 space-y-2 rounded-md border border-primary/30 bg-primary/5 p-3">
@@ -503,7 +517,7 @@ export function AdminPlansClient(): JSX.Element {
                 <>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
-                      <Label className="text-[10px] uppercase">Base price (cents)</Label>
+                      <Label className="text-[10px] uppercase">Base price ($)</Label>
                       <Input
                         inputMode="numeric"
                         value={form.pricing.basePriceCents}
@@ -545,7 +559,7 @@ export function AdminPlansClient(): JSX.Element {
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[10px] uppercase">Price per block (cents)</Label>
+                      <Label className="text-[10px] uppercase">Price per block ($)</Label>
                       <Input
                         inputMode="numeric"
                         value={form.pricing.pricePerBlockCents}
@@ -611,7 +625,7 @@ export function AdminPlansClient(): JSX.Element {
                         <div key={vol} className="flex justify-between font-mono">
                           <span>{vol.toLocaleString()} msgs</span>
                           <span>
-                            ${(q.monthly / 100).toFixed(2)}/mo · ${(q.yearly / 100).toFixed(2)}/yr
+                            ${q.monthly.toFixed(2)}/mo · ${q.yearly.toFixed(2)}/yr
                           </span>
                         </div>
                       );
