@@ -187,7 +187,7 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
             <div className="mt-5 space-y-2">
               <Button asChild className="w-full">
                 <Link
-                  href={`/signup?plan=${initial.planSlug ?? 'campaigns-pro'}&volume=${quote.volume}&cycle=${cycle}`}
+                  href={`/checkout?plan=${initial.planSlug ?? 'campaigns-pro'}&volume=${quote.volume}&cycle=${cycle}`}
                 >
                   Subscribe now →
                 </Link>

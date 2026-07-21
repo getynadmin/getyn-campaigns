@@ -262,6 +262,9 @@ model User {
   emailAgentsCreated    EmailAgent[]        @relation("EmailAgentsCreatedBy")
   emailAgentApprovals   EmailAgentMessage[] @relation("EmailAgentApprovals")
 
+  // Phase 9 — checkout orders the user initiated
+  checkoutOrders CheckoutOrder[]
+
   @@index([email])
 }
 
@@ -346,6 +349,9 @@ model Tenant {
   emailAgentEnrollments  EmailAgentEnrollment[]
   emailAgentMessages     EmailAgentMessage[]
   inboundEmails          InboundEmail[]
+
+  // Phase 9 — checkout orders that provisioned this tenant
+  checkoutOrders CheckoutOrder[]
 
   @@index([slug])
 }
@@ -1340,6 +1346,7 @@ model Plan {
   appSettings                  AppSettings[]
   currentPlanUpgradeRequests   PlanUpgradeRequest[] @relation("currentPlanForUpgradeRequest")
   requestedPlanUpgradeRequests PlanUpgradeRequest[] @relation("requestedPlanForUpgradeRequest")
+  checkoutOrders               CheckoutOrder[]
 
   @@index([isArchived, isDefault])
 }
@@ -1457,6 +1464,65 @@ model PlanUpgradeRequest {
 
   @@index([status, createdAt(sort: Desc)])
   @@index([tenantId, createdAt(sort: Desc)])
+}
+
+// ------------------------------------------------------------------
+// Phase 9 — CheckoutOrder tracks a single subscription-purchase attempt
+// initiated from the public /pricing → /checkout flow. Payments run
+// through XPay Checkout (see server/integrations/xpay.ts).
+//
+// Row is created at step 1 (account) and updated as the shopper
+// progresses. status flips to PAID only after server-side verification
+// via GET /subscriptions/get/{id} — never on client callback alone.
+// ------------------------------------------------------------------
+enum CheckoutOrderStatus {
+  DRAFT     // account created, awaiting payment start
+  PENDING   // XPay intent created, shopper on hosted page
+  PAID      // verified success — the ONLY status that grants access
+  FAILED    // XPay reported failure or verification failed
+  CANCELED  // shopper backed out
+}
+
+model CheckoutOrder {
+  id                  String              @id @default(cuid())
+  // Opaque merchant reference sent to XPay + echoed on webhook.
+  // Doubles as the URL slug on /checkout so the shopper's step is
+  // never guessable.
+  merchantReference   String              @unique
+  status              CheckoutOrderStatus @default(DRAFT)
+  planId              String
+  // Snapshot at purchase time — plan config can change later.
+  planSlug            String
+  planName            String
+  volumeMessages      Int
+  billingCycle        String // 'monthly' | 'annual'
+  amountCents         Int
+  currency            String              @default("USD")
+  customerEmail       String
+  customerFirstName   String?
+  customerLastName    String?
+  // XPay assigns these after we call create-subscription.
+  xpaySubscriptionId  String?
+  xpayFwdUrl          String?             @db.Text
+  // User created in step 1 — nullable in case step 1 is not backed
+  // by a Supabase account (e.g. later "guest checkout" experiment).
+  userId              String?
+  // Tenant provisioned after PAID — populated by the confirmation
+  // handler on first "Go to dashboard" click.
+  tenantId            String?
+  paidAt              DateTime?
+  failedAt            DateTime?
+  failureReason       String?             @db.Text
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  plan   Plan    @relation(fields: [planId], references: [id], onDelete: Restrict)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([xpaySubscriptionId])
+  @@index([customerEmail])
 }
 
 // ------------------------------------------------------------------

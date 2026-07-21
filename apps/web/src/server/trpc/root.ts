@@ -16,6 +16,7 @@ import { importsRouter } from './routers/imports';
 import { invitationRouter } from './routers/invitation';
 import { membershipRouter } from './routers/membership';
 import { onboardingRouter } from './routers/onboarding';
+import { checkoutRouter } from './routers/checkout';
 import { pricingRouter } from './routers/pricing';
 import { segmentsRouter } from './routers/segments';
 import { sendingDomainsRouter } from './routers/sending-domains';
@@ -77,6 +78,8 @@ export const appRouter = createTRPCRouter({
   emailVerifier: emailVerifierRouter,
   // Phase 9 — public /pricing surface
   pricing: pricingRouter,
+  // Phase 9 — public /checkout flow (Account → Payment → Confirmation)
+  checkout: checkoutRouter,
 });
 
 export type AppRouter = typeof appRouter;
