@@ -172,6 +172,7 @@ export async function saveIntegration(
     update: data,
     create: {
       provider: args.provider,
+      displayName: args.provider,
       config: args.config as Prisma.InputJsonValue,
       enabled: args.enabled,
       secrets:
