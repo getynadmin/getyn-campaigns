@@ -1,33 +1,45 @@
 import Link from 'next/link';
+import Image from 'next/image';
 
-/**
- * Docs header — mirrors getyn.com/apps/campaigns chrome so the docs
- * feel like part of the marketing site rather than an orphaned page
- * grafted onto the app. Logo left, top-level nav center, sign-in/up
- * right. Public — no auth.
- */
 const NAV_ITEMS = [
   { label: 'Features', href: 'https://getyn.com/apps/campaigns#features' },
   { label: 'Solutions', href: 'https://getyn.com/solutions' },
   { label: 'Industries', href: 'https://getyn.com/industries' },
-  { label: 'Pricing', href: 'https://getyn.com/apps/campaigns#pricing' },
+  { label: 'Pricing', href: '/pricing' },
   { label: 'All Apps', href: 'https://getyn.com/apps' },
 ];
 
-export function DocsHeader(): JSX.Element {
+export function DocsHeader({ logoUrl }: { logoUrl?: string | null } = {}): JSX.Element {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-6 px-6">
         <Link
-          href="/docs"
+          href="/pricing"
           className="flex items-center gap-2 font-display text-base font-semibold tracking-tight"
         >
-          <span className="inline-flex size-7 items-center justify-center rounded-md bg-foreground text-background">
-            <span className="text-[13px] font-bold">G</span>
-          </span>
-          <span>Getyn</span>
-          <span className="text-foreground/40">/</span>
-          <span className="text-foreground/80">Campaigns</span>
+          {logoUrl ? (
+            // Next/Image with unoptimized so the admin can point at any
+            // arbitrary Supabase-storage URL without whitelisting each
+            // host in next.config.js.
+            <Image
+              src={logoUrl}
+              alt="Getyn Campaigns"
+              width={140}
+              height={32}
+              unoptimized
+              className="h-8 w-auto object-contain"
+              priority
+            />
+          ) : (
+            <>
+              <span className="inline-flex size-7 items-center justify-center rounded-md bg-emerald-600 text-white">
+                <span className="text-[13px] font-bold">G</span>
+              </span>
+              <span>Getyn</span>
+              <span className="text-foreground/40">/</span>
+              <span className="text-foreground/80">Campaigns</span>
+            </>
+          )}
         </Link>
 
         <nav className="ml-4 hidden flex-1 items-center gap-1 md:flex">
@@ -57,7 +69,7 @@ export function DocsHeader(): JSX.Element {
           </Link>
           <Link
             href="/signup"
-            className="rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background transition-opacity hover:opacity-90"
+            className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
           >
             Sign up
           </Link>

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 
 import { CheckoutClient } from '@/components/checkout/checkout-client';
+import { getSiteBranding } from '@/server/integrations/site-branding';
 import { createCaller } from '@/server/trpc/root';
 import { createTRPCContext } from '@/server/trpc/context';
 
@@ -23,7 +24,12 @@ export default async function CheckoutPage({
 }): Promise<JSX.Element> {
   const ctx = await createTRPCContext({ headers: new Headers() });
   const caller = createCaller(ctx);
-  const pricing = await caller.pricing.publicConfig();
+  const [pricing, branding] = await Promise.all([
+    caller.pricing.publicConfig(),
+    getSiteBranding(),
+  ]);
+  const logoUrl =
+    branding.defaultSidebarLogoLightUrl ?? branding.loginPageLogoUrl ?? null;
 
   const planSlug = searchParams.plan ?? pricing.planSlug ?? 'campaigns-pro';
   const volume = Math.max(
@@ -43,6 +49,7 @@ export default async function CheckoutPage({
         volume,
         cycle,
         errorFromReturn: searchParams.error ?? null,
+        logoUrl,
       }}
     />
   );

@@ -76,7 +76,7 @@ export default async function CheckoutConfirmationPage({
 
         <Link
           href="/welcome"
-          className="mt-6 inline-flex w-full items-center justify-center rounded-md bg-foreground px-4 py-2.5 text-sm font-medium text-background shadow hover:opacity-90"
+          className="mt-6 inline-flex w-full items-center justify-center rounded-md bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow hover:bg-emerald-700"
         >
           Go to dashboard →
         </Link>

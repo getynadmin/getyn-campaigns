@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useMemo, useState } from 'react';
 import { AlertCircle, ArrowRight, CreditCard, Loader2, Lock, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
@@ -27,6 +28,7 @@ export interface CheckoutInitial {
   volume: number;
   cycle: 'monthly' | 'annual';
   errorFromReturn: string | null;
+  logoUrl: string | null;
 }
 
 function fmtMoney(cents: number, currency: string): string {
@@ -120,12 +122,24 @@ export function CheckoutClient({ initial }: { initial: CheckoutInitial }): JSX.E
       {/* Header */}
       <header className="border-b bg-background">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-2 font-semibold">
-            <span className="flex size-7 items-center justify-center rounded-md bg-foreground text-xs text-background">
-              G
-            </span>
-            Getyn <span className="text-muted-foreground">Campaigns</span>
-          </div>
+          {initial.logoUrl ? (
+            <Image
+              src={initial.logoUrl}
+              alt="Getyn Campaigns"
+              width={140}
+              height={32}
+              unoptimized
+              className="h-8 w-auto object-contain"
+              priority
+            />
+          ) : (
+            <div className="flex items-center gap-2 font-semibold">
+              <span className="flex size-7 items-center justify-center rounded-md bg-emerald-600 text-xs text-white">
+                G
+              </span>
+              Getyn <span className="text-muted-foreground">Campaigns</span>
+            </div>
+          )}
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Lock className="size-3.5" /> SECURE CHECKOUT
           </div>
@@ -196,7 +210,7 @@ function Stepper({ current }: { current: 1 | 2 | 3 }): JSX.Element {
             <span
               className={`flex size-8 items-center justify-center rounded-full text-sm font-semibold ${
                 active
-                  ? 'bg-primary text-primary-foreground'
+                  ? 'bg-emerald-600 text-white'
                   : done
                     ? 'bg-emerald-500 text-white'
                     : 'bg-muted text-muted-foreground'
@@ -286,7 +300,11 @@ function AccountStep(props: {
           />
         </div>
       </div>
-      <Button className="mt-6 w-full" size="lg" onClick={props.onContinue}>
+      <Button
+        className="mt-6 w-full bg-emerald-600 text-white hover:bg-emerald-700"
+        size="lg"
+        onClick={props.onContinue}
+      >
         Continue to payment <ArrowRight className="ml-1 size-4" />
       </Button>
     </section>
@@ -367,7 +385,7 @@ function PaymentStep(props: {
         <Button
           onClick={props.onSubmit}
           disabled={props.submitting}
-          className="ml-auto"
+          className="ml-auto bg-emerald-600 text-white hover:bg-emerald-700"
           size="lg"
         >
           {props.submitting ? (
@@ -398,7 +416,7 @@ function OrderSummary(props: {
         Order summary
       </h3>
       <div className="mt-4 flex items-start gap-3 rounded-lg border bg-muted/20 p-3">
-        <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <div className="flex size-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600">
           <CreditCard className="size-5" />
         </div>
         <div className="min-w-0 flex-1">
@@ -434,7 +452,7 @@ function OrderSummary(props: {
 
       <div className="mt-4 flex items-baseline justify-between border-t pt-4">
         <span className="text-sm font-semibold">Total</span>
-        <span className="text-xl font-bold text-primary">
+        <span className="text-xl font-bold text-emerald-600">
           {(props.amountCents / 100).toLocaleString(undefined, {
             style: 'currency',
             currency: props.currency,

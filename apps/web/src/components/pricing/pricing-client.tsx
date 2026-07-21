@@ -134,7 +134,7 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
                 onClick={() => setCycle('monthly')}
                 className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
                   cycle === 'monthly'
-                    ? 'bg-foreground text-background shadow'
+                    ? 'bg-emerald-600 text-white shadow'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -144,7 +144,7 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
                 onClick={() => setCycle('annual')}
                 className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
                   cycle === 'annual'
-                    ? 'bg-foreground text-background shadow'
+                    ? 'bg-emerald-600 text-white shadow'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -162,7 +162,7 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
         {/* Price + CTA + features */}
         <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,340px)_1fr]">
           <div className="rounded-xl border bg-background p-6">
-            <div className="mb-1 inline-flex items-center gap-1.5 text-sm font-medium text-primary">
+            <div className="mb-1 inline-flex items-center gap-1.5 text-sm font-medium text-emerald-600 hover:text-emerald-700">
               <Sparkles className="size-3.5" /> {initial.planName}
             </div>
             <div className="mt-3">
@@ -185,14 +185,21 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
               </p>
             </div>
             <div className="mt-5 space-y-2">
-              <Button asChild className="w-full">
+              <Button
+                asChild
+                className="w-full bg-emerald-600 text-white hover:bg-emerald-700"
+              >
                 <Link
                   href={`/checkout?plan=${initial.planSlug ?? 'campaigns-pro'}&volume=${quote.volume}&cycle=${cycle}`}
                 >
                   Subscribe now →
                 </Link>
               </Button>
-              <Button asChild variant="outline" className="w-full">
+              <Button
+                asChild
+                variant="outline"
+                className="w-full border-emerald-600 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+              >
                 <Link
                   href={`/signup?plan=${initial.planSlug ?? 'campaigns-pro'}&trial=1`}
                 >
@@ -234,7 +241,7 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
               key={v}
               onClick={() => setVolume(v)}
               className={`rounded-lg border p-3 text-left transition hover:border-primary/60 ${
-                volume === v ? 'border-primary bg-primary/5' : 'bg-card'
+                volume === v ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40' : 'bg-card'
               }`}
             >
               <div className="text-xs text-muted-foreground">
@@ -267,8 +274,8 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
               Available Monday–Friday, 9 AM – 6 PM IST.
             </p>
             <Link
-              href="/contact"
-              className="mt-3 inline-block text-sm font-medium text-primary hover:underline"
+              href="https://getyn.com/contact"
+              className="mt-3 inline-block text-sm font-medium text-emerald-600 hover:text-emerald-700 hover:underline"
             >
               Chat with Us →
             </Link>
@@ -282,8 +289,8 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
               Explore interactive demo videos of our apps and features.
             </p>
             <Link
-              href="/docs"
-              className="mt-3 inline-block text-sm font-medium text-primary hover:underline"
+              href="https://getyn.com/apps/campaigns#demo"
+              className="mt-3 inline-block text-sm font-medium text-emerald-600 hover:text-emerald-700 hover:underline"
             >
               See a demo →
             </Link>
@@ -298,8 +305,8 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
               walkthrough.
             </p>
             <Link
-              href="/contact"
-              className="mt-3 inline-block text-sm font-medium text-primary hover:underline"
+              href="https://getyn.com/contact"
+              className="mt-3 inline-block text-sm font-medium text-emerald-600 hover:text-emerald-700 hover:underline"
             >
               Schedule call →
             </Link>
