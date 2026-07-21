@@ -79,6 +79,11 @@ export const checkoutRouter = createTRPCRouter({
           email: z.string().trim().email(),
           firstName: z.string().trim().max(80),
           lastName: z.string().trim().max(80).optional().default(''),
+          // E.164 phone required by XPay's create-subscription endpoint.
+          contactNumber: z
+            .string()
+            .trim()
+            .regex(/^\+[1-9]\d{6,14}$/, 'Phone must be in E.164 format, e.g. +14155551234'),
         }),
       }),
     )
@@ -159,8 +164,9 @@ export const checkoutRouter = createTRPCRouter({
         callbackUrl,
         customer: {
           email: input.customer.email,
-          firstName: input.customer.firstName,
-          lastName: input.customer.lastName,
+          name:
+            `${input.customer.firstName} ${input.customer.lastName ?? ''}`.trim(),
+          contactNumber: input.customer.contactNumber,
         },
         metadata: {
           planSlug: plan.slug,

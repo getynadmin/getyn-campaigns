@@ -51,6 +51,7 @@ export function CheckoutClient({ initial }: { initial: CheckoutInitial }): JSX.E
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [paymentTab, setPaymentTab] = useState<'card' | 'paypal'>('card');
   const [returnError] = useState<string | null>(initial.errorFromReturn);
@@ -85,6 +86,10 @@ export function CheckoutClient({ initial }: { initial: CheckoutInitial }): JSX.E
       toast.error('Enter a valid email.');
       return;
     }
+    if (!/^\+[1-9]\d{6,14}$/.test(phone.trim())) {
+      toast.error('Phone must be in international format, e.g. +14155551234');
+      return;
+    }
     if (password.length < 6) {
       toast.error('Password must be at least 6 characters.');
       return;
@@ -105,6 +110,7 @@ export function CheckoutClient({ initial }: { initial: CheckoutInitial }): JSX.E
         email: email.trim().toLowerCase(),
         firstName: firstName.trim(),
         lastName: lastName.trim() || undefined,
+        contactNumber: phone.trim(),
       },
     });
   };
@@ -137,10 +143,12 @@ export function CheckoutClient({ initial }: { initial: CheckoutInitial }): JSX.E
                 firstName={firstName}
                 lastName={lastName}
                 email={email}
+                phone={phone}
                 password={password}
                 onFirstName={setFirstName}
                 onLastName={setLastName}
                 onEmail={setEmail}
+                onPhone={setPhone}
                 onPassword={setPassword}
                 onContinue={goToPayment}
               />
@@ -215,10 +223,12 @@ function AccountStep(props: {
   firstName: string;
   lastName: string;
   email: string;
+  phone: string;
   password: string;
   onFirstName: (v: string) => void;
   onLastName: (v: string) => void;
   onEmail: (v: string) => void;
+  onPhone: (v: string) => void;
   onPassword: (v: string) => void;
   onContinue: () => void;
 }): JSX.Element {
@@ -253,6 +263,18 @@ function AccountStep(props: {
             onChange={(e) => props.onEmail(e.target.value)}
             placeholder="you@example.com"
           />
+        </div>
+        <div className="col-span-2 space-y-1">
+          <Label className="text-xs">Phone (international format)</Label>
+          <Input
+            type="tel"
+            value={props.phone}
+            onChange={(e) => props.onPhone(e.target.value)}
+            placeholder="+14155551234"
+          />
+          <p className="text-[10px] text-muted-foreground">
+            Include the country code. Required by our payment provider.
+          </p>
         </div>
         <div className="col-span-2 space-y-1">
           <Label className="text-xs">Password</Label>

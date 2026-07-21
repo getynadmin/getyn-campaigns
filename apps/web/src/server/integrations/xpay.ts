@@ -126,7 +126,7 @@ export async function testXpayCredentials(
   if (!creds.publicKey || !creds.privateKey) {
     return { ok: false, message: 'Missing public or private key.' };
   }
-  const probe = await xpayFetch('/subscriptions/get/health-probe', {
+  const probe = await xpayFetch('/subscription/get/health-probe', {
     method: 'GET',
     creds,
   });
@@ -147,10 +147,10 @@ export interface CreateSubscriptionInput {
   billingCycle: 'monthly' | 'annual';
   customer: {
     email: string;
-    firstName?: string;
-    lastName?: string;
-    /** E.164 phone if we collect it later — XPay may require it. */
-    contactNumber?: string;
+    /** Full name — XPay wants a single `name` field, not first+last. */
+    name: string;
+    /** E.164 phone REQUIRED by XPay per docs. */
+    contactNumber: string;
   };
   /** Our internal order id — echoed back on callback + webhook. */
   merchantReference: string;
@@ -177,24 +177,31 @@ export async function createXpaySubscription(
   input: CreateSubscriptionInput,
 ): Promise<CreateSubscriptionResult> {
   const creds = await getXpayCredentials();
+  // Per docs: interval MONTH/YEAR + intervalCount + cycleCount for
+  // the billing frequency. cycleCount=0 isn't documented; we use a
+  // large finite number (120 months / 10 years) as a proxy for
+  // "recurring indefinitely" until XPay confirms otherwise.
+  const isMonthly = input.billingCycle === 'monthly';
   const body = {
     amount: input.amountCents,
     currency: input.currency,
-    planName: input.planName,
-    billingCycle: input.billingCycle,
-    merchantReference: input.merchantReference,
+    interval: isMonthly ? 'MONTH' : 'YEAR',
+    intervalCount: 1,
+    cycleCount: isMonthly ? 120 : 10,
+    receiptId: input.merchantReference,
     callbackUrl: input.callbackUrl,
     customerDetails: {
+      name: input.customer.name,
       email: input.customer.email,
-      firstName: input.customer.firstName ?? '',
-      lastName: input.customer.lastName ?? '',
-      ...(input.customer.contactNumber
-        ? { contactNumber: input.customer.contactNumber }
-        : {}),
+      contactNumber: input.customer.contactNumber,
     },
-    metadata: input.metadata ?? {},
+    metadata: {
+      ...(input.metadata ?? {}),
+      planName: input.planName,
+      merchantReference: input.merchantReference,
+    },
   };
-  const res = await xpayFetch('/subscriptions/create', {
+  const res = await xpayFetch('/subscription/create', {
     method: 'POST',
     creds,
     body: JSON.stringify(body),
@@ -229,7 +236,7 @@ export async function getXpaySubscription(
 ): Promise<GetSubscriptionResult> {
   const creds = await getXpayCredentials();
   const res = await xpayFetch(
-    `/subscriptions/get/${encodeURIComponent(subscriptionId)}`,
+    `/subscription/get/${encodeURIComponent(subscriptionId)}`,
     { method: 'GET', creds },
   );
   if (!res.ok) return { ok: false, raw: res.body };
