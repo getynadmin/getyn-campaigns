@@ -16,6 +16,7 @@ import { importsRouter } from './routers/imports';
 import { invitationRouter } from './routers/invitation';
 import { membershipRouter } from './routers/membership';
 import { onboardingRouter } from './routers/onboarding';
+import { pricingRouter } from './routers/pricing';
 import { segmentsRouter } from './routers/segments';
 import { sendingDomainsRouter } from './routers/sending-domains';
 import { signupRouter } from './routers/signup';
@@ -74,6 +75,8 @@ export const appRouter = createTRPCRouter({
   agentAttachments: agentAttachmentsRouter,
   // List-quality scanner under Audience → Email verifier
   emailVerifier: emailVerifierRouter,
+  // Phase 9 — public /pricing surface
+  pricing: pricingRouter,
 });
 
 export type AppRouter = typeof appRouter;

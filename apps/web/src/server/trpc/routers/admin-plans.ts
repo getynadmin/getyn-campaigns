@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { PlanMetric, prisma, type Prisma } from '@getyn/db';
 
 import { withAdminContext } from '@/server/admin/with-admin-context';
+import { dynamicPricingSchema } from '@/server/billing/dynamic-pricing';
 import {
   createAdminRouter,
   staffProcedure,
@@ -48,6 +49,13 @@ const planUpsertSchema = z.object({
   priceYearlyCents: z.number().int().min(0).max(1_000_000_000).nullable(),
   currency: z.string().trim().length(3).default('USD'),
   features: z.array(featureInputSchema).max(20),
+  /**
+   * Phase 9 — dynamic pricing config. When present, the /pricing page
+   * renders a slider driven by this config and priceMonthly/Yearly on
+   * the plan row are ignored. When null, the plan is a legacy fixed
+   * tier and the row prices apply.
+   */
+  pricing: dynamicPricingSchema.nullable().default(null),
 });
 
 const idSchema = z.object({ id: z.string().min(1).max(64) });
@@ -105,6 +113,9 @@ export const adminPlansRouter = createAdminRouter({
             priceMonthlyCents: input.priceMonthlyCents,
             priceYearlyCents: input.priceYearlyCents,
             currency: input.currency,
+            metadata: input.pricing
+              ? ({ pricing: input.pricing } as Prisma.InputJsonValue)
+              : ({} as Prisma.InputJsonValue),
             createdByStaffUserId: ctx.staff.staffUserId,
             features: {
               create: input.features.map((f) => ({
@@ -194,6 +205,9 @@ export const adminPlansRouter = createAdminRouter({
             priceMonthlyCents: input.priceMonthlyCents,
             priceYearlyCents: input.priceYearlyCents,
             currency: input.currency,
+            metadata: input.pricing
+              ? ({ pricing: input.pricing } as Prisma.InputJsonValue)
+              : ({} as Prisma.InputJsonValue),
             features: { upsert: toUpsert },
           },
           include: { features: true },

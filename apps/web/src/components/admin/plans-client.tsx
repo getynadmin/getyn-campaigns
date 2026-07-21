@@ -74,6 +74,71 @@ type FormState = {
   priceYearlyCents: string;
   currency: string;
   features: Record<PlanMetric, { included: string; overageCentsPer1k: string }>;
+  pricingEnabled: boolean;
+  pricing: {
+    basePriceCents: string;
+    baseIncludedMessages: string;
+    blockSize: string;
+    pricePerBlockCents: string;
+    annualDiscountPercent: string;
+    minMessages: string;
+    maxMessages: string;
+  };
+};
+
+interface PlanPricing {
+  basePriceCents: number;
+  baseIncludedMessages: number;
+  blockSize: number;
+  pricePerBlockCents: number;
+  annualDiscountPercent: number;
+  minMessages: number;
+  maxMessages: number;
+}
+
+function readPlanPricing(metadata: unknown): PlanPricing | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const p = (metadata as { pricing?: Record<string, unknown> }).pricing;
+  if (!p || p.model !== 'dynamic') return null;
+  const num = (k: string): number => {
+    const v = p[k];
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  };
+  return {
+    basePriceCents: num('basePriceCents'),
+    baseIncludedMessages: num('baseIncludedMessages') || 5000,
+    blockSize: num('blockSize') || 5000,
+    pricePerBlockCents: num('pricePerBlockCents'),
+    annualDiscountPercent: num('annualDiscountPercent'),
+    minMessages: num('minMessages') || 5000,
+    maxMessages: num('maxMessages') || 500000,
+  };
+}
+
+function previewPrice(
+  volume: number,
+  p: FormState['pricing'],
+): { monthly: number; yearly: number } {
+  const base = Number.parseInt(p.basePriceCents, 10) || 0;
+  const baseIncl = Number.parseInt(p.baseIncludedMessages, 10) || 5000;
+  const block = Number.parseInt(p.blockSize, 10) || 5000;
+  const perBlock = Number.parseInt(p.pricePerBlockCents, 10) || 0;
+  const discount = Number.parseInt(p.annualDiscountPercent, 10) || 0;
+  const extra = Math.max(0, volume - baseIncl);
+  const blocks = extra > 0 ? Math.ceil(extra / block) : 0;
+  const monthly = base + blocks * perBlock;
+  const yearly = Math.round(monthly * 12 * (1 - discount / 100));
+  return { monthly, yearly };
+}
+
+const EMPTY_PRICING = {
+  basePriceCents: '1900',
+  baseIncludedMessages: '5000',
+  blockSize: '5000',
+  pricePerBlockCents: '1000',
+  annualDiscountPercent: '25',
+  minMessages: '5000',
+  maxMessages: '500000',
 };
 
 const EMPTY_FEATURES = (): FormState['features'] =>
@@ -94,6 +159,8 @@ const EMPTY_FORM = (): FormState => ({
   priceYearlyCents: '',
   currency: 'USD',
   features: EMPTY_FEATURES(),
+  pricingEnabled: false,
+  pricing: { ...EMPTY_PRICING },
 });
 
 function formatLimit(n: number): string {
@@ -177,6 +244,20 @@ export function AdminPlansClient(): JSX.Element {
         plan.priceYearlyCents === null ? '' : String(plan.priceYearlyCents),
       currency: plan.currency,
       features,
+      pricingEnabled: !!readPlanPricing(plan.metadata),
+      pricing: (() => {
+        const p = readPlanPricing(plan.metadata);
+        if (!p) return { ...EMPTY_PRICING };
+        return {
+          basePriceCents: String(p.basePriceCents),
+          baseIncludedMessages: String(p.baseIncludedMessages),
+          blockSize: String(p.blockSize),
+          pricePerBlockCents: String(p.pricePerBlockCents),
+          annualDiscountPercent: String(p.annualDiscountPercent),
+          minMessages: String(p.minMessages),
+          maxMessages: String(p.maxMessages),
+        };
+      })(),
     });
     setOpen(true);
   };
@@ -209,6 +290,23 @@ export function AdminPlansClient(): JSX.Element {
         : null,
       currency: form.currency.trim().toUpperCase() || 'USD',
       features,
+      pricing: form.pricingEnabled
+        ? {
+            model: 'dynamic' as const,
+            basePriceCents: Number.parseInt(form.pricing.basePriceCents, 10) || 0,
+            baseIncludedMessages:
+              Number.parseInt(form.pricing.baseIncludedMessages, 10) || 5000,
+            blockSize: Number.parseInt(form.pricing.blockSize, 10) || 5000,
+            pricePerBlockCents:
+              Number.parseInt(form.pricing.pricePerBlockCents, 10) || 0,
+            annualDiscountPercent:
+              Number.parseInt(form.pricing.annualDiscountPercent, 10) || 0,
+            minMessages: Number.parseInt(form.pricing.minMessages, 10) || 5000,
+            maxMessages:
+              Number.parseInt(form.pricing.maxMessages, 10) || 500000,
+            currency: form.currency.trim().toUpperCase() || 'USD',
+          }
+        : null,
     };
     if (form.id) {
       update.mutate({ id: form.id, ...payload });
@@ -381,6 +479,146 @@ export function AdminPlansClient(): JSX.Element {
                 }
                 placeholder="49000"
               />
+            </div>
+            <div className="col-span-2 space-y-2 rounded-md border border-primary/30 bg-primary/5 p-3">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={form.pricingEnabled}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, pricingEnabled: e.target.checked }))
+                  }
+                  className="mt-0.5 size-4 accent-foreground"
+                />
+                <span>
+                  <span className="font-medium">Dynamic pricing (volume slider)</span>
+                  <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                    Enable to let the /pricing page render a slider driven by
+                    the fields below. Overrides the fixed monthly/yearly
+                    prices above.
+                  </span>
+                </span>
+              </label>
+              {form.pricingEnabled && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase">Base price (cents)</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={form.pricing.basePriceCents}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            pricing: { ...f.pricing, basePriceCents: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase">Base included messages</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={form.pricing.baseIncludedMessages}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            pricing: {
+                              ...f.pricing,
+                              baseIncludedMessages: e.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase">Block size</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={form.pricing.blockSize}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            pricing: { ...f.pricing, blockSize: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase">Price per block (cents)</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={form.pricing.pricePerBlockCents}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            pricing: {
+                              ...f.pricing,
+                              pricePerBlockCents: e.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase">Annual discount %</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={form.pricing.annualDiscountPercent}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            pricing: {
+                              ...f.pricing,
+                              annualDiscountPercent: e.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase">Slider min</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={form.pricing.minMessages}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            pricing: { ...f.pricing, minMessages: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase">Slider max</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={form.pricing.maxMessages}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            pricing: { ...f.pricing, maxMessages: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded border bg-background px-3 py-2 text-[11px]">
+                    <div className="mb-1 font-medium text-muted-foreground">Preview</div>
+                    {[5000, 50000, 500000].map((vol) => {
+                      const q = previewPrice(vol, form.pricing);
+                      return (
+                        <div key={vol} className="flex justify-between font-mono">
+                          <span>{vol.toLocaleString()} msgs</span>
+                          <span>
+                            ${(q.monthly / 100).toFixed(2)}/mo · ${(q.yearly / 100).toFixed(2)}/yr
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
             <div className="col-span-2 space-y-1">
               <Label className="text-xs">Description</Label>
