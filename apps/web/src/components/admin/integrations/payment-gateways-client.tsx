@@ -186,8 +186,8 @@ function XpayPanel(): JSX.Element {
               save.mutate({
                 environment,
                 publicKey,
-                privateKey: editPriv ? privateKey : '',
-                webhookSecret: editHook ? webhookSecret : '',
+                privateKey: editPriv || !data.hasSecrets ? privateKey : '',
+                webhookSecret: editHook || !data.hasSecrets ? webhookSecret : '',
                 callbackBaseUrl,
                 enabled,
               })
