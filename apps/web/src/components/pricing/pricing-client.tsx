@@ -271,7 +271,12 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
           Have questions? We&apos;re here to help you find the right plan.
         </p>
         <div className="mt-6 grid gap-4 sm:grid-cols-3">
-          <div className="rounded-xl border bg-card p-6 text-left">
+          <a
+            href="https://wa.me/447859779507?text=I%27m%20interested%20in%20your%20apps"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block rounded-xl border bg-card p-6 text-left transition hover:border-emerald-500/60 hover:shadow-sm"
+          >
             <div className="mb-3 inline-flex size-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
               💬
             </div>
@@ -279,44 +284,44 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
             <p className="mt-1 text-xs text-muted-foreground">
               Available Monday–Friday, 9 AM – 6 PM IST.
             </p>
-            <Link
-              href="https://getyn.com/contact"
-              className="mt-3 inline-block text-sm font-medium text-emerald-600 hover:text-emerald-700 hover:underline"
-            >
+            <span className="mt-3 inline-block text-sm font-medium text-emerald-600 hover:text-emerald-700">
               Chat with Us →
-            </Link>
-          </div>
-          <div className="rounded-xl border bg-card p-6 text-left">
+            </span>
+          </a>
+          <a
+            href="mailto:sales@getyn.com"
+            className="block rounded-xl border bg-card p-6 text-left transition hover:border-emerald-500/60 hover:shadow-sm"
+          >
             <div className="mb-3 inline-flex size-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-              ▶
+              ✉
             </div>
-            <p className="font-semibold">Watch Product Tour</p>
+            <p className="font-semibold">Email Us</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Explore interactive demo videos of our apps and features.
+              Email our sales and support team for anything and we&apos;ll
+              respond within 24 hours.
             </p>
-            <Link
-              href="https://getyn.com/apps/campaigns#demo"
-              className="mt-3 inline-block text-sm font-medium text-emerald-600 hover:text-emerald-700 hover:underline"
-            >
-              See a demo →
-            </Link>
-          </div>
-          <div className="rounded-xl border bg-card p-6 text-left">
+            <span className="mt-3 inline-block text-sm font-medium text-emerald-600 hover:text-emerald-700">
+              Send an email →
+            </span>
+          </a>
+          <a
+            href="https://calendly.com/getyn/30min"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block rounded-xl border bg-card p-6 text-left transition hover:border-emerald-500/60 hover:shadow-sm"
+          >
             <div className="mb-3 inline-flex size-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-              ✎
+              📅
             </div>
-            <p className="font-semibold">Book a Demo</p>
+            <p className="font-semibold">Book a personalized demo</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Schedule a call with a product specialist for a personalised
-              walkthrough.
+              Need additional help or consultation? Schedule a call with our
+              product specialist.
             </p>
-            <Link
-              href="https://getyn.com/contact"
-              className="mt-3 inline-block text-sm font-medium text-emerald-600 hover:text-emerald-700 hover:underline"
-            >
-              Schedule call →
-            </Link>
-          </div>
+            <span className="mt-3 inline-block text-sm font-medium text-emerald-600 hover:text-emerald-700">
+              Schedule demo call →
+            </span>
+          </a>
         </div>
       </div>
     </div>
