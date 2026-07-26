@@ -79,7 +79,7 @@ export default async function LoginPage({
       <p className="mt-8 text-center text-sm text-white/65">
         Don&apos;t have an account?{' '}
         <Link
-          href="/signup"
+          href="/pricing"
           className="font-medium text-white underline-offset-4 hover:underline"
         >
           Register here
