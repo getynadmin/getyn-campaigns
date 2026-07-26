@@ -25,6 +25,7 @@ export interface PricingInitial {
   description: string | null;
   features: Array<{ metric: string; included: number }>;
   config: PricingConfig;
+  freeTrialEnabled: boolean;
 }
 
 type BillingCycle = 'monthly' | 'annual';
@@ -196,20 +197,24 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
                   Subscribe now →
                 </Link>
               </Button>
-              <Button
-                asChild
-                variant="outline"
-                className="w-full border-emerald-600 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
-              >
-                <Link
-                  href={`/signup?plan=${initial.planSlug ?? 'campaigns-pro'}&trial=1`}
-                >
-                  Start free trial
-                </Link>
-              </Button>
-              <p className="text-center text-[11px] text-muted-foreground">
-                14 days free · No credit card required
-              </p>
+              {initial.freeTrialEnabled && (
+                <>
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="w-full border-emerald-600 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                  >
+                    <Link
+                      href={`/signup?plan=${initial.planSlug ?? 'campaigns-pro'}&trial=1`}
+                    >
+                      Start free trial
+                    </Link>
+                  </Button>
+                  <p className="text-center text-[11px] text-muted-foreground">
+                    14 days free · No credit card required
+                  </p>
+                </>
+              )}
             </div>
           </div>
 

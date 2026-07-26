@@ -49,6 +49,7 @@ export const pricingRouter = createTRPCRouter({
     for (const p of plans) {
       const cfg = readPricingConfig(p.metadata);
       if (cfg) {
+        const meta = p.metadata as { freeTrialEnabled?: boolean } | null;
         return {
           planId: p.id,
           planSlug: p.slug,
@@ -56,6 +57,7 @@ export const pricingRouter = createTRPCRouter({
           description: p.description,
           features: p.features,
           config: cfg,
+          freeTrialEnabled: meta?.freeTrialEnabled !== false,
         };
       }
     }
@@ -68,6 +70,7 @@ export const pricingRouter = createTRPCRouter({
         'Everything you need to run email, WhatsApp, and drip campaigns.',
       features: [] as Array<{ metric: string; included: number }>,
       config: DEFAULT_DYNAMIC_PRICING,
+      freeTrialEnabled: true,
     };
   }),
 });

@@ -56,6 +56,11 @@ const planUpsertSchema = z.object({
    * tier and the row prices apply.
    */
   pricing: dynamicPricingSchema.nullable().default(null),
+  /**
+   * Whether the /pricing page shows a "Start free trial" CTA for this
+   * plan. Stored on Plan.metadata.freeTrialEnabled (default true).
+   */
+  freeTrialEnabled: z.boolean().default(true),
 });
 
 const idSchema = z.object({ id: z.string().min(1).max(64) });
@@ -114,8 +119,8 @@ export const adminPlansRouter = createAdminRouter({
             priceYearlyCents: input.priceYearlyCents,
             currency: input.currency,
             metadata: input.pricing
-              ? ({ pricing: input.pricing } as Prisma.InputJsonValue)
-              : ({} as Prisma.InputJsonValue),
+              ? ({ pricing: input.pricing, freeTrialEnabled: input.freeTrialEnabled } as Prisma.InputJsonValue)
+              : ({ freeTrialEnabled: input.freeTrialEnabled } as Prisma.InputJsonValue),
             createdByStaffUserId: ctx.staff.staffUserId,
             features: {
               create: input.features.map((f) => ({
@@ -206,8 +211,8 @@ export const adminPlansRouter = createAdminRouter({
             priceYearlyCents: input.priceYearlyCents,
             currency: input.currency,
             metadata: input.pricing
-              ? ({ pricing: input.pricing } as Prisma.InputJsonValue)
-              : ({} as Prisma.InputJsonValue),
+              ? ({ pricing: input.pricing, freeTrialEnabled: input.freeTrialEnabled } as Prisma.InputJsonValue)
+              : ({ freeTrialEnabled: input.freeTrialEnabled } as Prisma.InputJsonValue),
             features: { upsert: toUpsert },
           },
           include: { features: true },

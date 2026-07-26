@@ -75,6 +75,7 @@ type FormState = {
   currency: string;
   features: Record<PlanMetric, { included: string; overageCentsPer1k: string }>;
   pricingEnabled: boolean;
+  freeTrialEnabled: boolean;
   pricing: {
     basePriceCents: string;
     baseIncludedMessages: string;
@@ -166,6 +167,7 @@ const EMPTY_FORM = (): FormState => ({
   currency: 'USD',
   features: EMPTY_FEATURES(),
   pricingEnabled: false,
+  freeTrialEnabled: true,
   pricing: { ...EMPTY_PRICING },
 });
 
@@ -253,6 +255,9 @@ export function AdminPlansClient(): JSX.Element {
       currency: plan.currency,
       features,
       pricingEnabled: !!readPlanPricing(plan.metadata),
+      freeTrialEnabled:
+        (plan.metadata as { freeTrialEnabled?: boolean } | null)
+          ?.freeTrialEnabled !== false,
       pricing: (() => {
         const p = readPlanPricing(plan.metadata);
         if (!p) return { ...EMPTY_PRICING };
@@ -300,6 +305,7 @@ export function AdminPlansClient(): JSX.Element {
         : null,
       currency: form.currency.trim().toUpperCase() || 'USD',
       features,
+      freeTrialEnabled: form.freeTrialEnabled,
       pricing: form.pricingEnabled
         ? {
             model: 'dynamic' as const,
@@ -633,6 +639,28 @@ export function AdminPlansClient(): JSX.Element {
                   </div>
                 </>
               )}
+            </div>
+            <div className="col-span-2">
+              <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={form.freeTrialEnabled}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      freeTrialEnabled: e.target.checked,
+                    }))
+                  }
+                  className="mt-0.5 size-4 accent-foreground"
+                />
+                <span>
+                  <span className="font-medium">Show &ldquo;Start free trial&rdquo; button</span>
+                  <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                    When on, the /pricing page renders the trial CTA
+                    alongside Subscribe. Turn off to hide it entirely.
+                  </span>
+                </span>
+              </label>
             </div>
             <div className="col-span-2 space-y-1">
               <Label className="text-xs">Description</Label>
