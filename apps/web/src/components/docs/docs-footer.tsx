@@ -1,4 +1,11 @@
 import Link from 'next/link';
+import {
+  FacebookIcon,
+  InstagramIcon,
+  LinkedinIcon,
+  TwitterIcon,
+  YoutubeIcon,
+} from 'lucide-react';
 
 /**
  * Docs footer — mirrors the marketing site footer columns. Static
@@ -58,83 +65,112 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; href: string
 ];
 
 const SOCIAL = [
-  { label: 'Facebook', href: 'https://www.facebook.com/getyncloud/' },
-  { label: 'Instagram', href: 'https://www.instagram.com/getyncloud/' },
-  { label: 'X', href: 'https://x.com/getyncloud/' },
-  { label: 'LinkedIn', href: 'https://uk.linkedin.com/company/getyncloud' },
-  { label: 'YouTube', href: 'https://www.youtube.com/@Getyncloud' },
+  { Icon: FacebookIcon, href: 'https://www.facebook.com/getyncloud/', label: 'Facebook' },
+  { Icon: InstagramIcon, href: 'https://www.instagram.com/getyncloud/', label: 'Instagram' },
+  { Icon: TwitterIcon, href: 'https://x.com/getyncloud/', label: 'X' },
+  { Icon: LinkedinIcon, href: 'https://uk.linkedin.com/company/getyncloud', label: 'LinkedIn' },
+  { Icon: YoutubeIcon, href: 'https://www.youtube.com/@Getyncloud', label: 'YouTube' },
 ];
 
 export function DocsFooter(): JSX.Element {
+  const year = new Date().getFullYear();
   return (
-    <footer className="border-t border-zinc-800 bg-zinc-950 text-zinc-300">
-      <div className="mx-auto max-w-7xl px-6 py-12">
-        <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
-          {COLUMNS.map((col) => (
-            <div key={col.title}>
-              <h3 className="mb-3 font-display text-sm font-semibold tracking-tight text-white">
-                {col.title}
-              </h3>
-              <ul className="space-y-2 text-sm">
-                {col.links.map((l) => {
-                  const external = l.href.startsWith('http');
-                  return (
-                    <li key={l.href}>
-                      {external ? (
-                        <a
-                          href={l.href}
-                          className="text-zinc-400 transition-colors hover:text-white"
-                        >
-                          {l.label}
-                        </a>
-                      ) : (
-                        <Link
-                          href={l.href}
-                          className="text-zinc-400 transition-colors hover:text-white"
-                        >
-                          {l.label}
-                        </Link>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
+    <footer className="relative bg-zinc-950 text-zinc-300">
+      {/* Radial gradient wash across the top of the container, per sample */}
+      <div className="relative mx-auto max-w-5xl bg-[radial-gradient(35%_80%_at_30%_0%,rgba(16,185,129,0.12),transparent)] px-6 md:border-x md:border-zinc-800/70">
+        {/* Thin top divider */}
+        <div className="absolute inset-x-0 top-0 h-px bg-zinc-800" />
+
+        {/* Brand row */}
+        <div className="grid grid-cols-6 gap-6 pb-8 pt-10">
+          <div className="col-span-6 flex flex-col gap-4">
+            <span className="inline-flex w-max items-center gap-2 text-sm font-semibold tracking-tight text-white">
+              <span className="inline-flex size-7 items-center justify-center rounded-md bg-emerald-600 text-xs text-white">
+                G
+              </span>
+              Getyn <span className="text-zinc-500">/ Campaigns</span>
+            </span>
+            <p className="max-w-md font-mono text-xs text-zinc-500">
+              One plan, every channel. Email, WhatsApp, drip campaigns, and an
+              AI copilot — built for growth teams.
+            </p>
+            <div className="flex gap-2">
+              {SOCIAL.map(({ Icon, href, label }) => (
+                <a
+                  key={href}
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={label}
+                  className="rounded-md border border-zinc-800 p-1.5 text-zinc-400 transition hover:border-zinc-700 hover:bg-zinc-900 hover:text-white"
+                >
+                  <Icon className="size-4" />
+                </a>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
 
-        <div className="mt-10 flex flex-col gap-4 border-t border-zinc-800 pt-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-4 text-xs text-zinc-500">
-            <span>© {new Date().getFullYear()} Getyn Technologies</span>
+        {/* Links grid — 4 columns, sample's compact list styling */}
+        <div className="border-t border-zinc-900 pb-8 pt-8">
+          <div className="grid grid-cols-2 gap-6 md:grid-cols-4">
+            {COLUMNS.map((col) => (
+              <div key={col.title}>
+                <span className="mb-2 block text-[11px] uppercase tracking-wide text-zinc-500">
+                  {col.title}
+                </span>
+                <div className="flex flex-col gap-1">
+                  {col.links.map((l) => {
+                    const external = l.href.startsWith('http');
+                    const cls =
+                      'w-max py-0.5 text-sm text-zinc-300 transition duration-200 hover:text-white hover:underline';
+                    return external ? (
+                      <a
+                        key={l.href + l.label}
+                        href={l.href}
+                        className={cls}
+                        target={l.href === '#' ? undefined : '_blank'}
+                        rel={l.href === '#' ? undefined : 'noopener noreferrer'}
+                      >
+                        {l.label}
+                      </a>
+                    ) : (
+                      <Link
+                        key={l.href + l.label}
+                        href={l.href === '#' ? '#' : l.href}
+                        className={cls}
+                      >
+                        {l.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Bottom divider + copyright + legal + compliance */}
+        <div className="absolute inset-x-0 bottom-[52px] h-px bg-zinc-800" />
+        <div className="flex flex-col items-center gap-3 pb-5 pt-4 text-center sm:flex-row sm:justify-between sm:text-left">
+          <p className="font-mono text-[11px] font-thin text-zinc-500">
+            © {year} Getyn Technologies · All rights reserved
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3 text-[11px] text-zinc-500">
             <a href="https://getyn.com/privacy" className="hover:text-white">
-              Privacy Policy
+              Privacy
             </a>
             <a href="https://getyn.com/terms" className="hover:text-white">
-              Terms &amp; Conditions
+              Terms
             </a>
             <a href="https://getyn.com/sitemap" className="hover:text-white">
               Sitemap
             </a>
-            <span className="inline-flex items-center gap-1.5 rounded border border-zinc-700 px-2 py-0.5">
-              GDPR
+            <span className="ml-1 flex gap-1">
+              <span className="rounded border border-zinc-800 px-1.5 py-0.5">GDPR</span>
+              <span className="rounded border border-zinc-800 px-1.5 py-0.5">SOC 2</span>
+              <span className="rounded border border-zinc-800 px-1.5 py-0.5">HIPAA</span>
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded border border-zinc-700 px-2 py-0.5">
-              SOC 2
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded border border-zinc-700 px-2 py-0.5">
-              HIPAA
-            </span>
-          </div>
-          <div className="flex items-center gap-3 text-sm text-zinc-400">
-            {SOCIAL.map((s) => (
-              <a
-                key={s.href}
-                href={s.href}
-                className="transition-colors hover:text-white"
-              >
-                {s.label}
-              </a>
-            ))}
           </div>
         </div>
       </div>
