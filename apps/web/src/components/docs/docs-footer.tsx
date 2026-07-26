@@ -19,44 +19,50 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; href: string
     title: 'Company',
     links: [
       { label: 'About', href: 'https://getyn.com/about' },
-      { label: 'Leadership', href: 'https://getyn.com/leadership' },
+      { label: 'Leadership', href: '#' },
       { label: 'Careers', href: 'https://getyn.com/careers' },
       { label: 'Customers', href: 'https://getyn.com/customers' },
       { label: 'Partners', href: 'https://getyn.com/partners' },
-      { label: 'Events', href: 'https://getyn.com/events' },
-      { label: 'Blogs', href: 'https://getyn.com/blog' },
+      { label: 'Events', href: '#' },
+      { label: 'Blogs', href: '#' },
     ],
   },
   {
     title: 'Support',
     links: [
-      { label: 'My Account', href: '/account' },
-      { label: 'Help Center', href: 'https://helpdesk.getyn.com' },
-      { label: 'Refund Policy', href: 'https://getyn.com/refund-policy' },
-      { label: 'Free Trials', href: 'https://getyn.com/free-trials' },
-      { label: 'Getyn Training', href: 'https://getyn.com/training' },
-      { label: 'Community', href: 'https://community.getyn.com' },
+      { label: 'My Account', href: 'https://getyn.com/login' },
+      { label: 'Help Center', href: 'https://support.getyn.com' },
+      {
+        label: 'Refund Policy',
+        href: 'https://support.getyn.com/#/articles/refundpolicy',
+      },
+      {
+        label: 'Free Trials',
+        href: 'https://support.getyn.com/hc/articles/18/19/40/about-free-trials',
+      },
+      { label: 'Getyn Training', href: '#' },
+      { label: 'Community', href: '#' },
       { label: 'Contact Us', href: 'https://getyn.com/contact' },
     ],
   },
   {
     title: 'Resources',
     links: [
-      { label: 'CRM Docs', href: 'https://getyn.com/apps/crm/docs' },
+      { label: 'CRM Docs', href: 'https://crm.getyn.com/docs' },
       { label: 'Helpdesk Docs', href: 'https://helpdesk.getyn.com/docs' },
-      { label: 'Phone Docs', href: 'https://getyn.com/apps/phone/docs' },
-      { label: 'Social Docs', href: 'https://getyn.com/apps/social/docs' },
-      { label: 'Campaigns Docs', href: '/docs' },
+      { label: 'Phone Docs', href: 'https://phone.getyn.com/docs' },
+      { label: 'Social Docs', href: '#' },
+      { label: 'Campaigns Docs', href: '#' },
     ],
   },
 ];
 
 const SOCIAL = [
-  { label: 'Facebook', href: 'https://facebook.com/getyn' },
-  { label: 'Instagram', href: 'https://instagram.com/getyn' },
-  { label: 'X', href: 'https://x.com/getyn' },
-  { label: 'LinkedIn', href: 'https://linkedin.com/company/getyn' },
-  { label: 'YouTube', href: 'https://youtube.com/@getyn' },
+  { label: 'Facebook', href: 'https://www.facebook.com/getyncloud/' },
+  { label: 'Instagram', href: 'https://www.instagram.com/getyncloud/' },
+  { label: 'X', href: 'https://x.com/getyncloud/' },
+  { label: 'LinkedIn', href: 'https://uk.linkedin.com/company/getyncloud' },
+  { label: 'YouTube', href: 'https://www.youtube.com/@Getyncloud' },
 ];
 
 export function DocsFooter(): JSX.Element {
