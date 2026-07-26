@@ -4,6 +4,9 @@ import { CheckCircle2 } from 'lucide-react';
 
 import { CheckoutOrderStatus, prisma } from '@getyn/db';
 
+import { DocsFooter } from '@/components/docs/docs-footer';
+import { getSiteBranding } from '@/server/integrations/site-branding';
+
 export const dynamic = 'force-dynamic';
 
 /**
@@ -41,8 +44,13 @@ export default async function CheckoutConfirmationPage({
     currency: order.currency,
   });
 
+  const branding = await getSiteBranding();
+  const footerLogo =
+    branding.defaultSidebarLogoLightUrl ?? branding.loginPageLogoUrl ?? null;
+
   return (
-    <div className="mx-auto flex min-h-dvh max-w-lg items-center justify-center px-6 py-16">
+    <>
+    <div className="mx-auto flex min-h-[80vh] max-w-lg items-center justify-center px-6 py-16">
       <div className="w-full rounded-2xl border bg-card p-8 text-center shadow-sm">
         <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
           <CheckCircle2 className="size-9" />
@@ -85,5 +93,7 @@ export default async function CheckoutConfirmationPage({
         </p>
       </div>
     </div>
+    <DocsFooter logoUrl={footerLogo} />
+    </>
   );
 }

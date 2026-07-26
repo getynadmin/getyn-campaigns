@@ -24,16 +24,18 @@ export default async function PricingPage(): Promise<JSX.Element> {
     caller.pricing.publicConfig(),
     getSiteBranding(),
   ]);
-  const logoUrl =
+  const headerLogo =
     branding.loginPageLogoUrl ?? branding.defaultSidebarLogoLightUrl ?? null;
+  const footerLogo =
+    branding.defaultSidebarLogoLightUrl ?? branding.loginPageLogoUrl ?? null;
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
-      <DocsHeader logoUrl={logoUrl} />
+      <DocsHeader logoUrl={headerLogo} />
       <main className="flex-1">
         <PricingClient initial={initial} />
       </main>
-      <DocsFooter />
+      <DocsFooter logoUrl={footerLogo} />
     </div>
   );
 }

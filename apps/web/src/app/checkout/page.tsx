@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 
 import { CheckoutClient } from '@/components/checkout/checkout-client';
+import { DocsFooter } from '@/components/docs/docs-footer';
 import { getSiteBranding } from '@/server/integrations/site-branding';
 import { createCaller } from '@/server/trpc/root';
 import { createTRPCContext } from '@/server/trpc/context';
@@ -30,6 +31,8 @@ export default async function CheckoutPage({
   ]);
   const logoUrl =
     branding.loginPageLogoUrl ?? branding.defaultSidebarLogoLightUrl ?? null;
+  const footerLogo =
+    branding.defaultSidebarLogoLightUrl ?? branding.loginPageLogoUrl ?? null;
 
   const planSlug = searchParams.plan ?? pricing.planSlug ?? 'campaigns-pro';
   const volume = Math.max(
@@ -41,16 +44,19 @@ export default async function CheckoutPage({
     | 'annual';
 
   return (
-    <CheckoutClient
-      initial={{
-        planSlug,
-        planName: pricing.planName,
-        config: pricing.config,
-        volume,
-        cycle,
-        errorFromReturn: searchParams.error ?? null,
-        logoUrl,
-      }}
-    />
+    <>
+      <CheckoutClient
+        initial={{
+          planSlug,
+          planName: pricing.planName,
+          config: pricing.config,
+          volume,
+          cycle,
+          errorFromReturn: searchParams.error ?? null,
+          logoUrl,
+        }}
+      />
+      <DocsFooter logoUrl={footerLogo} />
+    </>
   );
 }
