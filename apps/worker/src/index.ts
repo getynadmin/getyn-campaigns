@@ -43,6 +43,7 @@ import { handleInboundEmailProcess } from './handlers/inbound-emails';
 import {
   handleAutomationStep,
   handleAutomationTick,
+  handleSegmentAutoEnroll,
   handleAutomationWake,
 } from './handlers/automation';
 import {
@@ -149,6 +150,8 @@ workers.push(
           return handleAutomationStep(job);
         case JOB_NAMES.automations.wake:
           return handleAutomationWake(job);
+        case JOB_NAMES.automations.segmentAutoEnroll:
+          return handleSegmentAutoEnroll();
         default:
           throw new Error(`Unknown automations job: ${job.name}`);
       }
@@ -502,6 +505,17 @@ async function setupCronJobs(): Promise<void> {
     {
       repeat: { pattern: '* * * * *', tz: 'UTC' }, // every minute
       jobId: 'cron_automation-tick',
+    },
+  );
+  // Phase 9 — watch segments referenced by contact_added_to_segment
+  // triggers and enroll newly-matching contacts. Every 5 minutes so
+  // fresh imports flow into live drips without operator action.
+  await automationsQueue.add(
+    JOB_NAMES.automations.segmentAutoEnroll,
+    {},
+    {
+      repeat: { pattern: '*/5 * * * *', tz: 'UTC' },
+      jobId: 'cron_automation-segment-auto-enroll',
     },
   );
   // Phase 8 M5 — email-agent follow-up tick every minute.

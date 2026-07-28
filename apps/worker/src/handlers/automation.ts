@@ -982,3 +982,133 @@ async function getQueueProducer(): Promise<NonNullable<typeof cachedProducer>> {
   };
   return cachedProducer;
 }
+
+// =====================================================================
+// Phase 9 — segment-auto-enroll
+// =====================================================================
+
+/**
+ * Repeatable cron: enrolls contacts that newly match a segment
+ * referenced by any ACTIVE automation's `contact_added_to_segment`
+ * trigger.
+ *
+ * Strategy: for each active automation with that trigger, resolve the
+ * segment id → compile rules → SELECT contact ids that are (a) not
+ * suppressed / deleted and (b) not already enrolled. `skipDuplicates`
+ * on createMany handles the race with a concurrent manual bulk enroll.
+ *
+ * Ceiling: enrolls up to 5,000 new contacts per automation per tick to
+ * bound work per cron run. The next tick catches the rest.
+ */
+const SEGMENT_AUTO_ENROLL_CAP_PER_AUTOMATION = 5_000;
+
+export async function handleSegmentAutoEnroll(): Promise<void> {
+  const { compileSegmentRules } = await import('@getyn/db');
+  const { segmentRulesSchema } = await import('@getyn/types');
+
+  const automations = await prisma.automation.findMany({
+    where: { status: AutomationStatus.ACTIVE },
+    select: { id: true, tenantId: true, definition: true },
+  });
+
+  for (const a of automations) {
+    const parsed = automationDefinitionSchema.safeParse(a.definition);
+    if (!parsed.success) continue;
+    const trigger = parsed.data.nodes.find((n) => n.type === 'trigger');
+    if (!trigger || trigger.type !== 'trigger') continue;
+    if (trigger.data.trigger.kind !== 'contact_added_to_segment') continue;
+    const segmentId = trigger.data.trigger.segmentId;
+    if (!segmentId) continue;
+
+    try {
+      const segment = await prisma.segment.findFirst({
+        where: { id: segmentId, tenantId: a.tenantId },
+        select: { rules: true },
+      });
+      if (!segment) continue;
+      const rules = segmentRulesSchema.safeParse(segment.rules);
+      if (!rules.success) continue;
+
+      const customFields = await prisma.customField.findMany({
+        where: { tenantId: a.tenantId },
+        select: { id: true, key: true, type: true },
+      });
+      const where = compileSegmentRules(rules.data, {
+        customFields,
+        now: new Date(),
+      });
+
+      // Existing enrollments for this automation — we only want the
+      // delta. We cap the fetched-id set to a reasonable size; for a
+      // steady-state automation with 100k+ enrollments this becomes
+      // a heavier query, but still O(N) once per tick.
+      const existing = await prisma.automationEnrollment.findMany({
+        where: { automationId: a.id, tenantId: a.tenantId },
+        select: { contactId: true },
+      });
+      const excludeIds = new Set(existing.map((e) => e.contactId));
+
+      // Find matching contacts not already enrolled. Batch size caps
+      // per-tick work.
+      const candidates = await prisma.contact.findMany({
+        where: {
+          AND: [
+            { tenantId: a.tenantId },
+            { deletedAt: null },
+            where,
+            excludeIds.size > 0
+              ? { id: { notIn: Array.from(excludeIds) } }
+              : {},
+          ],
+        },
+        select: { id: true },
+        take: SEGMENT_AUTO_ENROLL_CAP_PER_AUTOMATION,
+      });
+      if (candidates.length === 0) continue;
+
+      const now = new Date();
+      await prisma.automationEnrollment.createMany({
+        data: candidates.map((c) => ({
+          automationId: a.id,
+          tenantId: a.tenantId,
+          contactId: c.id,
+          status: EnrollmentStatus.ACTIVE,
+          currentNodeId: trigger.id,
+          pausedAtDraftNode: false,
+          nextActionAt: now,
+          nodeStateHistory: [] as unknown as Prisma.InputJsonValue,
+        })),
+        skipDuplicates: true,
+      });
+
+      console.info(
+        `[segment-auto-enroll] automation=${a.id} segment=${segmentId} enrolled=${candidates.length}`,
+      );
+
+      // Immediate advance so the trigger node clears fast — the tick
+      // would pick these up on its next 60s pass anyway, but bulk
+      // enqueuing here matches the enrollFromSegment producer path.
+      const rows = await prisma.automationEnrollment.findMany({
+        where: {
+          automationId: a.id,
+          tenantId: a.tenantId,
+          contactId: { in: candidates.map((c) => c.id) },
+        },
+        select: { id: true, tenantId: true },
+      });
+      const { sendsQueueProducer } = await getQueueProducer();
+      for (const r of rows) {
+        await sendsQueueProducer.enqueueStep(r.id, r.tenantId);
+      }
+    } catch (err) {
+      console.error(
+        `[segment-auto-enroll] automation=${a.id} failed`,
+        err,
+      );
+      Sentry.captureException(err, {
+        tags: { handler: 'segment-auto-enroll' },
+        extra: { automationId: a.id, tenantId: a.tenantId },
+      });
+    }
+  }
+}

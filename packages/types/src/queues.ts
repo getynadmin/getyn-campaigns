@@ -273,6 +273,10 @@ export const JOB_NAMES = {
     tick: 'automation-tick',
     step: 'automation-step',
     wake: 'automation-wake-node',
+    // Phase 9 — watches segments referenced by contact_added_to_segment
+    // triggers and enrolls newly-matching contacts. Repeatable cron
+    // registered by the worker.
+    segmentAutoEnroll: 'automation-segment-auto-enroll',
   },
   // Phase 8 M5
   emailAgent: {
