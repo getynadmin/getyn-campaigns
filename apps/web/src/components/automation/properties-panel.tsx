@@ -114,6 +114,57 @@ function Field({
   );
 }
 
+/**
+ * Segment picker for the "contact added to segment" trigger. Users
+ * shouldn't have to copy a cuid by hand — this loads all live
+ * segments for the tenant and renders a Select. Falls back to a
+ * readonly Input if the query fails (rare) so the value round-trips.
+ */
+function SegmentPickerField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+}): JSX.Element {
+  const { data, isLoading } = api.automation.segmentOptions.useQuery();
+  const options = data ?? [];
+  return (
+    <Field
+      label="Segment"
+      hint="New contacts added to this segment will enroll automatically."
+    >
+      {isLoading ? (
+        <Skeleton className="h-9" />
+      ) : options.length === 0 ? (
+        <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+          No segments yet.{' '}
+          <a
+            href="../../segments"
+            className="text-primary underline underline-offset-2"
+          >
+            Create one first
+          </a>
+          , then come back to pick it here.
+        </div>
+      ) : (
+        <Select value={value || undefined} onValueChange={onChange}>
+          <SelectTrigger>
+            <SelectValue placeholder="Choose a segment…" />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((s: { id: string; name: string }) => (
+              <SelectItem key={s.id} value={s.id}>
+                {s.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </Field>
+  );
+}
+
 function renderPerType(
   node: AutomationNode,
   onChange: (id: string, patch: Partial<AutomationNode['data']>) => void,
@@ -187,16 +238,14 @@ function TriggerForm({
         </Select>
       </Field>
       {trigger.kind === 'contact_added_to_segment' && (
-        <Field label="Segment id" hint="Copy the id from the Segments page.">
-          <Input
-            value={trigger.segmentId}
-            onChange={(e) =>
-              onChange(node.id, {
-                trigger: { ...trigger, segmentId: e.target.value },
-              } as Partial<AutomationNode['data']>)
-            }
-          />
-        </Field>
+        <SegmentPickerField
+          value={trigger.segmentId}
+          onChange={(id) =>
+            onChange(node.id, {
+              trigger: { ...trigger, segmentId: id },
+            } as Partial<AutomationNode['data']>)
+          }
+        />
       )}
       {trigger.kind === 'tag_applied' && (
         <Field label="Tag id">
