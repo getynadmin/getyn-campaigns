@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { Loader2, X, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { api } from '@/lib/trpc';
 
@@ -86,36 +87,63 @@ function ActiveCard({
   job: ImportItem;
   tenantSlug: string;
 }): JSX.Element {
+  const utils = api.useUtils();
+  const cancel = api.imports.cancel.useMutation({
+    onSuccess: () => {
+      toast.success('Import discarded.');
+      void utils.imports.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
   const total = job.totalRows ?? 0;
   const processed = job.processedRows ?? 0;
   const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
   const isPending = job.status === 'PENDING';
   return (
-    <Link
-      href={`/t/${tenantSlug}/contacts/import/${job.id}`}
-      className="flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50/60 px-4 py-3 hover:bg-amber-100/60 dark:border-amber-900 dark:bg-amber-950/30 dark:hover:bg-amber-950/50"
-    >
-      <Loader2 className="size-4 shrink-0 animate-spin text-amber-700 dark:text-amber-300" />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2 text-sm">
-          <FileSpreadsheet className="size-3.5 shrink-0 text-amber-800 dark:text-amber-200" />
-          <span className="truncate font-medium text-amber-900 dark:text-amber-100">
-            {job.fileName}
-          </span>
-          <span className="ml-auto shrink-0 text-xs text-amber-800 dark:text-amber-200">
-            {isPending ? 'Queued' : `${pct}% — ${processed.toLocaleString()} / ${total.toLocaleString()}`}
-          </span>
-        </div>
-        {!isPending && total > 0 && (
-          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-amber-200/60 dark:bg-amber-900/40">
-            <div
-              className="h-full bg-amber-600 transition-all dark:bg-amber-400"
-              style={{ width: `${pct}%` }}
-            />
+    <div className="flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50/60 pr-2 dark:border-amber-900 dark:bg-amber-950/30">
+      <Link
+        href={`/t/${tenantSlug}/contacts/import/${job.id}`}
+        className="flex flex-1 items-center gap-3 px-4 py-3 hover:bg-amber-100/60 dark:hover:bg-amber-950/50"
+      >
+        <Loader2 className="size-4 shrink-0 animate-spin text-amber-700 dark:text-amber-300" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2 text-sm">
+            <FileSpreadsheet className="size-3.5 shrink-0 text-amber-800 dark:text-amber-200" />
+            <span className="truncate font-medium text-amber-900 dark:text-amber-100">
+              {job.fileName}
+            </span>
+            <span className="ml-auto shrink-0 text-xs text-amber-800 dark:text-amber-200">
+              {isPending ? 'Queued' : `${pct}% — ${processed.toLocaleString()} / ${total.toLocaleString()}`}
+            </span>
           </div>
-        )}
-      </div>
-    </Link>
+          {!isPending && total > 0 && (
+            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-amber-200/60 dark:bg-amber-900/40">
+              <div
+                className="h-full bg-amber-600 transition-all dark:bg-amber-400"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          )}
+        </div>
+      </Link>
+      <button
+        type="button"
+        onClick={() => {
+          if (
+            !window.confirm(
+              `Discard "${job.fileName}"? No contacts will be imported from this job.`,
+            )
+          )
+            return;
+          cancel.mutate({ id: job.id });
+        }}
+        disabled={cancel.isPending}
+        className="rounded-md p-1.5 text-amber-800 transition hover:bg-amber-200/60 hover:text-amber-950 disabled:opacity-50 dark:text-amber-200 dark:hover:bg-amber-900/60"
+        title="Discard this import"
+      >
+        <X className="size-4" />
+      </button>
+    </div>
   );
 }
 
