@@ -2,7 +2,9 @@ import type { Metadata } from 'next';
 
 import { CheckoutClient } from '@/components/checkout/checkout-client';
 import { DocsFooter } from '@/components/docs/docs-footer';
+import { MetaPixel } from '@/components/marketing/meta-pixel';
 import { getSiteBranding } from '@/server/integrations/site-branding';
+import { getTrackingPixels } from '@/server/integrations/tracking-pixels';
 import { createCaller } from '@/server/trpc/root';
 import { createTRPCContext } from '@/server/trpc/context';
 
@@ -25,9 +27,10 @@ export default async function CheckoutPage({
 }): Promise<JSX.Element> {
   const ctx = await createTRPCContext({ headers: new Headers() });
   const caller = createCaller(ctx);
-  const [pricing, branding] = await Promise.all([
+  const [pricing, branding, pixels] = await Promise.all([
     caller.pricing.publicConfig(),
     getSiteBranding(),
+    getTrackingPixels(),
   ]);
   const logoUrl =
     branding.loginPageLogoUrl ?? branding.defaultSidebarLogoLightUrl ?? null;
@@ -45,6 +48,7 @@ export default async function CheckoutPage({
 
   return (
     <>
+      <MetaPixel pixelId={pixels.metaPixelId} />
       <CheckoutClient
         initial={{
           planSlug,

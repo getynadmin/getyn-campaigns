@@ -233,6 +233,16 @@ const RAIL: RailEntry[] = [
           ],
         },
         {
+          title: 'Analytics',
+          items: [
+            {
+              href: '/admin/integrations/tracking-pixels',
+              label: 'Tracking Pixels',
+              icon: BarChart3,
+            },
+          ],
+        },
+        {
           title: 'AI',
           items: [
             {

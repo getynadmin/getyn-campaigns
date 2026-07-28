@@ -58,6 +58,7 @@ import {
   type XpayConfig,
   type XpaySecrets,
 } from '@/server/integrations/xpay';
+import { type MetaPixelConfig } from '@/server/integrations/tracking-pixels';
 import {
   getAnthropicCredentials,
   testAnthropicCredentials,
@@ -1105,6 +1106,67 @@ const xpayRouter = createAdminRouter({
   }),
 });
 
+// ---------------------------------------------------------------------
+// Tracking pixels — Meta Pixel today. Config only (public id), no
+// secrets — the pixel id is meant to be shipped to the browser.
+// ---------------------------------------------------------------------
+const metaPixelUpdateSchema = z.object({
+  pixelId: z
+    .string()
+    .trim()
+    .max(64)
+    .regex(/^\d{6,}$/u, 'Meta Pixel IDs are numeric, ≥6 digits')
+    .or(z.literal('')),
+  enabled: z.boolean(),
+});
+
+const metaPixelRouter = createAdminRouter({
+  get: staffProcedure.query(async () => {
+    const row = await adminLoadIntegration<MetaPixelConfig, Record<string, never>>(
+      'meta-pixel',
+    );
+    return {
+      provider: 'meta-pixel' as const,
+      enabled: row?.enabled ?? false,
+      config: {
+        pixelId: row?.config.pixelId ?? '',
+      },
+    };
+  }),
+
+  update: supportAdminProcedure
+    .input(metaPixelUpdateSchema)
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async () => {
+        if (input.enabled && !input.pixelId) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Enter a Meta Pixel ID before enabling.',
+          });
+        }
+        await saveIntegration({
+          provider: 'meta-pixel',
+          enabled: input.enabled,
+          config: { pixelId: input.pixelId || undefined } as unknown as Record<
+            string,
+            unknown
+          >,
+          // No secrets on this row (public id only).
+          secrets: null,
+          staffUserId: ctx.staff.staffUserId,
+        });
+        return {
+          result: { ok: true as const },
+          audit: {
+            action: 'admin.integration.metaPixel.updated',
+            targetEntityId: 'meta-pixel',
+            afterSnapshot: { enabled: input.enabled, hasPixelId: !!input.pixelId },
+          },
+        };
+      });
+    }),
+});
+
 export const adminIntegrationsRouter = createAdminRouter({
   whatsApp: whatsAppRouter,
   smtp: smtpRouter,
@@ -1114,4 +1176,5 @@ export const adminIntegrationsRouter = createAdminRouter({
   anthropic: anthropicRouter,
   dalle: dalleRouter,
   xpay: xpayRouter,
+  metaPixel: metaPixelRouter,
 });
