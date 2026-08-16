@@ -65,13 +65,31 @@ export async function handleInboundEmailProcess(
     await failRow(inboundEmailId, 'no_token_in_to');
     return;
   }
-  const decoded = decodeReplyToken(rawToken, secret);
-  if (!decoded.ok) {
-    await failRow(inboundEmailId, `decode_${decoded.reason}`);
-    return;
-  }
 
-  const { kind, payload } = decoded.token;
+  // Phase 9 — try short-token first (ReplyRoute table). Fall back to
+  // legacy HMAC decode for any in-flight tokens minted before the
+  // switch. Once the ~90d TTL on old HMAC tokens elapses, this
+  // fallback becomes dead code and can be removed.
+  const { resolveReplyToken } = await import('../utils/reply-route');
+  let kind: 'c' | 'a' | 'w';
+  let payload: { id: string; tenantId: string; nodeId?: string | null };
+  const shortMatch = await resolveReplyToken(rawToken);
+  if (shortMatch) {
+    kind = shortMatch.kind;
+    payload = {
+      id: shortMatch.targetId,
+      tenantId: shortMatch.tenantId,
+      nodeId: shortMatch.nodeId,
+    };
+  } else {
+    const decoded = decodeReplyToken(rawToken, secret);
+    if (!decoded.ok) {
+      await failRow(inboundEmailId, `decode_${decoded.reason}`);
+      return;
+    }
+    kind = decoded.token.kind;
+    payload = decoded.token.payload;
+  }
 
   try {
     if (kind === 'c') {

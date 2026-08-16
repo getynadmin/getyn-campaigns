@@ -958,13 +958,14 @@ async function sendAndPersistOutbound(
   const finalBodyText = draft.bodyText + (ctx.emailAgent.signature ? `\n\n${ctx.emailAgent.signature}` : '');
   const finalBodyHtml = textToHtml(finalBodyText);
 
-  const replyTo = buildReplyToAddress(
-    'a',
-    { id: ctx.id, tenantId: ctx.tenantId },
-    {
-      secret: process.env.REPLY_ROUTING_SECRET ?? null,
-      inboundDomain: process.env.REPLY_INBOUND_DOMAIN ?? null,
-    },
+  // Phase 9 — use short-token routing to stay under RFC 5321's 64-char
+  // local-part cap. The old HMAC-in-address scheme produced ~125-char
+  // local parts and Resend refused them; the fallback stripped
+  // Reply-To entirely, breaking inbound routing.
+  const { createReplyRoute } = await import('../utils/reply-route');
+  const replyTo = await createReplyRoute(
+    { kind: 'a', targetId: ctx.id, tenantId: ctx.tenantId },
+    { inboundDomain: process.env.REPLY_INBOUND_DOMAIN ?? null },
   );
 
   let messageId: string | null = null;

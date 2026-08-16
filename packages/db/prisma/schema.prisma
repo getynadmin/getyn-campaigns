@@ -1530,6 +1530,27 @@ model CheckoutOrder {
 // (id = 'singleton') in the migration SQL.
 // ------------------------------------------------------------------
 
+// Phase 9 — short opaque tokens for the Reply-To local-part.
+// The prior HMAC-in-address scheme produced ~125-char local parts,
+// blowing past RFC 5321's 64-char cap; Resend refused them and we
+// stripped Reply-To, breaking inbound routing entirely. This table
+// stores the routing target keyed by a short random token; the
+// inbound webhook does one indexed lookup instead of HMAC decode.
+// Rows are periodically purged after `expiresAt`.
+model ReplyRoute {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  kind      String   // 'c' (campaign) | 'a' (email agent) | 'w' (automation)
+  targetId  String
+  tenantId  String
+  nodeId    String?  // present for kind='w'
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@index([tenantId, kind, targetId])
+}
+
 model AppSettings {
   id                    String   @id @default("singleton")
   defaultPlanId         String?
