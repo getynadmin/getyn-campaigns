@@ -109,7 +109,7 @@ export function EmailAgentKanban({
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {LANES.map((lane) => {
-          const rows = data?.[lane.key] ?? [];
+          const rows = (data?.lanes[lane.key] ?? []) as BoardRow[];
           return (
             <section
               key={lane.key}
@@ -122,7 +122,10 @@ export function EmailAgentKanban({
                   {isLoading ? '…' : rows.length}
                 </span>
               </header>
-              <div className="flex-1 space-y-2 p-2">
+              {/* Fixed viewport ~10 cards; the column scrolls internally
+                  so the page itself stays a single screen even at 18k
+                  cards. */}
+              <div className="max-h-[calc(100vh-260px)] min-h-[240px] flex-1 space-y-2 overflow-y-auto p-2">
                 {isLoading ? (
                   <>
                     <Skeleton className="h-20" />
@@ -138,12 +141,18 @@ export function EmailAgentKanban({
                       key={r.id}
                       row={r}
                       laneKey={lane.key}
+                      maxFollowUps={data?.maxFollowUps ?? 3}
                       onOpen={() => setOpenEnrollmentId(r.id)}
                       onMove={(to) => move.mutate({ enrollmentId: r.id, to })}
                     />
                   ))
                 )}
               </div>
+              {rows.length > 10 && (
+                <div className="border-t px-3 py-1 text-center text-[10px] text-muted-foreground">
+                  Scroll to see all {rows.length}
+                </div>
+              )}
             </section>
           );
         })}
@@ -163,6 +172,22 @@ export function EmailAgentKanban({
 }
 
 // ---------------------------------------------------------------------
+
+// Compact relative time — "3d", "5h", "just now". Avoids pulling in a
+// heavy i18n formatter for a tag that has to fit inside a 200px card.
+function relTime(d: Date | string): string {
+  const t = typeof d === 'string' ? new Date(d).getTime() : d.getTime();
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h ago`;
+  const days = Math.round(h / 24);
+  if (days < 30) return `${days}d ago`;
+  const mo = Math.round(days / 30);
+  return `${mo}mo ago`;
+}
 
 function BulkEnrollButton({ agentId }: { agentId: string }): JSX.Element {
   const utils = api.useUtils();
@@ -247,16 +272,19 @@ interface BoardRow {
     createdAt: Date | string;
     bodyText: string;
   }>;
+  _count?: { messages: number };
 }
 
 function Card({
   row,
   laneKey,
+  maxFollowUps,
   onOpen,
   onMove,
 }: {
   row: BoardRow;
   laneKey: LaneKey;
+  maxFollowUps: number;
   onOpen: () => void;
   onMove: (to: LaneKey) => void;
 }): JSX.Element {
@@ -267,23 +295,47 @@ function Card({
   const idx = LANES.findIndex((l) => l.key === laneKey);
   const prev = LANES[idx - 1];
   const next = LANES[idx + 1];
+  // Step 0 = initial email queued/sent; step 1..N = follow-ups.
+  // Show "N of MAX+1 sent" so the operator can see total touches
+  // relative to the cap the agent will ever send.
+  const sentCount = row.currentStep + (row.lastSentAt ? 1 : 0);
+  const totalTouches = maxFollowUps + 1;
+  const inboundCount = Math.max(
+    0,
+    (row._count?.messages ?? 0) - sentCount,
+  );
   return (
-    <div
-      className="group rounded-md border bg-background p-2.5 shadow-sm transition hover:shadow-md"
-    >
-      <button
-        onClick={onOpen}
-        className="block w-full text-left"
-      >
-        <div className="mb-1 flex items-baseline justify-between gap-2">
+    <div className="group rounded-md border bg-background p-2.5 shadow-sm transition hover:shadow-md">
+      <button onClick={onOpen} className="block w-full text-left">
+        <div className="mb-0.5 flex items-baseline justify-between gap-2">
           <p className="truncate text-sm font-medium">{name}</p>
-          <span className="shrink-0 text-[10px] text-muted-foreground">
-            step {row.currentStep}
+          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {sentCount}/{totalTouches} sent
           </span>
         </div>
         <p className="truncate text-[11px] text-muted-foreground">
           {row.contact.email}
         </p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
+          {row.lastSentAt && (
+            <span title="Last outbound">
+              → {relTime(row.lastSentAt)}
+            </span>
+          )}
+          {row.lastInboundAt && (
+            <span
+              title="Last reply from contact"
+              className="text-emerald-700 dark:text-emerald-400"
+            >
+              ← {relTime(row.lastInboundAt)}
+            </span>
+          )}
+          {inboundCount > 0 && (
+            <span className="rounded bg-emerald-100 px-1 py-0 text-[9px] text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+              {inboundCount} repl{inboundCount === 1 ? 'y' : 'ies'}
+            </span>
+          )}
+        </div>
         {last && (
           <p className="mt-2 line-clamp-2 text-[11px] text-muted-foreground">
             <span className="font-medium">

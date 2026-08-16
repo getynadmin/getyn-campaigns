@@ -558,34 +558,50 @@ export const emailAgentRouter = createTRPCRouter({
     .input(idSchema)
     .query(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
-      const rows = await prisma.emailAgentEnrollment.findMany({
-        where: { tenantId, emailAgentId: input.id },
-        select: {
-          id: true,
-          conversationStatus: true,
-          status: true,
-          currentStep: true,
-          lastSentAt: true,
-          lastInboundAt: true,
-          cooldownUntil: true,
-          suggestedReplyHint: true,
-          contact: {
-            select: { id: true, email: true, firstName: true, lastName: true },
-          },
-          messages: {
-            select: {
-              id: true,
-              direction: true,
-              subject: true,
-              createdAt: true,
-              bodyText: true,
+      const [rows, agent] = await Promise.all([
+        prisma.emailAgentEnrollment.findMany({
+          where: { tenantId, emailAgentId: input.id },
+          select: {
+            id: true,
+            conversationStatus: true,
+            status: true,
+            currentStep: true,
+            lastSentAt: true,
+            lastInboundAt: true,
+            cooldownUntil: true,
+            suggestedReplyHint: true,
+            contact: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+              },
             },
-            orderBy: { createdAt: 'desc' },
-            take: 1,
+            messages: {
+              select: {
+                id: true,
+                direction: true,
+                subject: true,
+                createdAt: true,
+                bodyText: true,
+              },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
+            _count: { select: { messages: true } },
           },
-        },
-        orderBy: { enrolledAt: 'desc' },
-      });
+          orderBy: { enrolledAt: 'desc' },
+        }),
+        prisma.emailAgent.findFirst({
+          where: { id: input.id, tenantId },
+          select: { outboundSchedule: true },
+        }),
+      ]);
+      const maxFollowUps = Number(
+        (agent?.outboundSchedule as { maxFollowUps?: number } | null)
+          ?.maxFollowUps ?? 3,
+      );
       const byLane = {
         ACTIVE_CONVERSATION: [] as typeof rows,
         REVIEW_RESPONSE: [] as typeof rows,
@@ -593,7 +609,7 @@ export const emailAgentRouter = createTRPCRouter({
         INACTIVE: [] as typeof rows,
       };
       for (const r of rows) byLane[r.conversationStatus].push(r);
-      return byLane;
+      return { lanes: byLane, maxFollowUps };
     }),
 
   thread: tenantProcedure
