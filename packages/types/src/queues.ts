@@ -283,6 +283,8 @@ export const JOB_NAMES = {
     enroll: 'email-agent-enroll',
     followupTick: 'email-agent-followup-tick',
     processReply: 'email-agent-process-reply',
+    // Phase 9 — wakes cards whose cooldownUntil has elapsed.
+    coolingWake: 'email-agent-cooling-wake',
     // Phase 8 M6 — pull URL / file content into
     // EmailAgentKnowledgeSource.extractedText + summarize with Haiku.
     ingestKnowledgeSource: 'email-agent-ingest-knowledge-source',

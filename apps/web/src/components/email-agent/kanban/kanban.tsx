@@ -168,6 +168,7 @@ interface BoardRow {
   currentStep: number;
   lastSentAt: Date | string | null;
   lastInboundAt: Date | string | null;
+  cooldownUntil?: Date | string | null;
   suggestedReplyHint: string | null;
   contact: {
     id: string;
@@ -233,6 +234,12 @@ function Card({
             Hint pending
           </p>
         )}
+        {laneKey === 'COOLING_PERIOD' && row.cooldownUntil && (
+          <p className="mt-2 rounded bg-sky-100 px-2 py-1 text-[10px] text-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
+            <Snowflake className="mr-1 inline size-2.5" />
+            Resumes {new Date(row.cooldownUntil).toLocaleDateString()}
+          </p>
+        )}
       </button>
       <div className="mt-2 flex items-center justify-between border-t pt-1.5 opacity-0 transition group-hover:opacity-100">
         <button
@@ -291,8 +298,20 @@ function ThreadDialog({
     },
     onError: (e) => toast.error(e.message),
   });
+  const cool = api.emailAgent.coolCard.useMutation({
+    onSuccess: (r) => {
+      toast.success(
+        `Moved to Cooling — will auto-resume ${new Date(r.cooldownUntil).toLocaleDateString()}.`,
+      );
+      void utils.emailAgent.board.invalidate();
+      void utils.emailAgent.thread.invalidate();
+      onClose();
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const [hint, setHint] = useState('');
+  const [coolDays, setCoolDays] = useState<number>(7);
 
   const name = data?.contact.firstName
     ? `${data.contact.firstName} ${data.contact.lastName ?? ''}`.trim()
@@ -316,8 +335,49 @@ function ThreadDialog({
           <Skeleton className="h-96" />
         ) : (
           <>
-            <div className="mb-4 text-xs text-muted-foreground">
-              {data.contact.email} · {data.messages.length} messages
+            <div className="mb-4 flex items-baseline justify-between gap-4 text-xs">
+              <span className="text-muted-foreground">
+                {data.contact.email} · {data.messages.length} messages
+                {data.cooldownUntil && data.conversationStatus === 'COOLING_PERIOD' && (
+                  <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
+                    resumes {new Date(data.cooldownUntil).toLocaleDateString()}
+                  </span>
+                )}
+              </span>
+              {data.conversationStatus !== 'COOLING_PERIOD' &&
+                data.conversationStatus !== 'INACTIVE' && (
+                  <div className="flex items-center gap-1 rounded-md border bg-background p-1">
+                    <Snowflake className="ml-1 size-3 text-sky-600" />
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={coolDays}
+                      onChange={(e) =>
+                        setCoolDays(
+                          Math.max(
+                            1,
+                            Math.min(365, Number(e.target.value) || 1),
+                          ),
+                        )
+                      }
+                      className="w-12 rounded border bg-background px-1.5 py-0.5 text-xs"
+                    />
+                    <span className="text-[11px] text-muted-foreground">d</span>
+                    <button
+                      onClick={() =>
+                        cool.mutate({
+                          enrollmentId: enrollmentId!,
+                          days: coolDays,
+                        })
+                      }
+                      disabled={cool.isPending}
+                      className="rounded px-2 py-0.5 text-[11px] font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:text-sky-300 dark:hover:bg-sky-950/40"
+                    >
+                      Cool
+                    </button>
+                  </div>
+                )}
             </div>
 
             {/* Outlook-style thread */}
@@ -366,7 +426,7 @@ function ThreadDialog({
                   className="w-full rounded-md border bg-background p-2 text-sm"
                   placeholder="e.g. Mention that the September AI batch is full but October has open seats. Ask if they'd like a call this week."
                 />
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     onClick={() =>
                       submitHint.mutate({
@@ -382,6 +442,39 @@ function ThreadDialog({
                   <Button variant="outline" onClick={() => onMove('INACTIVE')}>
                     Mark inactive
                   </Button>
+                  <div className="ml-auto flex items-center gap-1 rounded-md border bg-background p-1 text-sm">
+                    <Snowflake className="ml-1 size-3.5 text-sky-600" />
+                    <span className="text-xs text-muted-foreground">Cool for</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={coolDays}
+                      onChange={(e) =>
+                        setCoolDays(
+                          Math.max(
+                            1,
+                            Math.min(365, Number(e.target.value) || 1),
+                          ),
+                        )
+                      }
+                      className="w-14 rounded border bg-background px-2 py-0.5 text-sm"
+                    />
+                    <span className="text-xs text-muted-foreground">days</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        cool.mutate({
+                          enrollmentId: enrollmentId!,
+                          days: coolDays,
+                        })
+                      }
+                      disabled={cool.isPending}
+                    >
+                      Cool
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}

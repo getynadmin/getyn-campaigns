@@ -47,6 +47,7 @@ import {
   handleAutomationWake,
 } from './handlers/automation';
 import {
+  handleEmailAgentCoolingWake,
   handleEmailAgentEnroll,
   handleEmailAgentFollowupTick,
   handleEmailAgentProcessReply,
@@ -183,6 +184,8 @@ workers.push(
           return handleEmailAgentProcessReply(job);
         case JOB_NAMES.emailAgent.ingestKnowledgeSource:
           return handleEmailAgentIngestKnowledgeSource(job);
+        case JOB_NAMES.emailAgent.coolingWake:
+          return handleEmailAgentCoolingWake();
         default:
           throw new Error(`Unknown email-agent job: ${job.name}`);
       }
@@ -525,6 +528,17 @@ async function setupCronJobs(): Promise<void> {
     {
       repeat: { pattern: '* * * * *', tz: 'UTC' },
       jobId: 'cron_email-agent-followup-tick',
+    },
+  );
+  // Phase 9 — cooling-wake every 5 minutes. Cheap: one indexed
+  // findMany + one updateMany scoped by the composite index on
+  // (conversationStatus, cooldownUntil).
+  await emailAgentQueue.add(
+    JOB_NAMES.emailAgent.coolingWake,
+    {},
+    {
+      repeat: { pattern: '*/5 * * * *', tz: 'UTC' },
+      jobId: 'cron_email-agent-cooling-wake',
     },
   );
 

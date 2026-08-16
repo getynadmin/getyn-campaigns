@@ -262,6 +262,34 @@ export async function handleEmailAgentProcessReply(
     return;
   }
 
+  const client = await anthropic();
+
+  // Phase 9 — if the sender asks to be contacted after N days
+  // ("get back to me next week", "reach out in 2 weeks"), auto-move
+  // the card into COOLING_PERIOD with a cooldownUntil, so the
+  // cooling-wake cron auto-resumes at the right time. No human review
+  // needed for these — the request is explicit.
+  const delay = await detectDelayRequest(
+    client,
+    inbound.bodyText || stripHtml(inbound.bodyHtml),
+  );
+  if (delay) {
+    const until = new Date(Date.now() + delay.days * 24 * 60 * 60 * 1000);
+    await prisma.emailAgentEnrollment.update({
+      where: { id: enrollmentId },
+      data: {
+        lastInboundAt: new Date(),
+        conversationStatus: 'COOLING_PERIOD',
+        cooldownUntil: until,
+        nextActionAt: null,
+      },
+    });
+    console.info(
+      `[email-agent:reply] ${enrollmentId} delay-request ${delay.days}d (${delay.source}) → COOLING_PERIOD until ${until.toISOString()}`,
+    );
+    return;
+  }
+
   // Otherwise: any reply pauses the sequence and lands the card in
   // REVIEW_RESPONSE so a human can shape the next outbound.
   await prisma.emailAgentEnrollment.update({
@@ -272,7 +300,6 @@ export async function handleEmailAgentProcessReply(
     },
   });
 
-  const client = await anthropic();
   if (!client) return;
 
   // Classify with Haiku.
@@ -776,6 +803,122 @@ async function classifyReply(
     console.error('[email-agent] Haiku classification failed', err);
     return { classification: ReplyClassification.OTHER, costCents: 0 };
   }
+}
+
+/**
+ * Phase 9 — detect "contact me in N days / after next week / next
+ * month" style asks. Two-stage:
+ *
+ *  1. Cheap regex first — catches the majority ("get back to me in
+ *     2 weeks", "reach out after 15 Jan", "not before next month").
+ *     Zero API cost.
+ *
+ *  2. Haiku fallback only when the regex misses BUT the reply looks
+ *     conversational (>20 chars, not obviously OOO / bounce). Emits
+ *     a single JSON blob with days count so the caller can auto-cool
+ *     without a second parse.
+ *
+ * Returns null when no delay is asked for.
+ */
+async function detectDelayRequest(
+  client: Anthropic | null,
+  replyText: string,
+): Promise<{ days: number; source: 'regex' | 'haiku' } | null> {
+  const t = replyText.toLowerCase().slice(0, 4000);
+
+  // -- Stage 1: regex ------------------------------------------------
+  // Explicit N days/weeks/months.
+  const explicit = t.match(
+    /(?:contact|reach out|get back|reply|follow[- ]?up|check in|circle back)[^.]{0,40}?(?:in|after)\s+(\d{1,3})\s+(day|days|week|weeks|month|months)/,
+  );
+  if (explicit) {
+    const n = Number.parseInt(explicit[1] ?? '0', 10);
+    const unit = explicit[2] ?? 'days';
+    if (n > 0) {
+      const days =
+        unit.startsWith('month') ? n * 30 : unit.startsWith('week') ? n * 7 : n;
+      return { days: Math.min(days, 365), source: 'regex' };
+    }
+  }
+  // Phrases: "next week", "next month", "after N days", "in 2 weeks".
+  if (/(after|in)\s+(a\s+)?(week|month)/.test(t)) {
+    return { days: /month/.test(t) ? 30 : 7, source: 'regex' };
+  }
+  if (/next\s+(week|month|quarter)/.test(t)) {
+    const days = /month/.test(t) ? 30 : /quarter/.test(t) ? 90 : 7;
+    return { days, source: 'regex' };
+  }
+  // "not now, later / not right now" — treat as 30-day soft hold.
+  if (/(not\s+(now|right now|at the moment)|busy right now|check back|later)/.test(t)) {
+    // Be conservative — only if the reply is short and doesn't sound
+    // like a rejection.
+    if (t.length < 300 && !/never|remove/.test(t)) {
+      return { days: 30, source: 'regex' };
+    }
+  }
+
+  // -- Stage 2: Haiku fallback --------------------------------------
+  if (!client) return null;
+  if (replyText.trim().length < 20) return null;
+  try {
+    const prompt = [
+      'Read this email reply. If the sender asks to be contacted again after a specific delay (days/weeks/months), respond with JSON like {"delay_days": N}. If no specific delay is requested, respond with {"delay_days": 0}. Respond with ONLY the JSON, no other text.',
+      '',
+      'REPLY:',
+      replyText.slice(0, 2000),
+    ].join('\n');
+    const res = await client.messages.create({
+      model: CLASSIFIER_MODEL,
+      max_tokens: 50,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const text = (res.content as { type: string; text?: string }[])
+      .filter((c) => c.type === 'text')
+      .map((c) => c.text ?? '')
+      .join('')
+      .trim();
+    const m = text.match(/"delay_days"\s*:\s*(\d{1,3})/);
+    if (!m) return null;
+    const days = Number.parseInt(m[1] ?? '0', 10);
+    if (days > 0) return { days: Math.min(days, 365), source: 'haiku' };
+  } catch (err) {
+    console.warn('[email-agent] delay-request Haiku call failed', err);
+  }
+  return null;
+}
+
+// -----------------------------------------------------------------
+// Cooling-wake — Phase 9
+// -----------------------------------------------------------------
+
+/**
+ * Every 5 minutes: find enrollments cooling with cooldownUntil elapsed
+ * and flip them back to ACTIVE_CONVERSATION so the follow-up sequence
+ * resumes at the next follow-up tick.
+ */
+export async function handleEmailAgentCoolingWake(): Promise<void> {
+  const now = new Date();
+  const due = await prisma.emailAgentEnrollment.findMany({
+    where: {
+      conversationStatus: 'COOLING_PERIOD',
+      cooldownUntil: { lte: now },
+      status: EnrollmentStatus.ACTIVE,
+    },
+    select: { id: true },
+    take: 500,
+  });
+  if (due.length === 0) return;
+  await prisma.emailAgentEnrollment.updateMany({
+    where: { id: { in: due.map((r) => r.id) } },
+    data: {
+      conversationStatus: 'ACTIVE_CONVERSATION',
+      cooldownUntil: null,
+      nextActionAt: now,
+    },
+  });
+  console.info(
+    `[email-agent:cooling-wake] resumed ${due.length} enrollments`,
+  );
 }
 
 // -----------------------------------------------------------------

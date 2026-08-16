@@ -567,6 +567,7 @@ export const emailAgentRouter = createTRPCRouter({
           currentStep: true,
           lastSentAt: true,
           lastInboundAt: true,
+          cooldownUntil: true,
           suggestedReplyHint: true,
           contact: {
             select: { id: true, email: true, firstName: true, lastName: true },
@@ -629,6 +630,31 @@ export const emailAgentRouter = createTRPCRouter({
       });
       if (!enrollment) throw new TRPCError({ code: 'NOT_FOUND' });
       return enrollment;
+    }),
+
+  coolCard: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        enrollmentId: z.string().min(1),
+        days: z.number().int().min(1).max(365),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const until = new Date(Date.now() + input.days * 24 * 60 * 60 * 1000);
+      const result = await prisma.emailAgentEnrollment.updateMany({
+        where: { id: input.enrollmentId, tenantId },
+        data: {
+          conversationStatus: 'COOLING_PERIOD',
+          cooldownUntil: until,
+          // Freeze the sequence — the cooling-wake cron re-sets
+          // nextActionAt when it flips the card back to ACTIVE.
+          nextActionAt: null,
+        },
+      });
+      if (result.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
+      return { ok: true as const, cooldownUntil: until };
     }),
 
   moveCard: tenantProcedure

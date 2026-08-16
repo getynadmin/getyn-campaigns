@@ -2356,6 +2356,10 @@ model EmailAgentEnrollment {
   /// Cleared after the reply is sent so it doesn't leak into
   /// subsequent follow-ups.
   suggestedReplyHint String?                      @db.Text
+  /// Phase 9 — when set + conversationStatus=COOLING_PERIOD, the
+  /// cooling-wake cron flips the card back to ACTIVE_CONVERSATION at
+  /// this timestamp and lets the follow-up sequence resume.
+  cooldownUntil      DateTime?
   /// 0 = initial send pending / sent; 1..N = follow-up step.
   currentStep        Int                          @default(0)
   nextActionAt       DateTime?
@@ -2374,6 +2378,7 @@ model EmailAgentEnrollment {
   @@index([status, nextActionAt])
   @@index([emailAgentId, contactId, status])
   @@index([emailAgentId, conversationStatus])
+  @@index([conversationStatus, cooldownUntil])
 }
 
 // Every outbound and inbound message for an agent enrollment.
