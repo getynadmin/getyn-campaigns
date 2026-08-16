@@ -198,6 +198,10 @@ export type AutomationWakePayload = z.infer<typeof automationWakePayloadSchema>;
 export const emailAgentEnrollPayloadSchema = z.object({
   enrollmentId: cuidSchema,
   tenantId: cuidSchema,
+  // Phase 9 — 'Test agent' bypass. When true, the handler skips the
+  // agent-status===ACTIVE check so operators can test drafts on
+  // DRAFT / PAUSED agents without unpausing the whole cohort.
+  isTest: z.boolean().optional(),
 });
 export type EmailAgentEnrollPayload = z.infer<
   typeof emailAgentEnrollPayloadSchema

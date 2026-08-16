@@ -707,12 +707,10 @@ export const emailAgentRouter = createTRPCRouter({
           },
         });
         if (!agent) throw new TRPCError({ code: 'NOT_FOUND' });
-        if (agent.status !== AutomationStatus.ACTIVE) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: 'Activate the agent before sending a test.',
-          });
-        }
+        // Phase 9 — Test agent works from any status (DRAFT / PAUSED /
+        // ACTIVE) so operators can iterate on goal + KB before rolling
+        // out to a real segment. Only knowledge sources are required —
+        // the Sonnet draft needs at least one to produce useful copy.
         if (agent._count.knowledgeSources === 0) {
           throw new TRPCError({
             code: 'BAD_REQUEST',
@@ -769,6 +767,22 @@ export const emailAgentRouter = createTRPCRouter({
           },
           select: { id: true },
         });
+        // Enqueue the initial-send directly with isTest=true so it
+        // fires regardless of agent.status. Otherwise a paused-agent
+        // test would sit stuck in the tick queue waiting for the
+        // whole cohort to reactivate.
+        try {
+          await enqueueEmailAgentEnroll({
+            enrollmentId: created.id,
+            tenantId,
+            isTest: true,
+          });
+        } catch (err) {
+          console.warn(
+            '[email-agent.enrollByEmail] enqueue failed; tick will retry once agent is ACTIVE',
+            err,
+          );
+        }
         return {
           ok: true as const,
           enrollmentId: created.id,

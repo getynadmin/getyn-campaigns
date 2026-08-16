@@ -91,7 +91,7 @@ async function anthropic(): Promise<Anthropic | null> {
 export async function handleEmailAgentEnroll(
   job: Job<EmailAgentEnrollPayload>,
 ): Promise<void> {
-  const { enrollmentId } = job.data;
+  const { enrollmentId, isTest } = job.data;
   const enrollment = await loadEnrollment(enrollmentId);
   if (!enrollment) return;
 
@@ -109,7 +109,10 @@ export async function handleEmailAgentEnroll(
   }
 
   if (enrollment.status !== EnrollmentStatus.ACTIVE) return;
-  if (enrollment.emailAgent.status !== 'ACTIVE') return;
+  // Test-agent enrollments bypass the ACTIVE-only gate so operators
+  // can iterate against a DRAFT / PAUSED agent without turning the
+  // whole cohort back on.
+  if (!isTest && enrollment.emailAgent.status !== 'ACTIVE') return;
 
   if (!enrollment.contact.email) {
     await exitEnrollment(enrollmentId, 'no_email');
