@@ -81,6 +81,8 @@ interface FormState {
   fromEmail: string;
   stopKeywords: string;
   coolingPeriodDays: number;
+  replyInboundDomain: string;
+  replyToDisplayName: string;
 }
 
 const EMPTY_STATE: FormState = {
@@ -99,6 +101,8 @@ const EMPTY_STATE: FormState = {
   fromEmail: '',
   stopKeywords: 'do not email me,unsubscribe,stop emailing,remove me',
   coolingPeriodDays: 30,
+  replyInboundDomain: '',
+  replyToDisplayName: '',
 };
 
 // Prefill templates for /automation/agents/new?template=<slug>.
@@ -191,6 +195,10 @@ export function EmailAgentWizard({
       coolingPeriodDays: Number(
         (a as { coolingPeriodDays?: number }).coolingPeriodDays ?? 30,
       ),
+      replyInboundDomain:
+        (a as { replyInboundDomain?: string | null }).replyInboundDomain ?? '',
+      replyToDisplayName:
+        (a as { replyToDisplayName?: string | null }).replyToDisplayName ?? '',
     });
     setHydrated(true);
   }, [isEdit, hydrated, agentQuery.data]);
@@ -272,6 +280,8 @@ export function EmailAgentWizard({
       fromEmail: state.fromEmail.trim().toLowerCase(),
       stopKeywords: state.stopKeywords.trim(),
       coolingPeriodDays: state.coolingPeriodDays,
+      replyInboundDomain: state.replyInboundDomain.trim().toLowerCase(),
+      replyToDisplayName: state.replyToDisplayName.trim(),
     });
   }
 
@@ -988,10 +998,36 @@ function SenderStep({
           </Select>
         </Field>
       </div>
+      <Field
+        label="Reply-To display name"
+        hint="Shown before the address in most mail clients. Leave blank to fall back to the sender name."
+      >
+        <Input
+          value={state.replyToDisplayName}
+          onChange={(e) =>
+            setState({ ...state, replyToDisplayName: e.target.value })
+          }
+          placeholder={state.fromName || 'e.g. SkillCertified Sales'}
+        />
+      </Field>
+      <Field
+        label="Reply inbound domain (optional)"
+        hint="Bare domain — e.g. reply.skillcertified.com. Requires an MX record pointing at Resend + inbound-domain configured in your Resend account. Leaves the address on-brand for customers. If blank, we use reply.getyn.com."
+      >
+        <Input
+          value={state.replyInboundDomain}
+          onChange={(e) =>
+            setState({ ...state, replyInboundDomain: e.target.value })
+          }
+          placeholder="reply.skillcertified.com"
+        />
+      </Field>
       <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
-        <span className="font-medium">Reply-To:</span> replies to this agent
-        route back through <code>reply.getyn.com</code> so they land in the
-        approval inbox. You don&apos;t need to configure anything here.
+        <span className="font-medium">Reply routing:</span> replies land in
+        the approval inbox and auto-move the card to Review Response on the
+        Kanban. If you set a branded inbound domain above, customers see
+        <code className="mx-1">reply+xxx@your.domain</code> instead of
+        <code className="mx-1">reply.getyn.com</code>.
       </p>
     </div>
   );

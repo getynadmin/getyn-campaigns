@@ -97,6 +97,7 @@ export function EmailAgentKanban({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <TestAgentButton agentId={agentId} />
           <BulkEnrollButton agentId={agentId} />
           <Link
             href={`/t/${slug}/automation/agents/${agentId}`}
@@ -187,6 +188,94 @@ function relTime(d: Date | string): string {
   if (days < 30) return `${days}d ago`;
   const mo = Math.round(days / 30);
   return `${mo}mo ago`;
+}
+
+function TestAgentButton({ agentId }: { agentId: string }): JSX.Element {
+  const utils = api.useUtils();
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const enroll = api.emailAgent.enrollByEmail.useMutation({
+    onSuccess: (r) => {
+      toast.success(
+        r.alreadyEnrolled
+          ? 'Already enrolled — check the Active column.'
+          : 'Enrolled — initial email fires within a minute.',
+      );
+      void utils.emailAgent.board.invalidate({ id: agentId });
+      setOpen(false);
+      setEmail('');
+      setFirstName('');
+      setLastName('');
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        className="border-emerald-500/60 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+        onClick={() => setOpen(true)}
+      >
+        Test agent
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send a test to any email</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            The recipient becomes a real enrollment on the board so you
+            can watch the send, any reply, and the state transitions
+            end-to-end. Safe to re-run — already-enrolled emails are
+            deduped.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              placeholder="First name (optional)"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              className="rounded-md border bg-background px-3 py-2 text-sm"
+            />
+            <input
+              placeholder="Last name (optional)"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              className="rounded-md border bg-background px-3 py-2 text-sm"
+            />
+          </div>
+          <input
+            type="email"
+            placeholder="test@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() =>
+                enroll.mutate({
+                  emailAgentId: agentId,
+                  email,
+                  firstName: firstName || undefined,
+                  lastName: lastName || undefined,
+                })
+              }
+              disabled={!email.trim() || enroll.isPending}
+              className="bg-emerald-600 text-white hover:bg-emerald-700"
+            >
+              {enroll.isPending ? 'Enrolling…' : 'Send test'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }
 
 function BulkEnrollButton({ agentId }: { agentId: string }): JSX.Element {

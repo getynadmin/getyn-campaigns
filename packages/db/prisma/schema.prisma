@@ -2305,6 +2305,16 @@ model EmailAgent {
   /// Days after last outbound with no inbound before moving the
   /// enrollment into COOLING_PERIOD. 0 = never auto-cool.
   coolingPeriodDays     Int              @default(30)
+  /// Phase 9 — per-agent inbound domain for Reply-To. If null,
+  /// worker falls back to REPLY_INBOUND_DOMAIN env. Set this once
+  /// DNS + Resend inbound is configured on a branded subdomain
+  /// (e.g. `reply.skillcertified.com`) so customers see an on-brand
+  /// Reply-To in their mail client.
+  replyInboundDomain    String?
+  /// Optional friendly name shown before the Reply-To address in
+  /// well-behaved mail clients (Gmail, Outlook). Defaults to
+  /// `fromName` at send time when null.
+  replyToDisplayName    String?
   /// null = manual enrollment only; set = enroll contacts matching
   /// this segment when `autoEnrollNewContacts=true`.
   targetSegmentId       String?

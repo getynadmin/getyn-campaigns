@@ -64,6 +64,13 @@ const upsertInputSchema = z.object({
     .max(2_000)
     .default('do not email me,unsubscribe,stop emailing,remove me'),
   coolingPeriodDays: z.number().int().min(0).max(365).default(30),
+  replyInboundDomain: z
+    .string()
+    .trim()
+    .regex(/^([a-z0-9-]+\.)+[a-z]{2,}$/i, 'Must be a bare domain like reply.yourbrand.com')
+    .or(z.literal(''))
+    .default(''),
+  replyToDisplayName: z.string().trim().max(120).default(''),
 });
 
 const knowledgeSourceInputSchema = z.discriminatedUnion('kind', [
@@ -206,6 +213,8 @@ export const emailAgentRouter = createTRPCRouter({
               fromEmail: input.fromEmail,
               stopKeywords: input.stopKeywords,
               coolingPeriodDays: input.coolingPeriodDays,
+              replyInboundDomain: input.replyInboundDomain || null,
+              replyToDisplayName: input.replyToDisplayName || null,
             },
           });
           return { id: existing.id };
@@ -666,6 +675,106 @@ export const emailAgentRouter = createTRPCRouter({
       });
       if (!enrollment) throw new TRPCError({ code: 'NOT_FOUND' });
       return enrollment;
+    }),
+
+  /**
+   * Phase 9 — "Test agent" on the Kanban board. Given any email
+   * address, upsert a Contact + enroll into the agent so the initial
+   * send fires on the next follow-up tick and the enrollment shows
+   * up as a live card in Active Conversation. Fully real, not a
+   * simulation — the recipient will get an actual email and any
+   * reply will route through the standard inbound webhook.
+   */
+  enrollByEmail: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        emailAgentId: z.string().min(1),
+        email: z.string().trim().email(),
+        firstName: z.string().trim().max(80).optional(),
+        lastName: z.string().trim().max(80).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      return withTenant(tenantId, async (tx) => {
+        const agent = await tx.emailAgent.findFirst({
+          where: { id: input.emailAgentId, tenantId },
+          select: {
+            id: true,
+            status: true,
+            _count: { select: { knowledgeSources: true } },
+          },
+        });
+        if (!agent) throw new TRPCError({ code: 'NOT_FOUND' });
+        if (agent.status !== AutomationStatus.ACTIVE) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Activate the agent before sending a test.',
+          });
+        }
+        if (agent._count.knowledgeSources === 0) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Add at least one knowledge source before sending a test.',
+          });
+        }
+        const email = input.email.toLowerCase();
+        // No compound unique on (tenantId, email) — do findFirst then
+        // conditional create so re-clicks are idempotent.
+        let contact = await tx.contact.findFirst({
+          where: { tenantId, email },
+          select: { id: true },
+        });
+        if (!contact) {
+          contact = await tx.contact.create({
+            data: {
+              tenantId,
+              email,
+              firstName: input.firstName || null,
+              lastName: input.lastName || null,
+            },
+            select: { id: true },
+          });
+        }
+        // Bail cleanly if this contact already has an ACTIVE
+        // enrollment on this agent — the Test button should be
+        // safe to re-click without silently doubling up.
+        const existing = await tx.emailAgentEnrollment.findFirst({
+          where: {
+            tenantId,
+            emailAgentId: input.emailAgentId,
+            contactId: contact.id,
+            status: EnrollmentStatus.ACTIVE,
+          },
+          select: { id: true },
+        });
+        if (existing) {
+          return {
+            ok: true as const,
+            enrollmentId: existing.id,
+            alreadyEnrolled: true,
+          };
+        }
+        const now = new Date();
+        const created = await tx.emailAgentEnrollment.create({
+          data: {
+            tenantId,
+            emailAgentId: input.emailAgentId,
+            contactId: contact.id,
+            status: EnrollmentStatus.ACTIVE,
+            currentStep: 0,
+            nextActionAt: now,
+            enrolledAt: now,
+          },
+          select: { id: true },
+        });
+        return {
+          ok: true as const,
+          enrollmentId: created.id,
+          alreadyEnrolled: false,
+        };
+      });
     }),
 
   /**

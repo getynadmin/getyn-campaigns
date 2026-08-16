@@ -958,15 +958,31 @@ async function sendAndPersistOutbound(
   const finalBodyText = draft.bodyText + (ctx.emailAgent.signature ? `\n\n${ctx.emailAgent.signature}` : '');
   const finalBodyHtml = textToHtml(finalBodyText);
 
-  // Phase 9 — use short-token routing to stay under RFC 5321's 64-char
-  // local-part cap. The old HMAC-in-address scheme produced ~125-char
-  // local parts and Resend refused them; the fallback stripped
-  // Reply-To entirely, breaking inbound routing.
+  // Phase 9 — short-token routing under RFC 5321's 64-char local-part
+  // cap. Per-agent replyInboundDomain lets brands own the reply
+  // subdomain (e.g. reply.skillcertified.com) so customers see an
+  // on-brand address in their mail client. Fallback to global env.
   const { createReplyRoute } = await import('../utils/reply-route');
-  const replyTo = await createReplyRoute(
+  const inboundDomain =
+    (ctx.emailAgent as { replyInboundDomain?: string | null })
+      .replyInboundDomain ||
+    process.env.REPLY_INBOUND_DOMAIN ||
+    null;
+  const rawReplyTo = await createReplyRoute(
     { kind: 'a', targetId: ctx.id, tenantId: ctx.tenantId },
-    { inboundDomain: process.env.REPLY_INBOUND_DOMAIN ?? null },
+    { inboundDomain },
   );
+  // Wrap the address in the display name so Gmail/Outlook show the
+  // brand instead of the raw `reply+xxx@…` address.
+  const replyDisplayName =
+    (ctx.emailAgent as { replyToDisplayName?: string | null })
+      .replyToDisplayName ||
+    ctx.emailAgent.fromName ||
+    null;
+  const replyTo =
+    rawReplyTo && replyDisplayName
+      ? `${replyDisplayName} <${rawReplyTo}>`
+      : rawReplyTo;
 
   let messageId: string | null = null;
   if (resend) {
