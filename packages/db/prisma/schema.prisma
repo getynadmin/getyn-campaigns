@@ -2278,6 +2278,12 @@ model EmailAgent {
   /// `{ initialDelayHours: number, followUpDays: number[],
   ///    maxFollowUps: number, stopOnReply: boolean }`
   outboundSchedule      Json             @default("{\"initialDelayHours\": 0, \"followUpDays\": [3, 7, 14], \"maxFollowUps\": 3, \"stopOnReply\": true}")
+  /// Phase 9 — comma-separated phrases (case-insensitive) that force a
+  /// reply straight into INACTIVE + add contact to suppression list.
+  stopKeywords          String           @default("do not email me,unsubscribe,stop emailing,remove me")
+  /// Days after last outbound with no inbound before moving the
+  /// enrollment into COOLING_PERIOD. 0 = never auto-cool.
+  coolingPeriodDays     Int              @default(30)
   /// null = manual enrollment only; set = enroll contacts matching
   /// this segment when `autoEnrollNewContacts=true`.
   targetSegmentId       String?
@@ -2326,20 +2332,38 @@ model EmailAgentKnowledgeSource {
   @@index([emailAgentId])
 }
 
+// Phase 9 — Kanban lane on the agent board. Distinct from lifecycle
+// `status`: tracks the operator's conversational state so the Kanban
+// can move cards between columns without touching the engine's own
+// lifecycle machinery.
+enum EmailAgentConversationStatus {
+  ACTIVE_CONVERSATION
+  REVIEW_RESPONSE
+  COOLING_PERIOD
+  INACTIVE
+}
+
 model EmailAgentEnrollment {
-  id            String           @id @default(cuid())
-  tenantId      String
-  emailAgentId  String
-  contactId     String
-  status        EnrollmentStatus @default(ACTIVE)
+  id                 String                       @id @default(cuid())
+  tenantId           String
+  emailAgentId       String
+  contactId          String
+  status             EnrollmentStatus             @default(ACTIVE)
+  /// Kanban lane — set by the worker on inbound classify + by
+  /// operator drag-drop on the board.
+  conversationStatus EmailAgentConversationStatus @default(ACTIVE_CONVERSATION)
+  /// Operator-supplied hint appended to the next auto-draft prompt.
+  /// Cleared after the reply is sent so it doesn't leak into
+  /// subsequent follow-ups.
+  suggestedReplyHint String?                      @db.Text
   /// 0 = initial send pending / sent; 1..N = follow-up step.
-  currentStep   Int              @default(0)
-  nextActionAt  DateTime?
-  lastSentAt    DateTime?
-  lastInboundAt DateTime?
-  enrolledAt    DateTime         @default(now())
-  completedAt   DateTime?
-  exitReason    String?
+  currentStep        Int                          @default(0)
+  nextActionAt       DateTime?
+  lastSentAt         DateTime?
+  lastInboundAt      DateTime?
+  enrolledAt         DateTime                     @default(now())
+  completedAt        DateTime?
+  exitReason         String?
 
   tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   emailAgent EmailAgent         @relation(fields: [emailAgentId], references: [id], onDelete: Cascade)
@@ -2349,6 +2373,7 @@ model EmailAgentEnrollment {
   @@index([tenantId, emailAgentId, status])
   @@index([status, nextActionAt])
   @@index([emailAgentId, contactId, status])
+  @@index([emailAgentId, conversationStatus])
 }
 
 // Every outbound and inbound message for an agent enrollment.

@@ -30,8 +30,10 @@ const idSchema = z.object({ id: z.string().min(1).max(64) });
 
 const outboundScheduleSchema = z.object({
   initialDelayHours: z.number().int().min(0).max(24 * 14).default(0),
-  followUpDays: z.array(z.number().int().min(1).max(180)).max(10),
-  maxFollowUps: z.number().int().min(0).max(10).default(3),
+  followUpDays: z.array(z.number().int().min(1).max(365)).max(60),
+  // Phase 9 bump: some campaigns need up to 50 follow-ups (e.g. cadence
+  // of 2/week for 6 months).
+  maxFollowUps: z.number().int().min(0).max(100).default(3),
   stopOnReply: z.boolean().default(true),
 });
 
@@ -56,6 +58,12 @@ const upsertInputSchema = z.object({
   signature: z.string().trim().max(2_000).default(''),
   fromName: z.string().trim().min(1).max(120),
   fromEmail: z.string().trim().email(),
+  stopKeywords: z
+    .string()
+    .trim()
+    .max(2_000)
+    .default('do not email me,unsubscribe,stop emailing,remove me'),
+  coolingPeriodDays: z.number().int().min(0).max(365).default(30),
 });
 
 const knowledgeSourceInputSchema = z.discriminatedUnion('kind', [
@@ -196,6 +204,8 @@ export const emailAgentRouter = createTRPCRouter({
               signature: input.signature,
               fromName: input.fromName,
               fromEmail: input.fromEmail,
+              stopKeywords: input.stopKeywords,
+              coolingPeriodDays: input.coolingPeriodDays,
             },
           });
           return { id: existing.id };
@@ -214,6 +224,8 @@ export const emailAgentRouter = createTRPCRouter({
             signature: input.signature,
             fromName: input.fromName,
             fromEmail: input.fromEmail,
+            stopKeywords: input.stopKeywords,
+            coolingPeriodDays: input.coolingPeriodDays,
             createdByUserId: ctx.user.id,
           },
           select: { id: true },
@@ -537,6 +549,142 @@ export const emailAgentRouter = createTRPCRouter({
           skipped: input.contactIds.length - eligible.length,
         };
       });
+    }),
+
+  // =====================================================================
+  // Phase 9 — Kanban board
+  // =====================================================================
+  board: tenantProcedure
+    .input(idSchema)
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const rows = await prisma.emailAgentEnrollment.findMany({
+        where: { tenantId, emailAgentId: input.id },
+        select: {
+          id: true,
+          conversationStatus: true,
+          status: true,
+          currentStep: true,
+          lastSentAt: true,
+          lastInboundAt: true,
+          suggestedReplyHint: true,
+          contact: {
+            select: { id: true, email: true, firstName: true, lastName: true },
+          },
+          messages: {
+            select: {
+              id: true,
+              direction: true,
+              subject: true,
+              createdAt: true,
+              bodyText: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+        orderBy: { enrolledAt: 'desc' },
+      });
+      const byLane = {
+        ACTIVE_CONVERSATION: [] as typeof rows,
+        REVIEW_RESPONSE: [] as typeof rows,
+        COOLING_PERIOD: [] as typeof rows,
+        INACTIVE: [] as typeof rows,
+      };
+      for (const r of rows) byLane[r.conversationStatus].push(r);
+      return byLane;
+    }),
+
+  thread: tenantProcedure
+    .input(z.object({ enrollmentId: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const enrollment = await prisma.emailAgentEnrollment.findFirst({
+        where: { id: input.enrollmentId, tenantId },
+        include: {
+          contact: {
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+          messages: {
+            select: {
+              id: true,
+              direction: true,
+              subject: true,
+              bodyHtml: true,
+              bodyText: true,
+              status: true,
+              inboundClassification: true,
+              sentAt: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: 'asc' },
+          },
+          emailAgent: { select: { name: true, fromEmail: true, fromName: true } },
+        },
+      });
+      if (!enrollment) throw new TRPCError({ code: 'NOT_FOUND' });
+      return enrollment;
+    }),
+
+  moveCard: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        enrollmentId: z.string().min(1),
+        to: z.enum([
+          'ACTIVE_CONVERSATION',
+          'REVIEW_RESPONSE',
+          'COOLING_PERIOD',
+          'INACTIVE',
+        ]),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const result = await prisma.emailAgentEnrollment.updateMany({
+        where: { id: input.enrollmentId, tenantId },
+        data: {
+          conversationStatus: input.to,
+          // Clear the suggested-reply hint when leaving REVIEW_RESPONSE
+          // so it doesn't bleed into future outbound drafts.
+          suggestedReplyHint: input.to === 'REVIEW_RESPONSE' ? undefined : null,
+        },
+      });
+      if (result.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
+      return { ok: true as const };
+    }),
+
+  submitSuggestedReply: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        enrollmentId: z.string().min(1),
+        hint: z.string().trim().min(1).max(4_000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      // Stash the hint on the enrollment; flip the card back to
+      // ACTIVE_CONVERSATION. The email-agent worker's next tick
+      // (followup or direct enqueue) will pick up the hint, weave it
+      // into the Sonnet prompt, and clear it after send.
+      const updated = await prisma.emailAgentEnrollment.updateMany({
+        where: { id: input.enrollmentId, tenantId },
+        data: {
+          suggestedReplyHint: input.hint,
+          conversationStatus: 'ACTIVE_CONVERSATION',
+          nextActionAt: new Date(), // wake immediately
+        },
+      });
+      if (updated.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
+      // The email-agent follow-up cron ticks every minute and picks up
+      // enrollments with nextActionAt<=now, so no direct enqueue needed.
+      return { ok: true as const };
     }),
 });
 

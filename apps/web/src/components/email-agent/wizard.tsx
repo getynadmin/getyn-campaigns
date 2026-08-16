@@ -79,6 +79,8 @@ interface FormState {
   stopOnReply: boolean;
   fromName: string;
   fromEmail: string;
+  stopKeywords: string;
+  coolingPeriodDays: number;
 }
 
 const EMPTY_STATE: FormState = {
@@ -95,6 +97,39 @@ const EMPTY_STATE: FormState = {
   stopOnReply: true,
   fromName: '',
   fromEmail: '',
+  stopKeywords: 'do not email me,unsubscribe,stop emailing,remove me',
+  coolingPeriodDays: 30,
+};
+
+// Prefill templates for /automation/agents/new?template=<slug>.
+// Phase 9 M5 — SkillCertified.
+const TEMPLATES: Record<string, Partial<FormState>> = {
+  skillcertified: {
+    name: 'SkillCertified — Sales Concierge',
+    goal:
+      'Reply to inbound course inquiries for SkillCertified. Qualify the lead by asking about start timing, participant count, and format (online vs classroom), then send a tailored summary of the requested course pulled from skillcertified.com. Nudge for a discovery call.',
+    tone: 'PROFESSIONAL',
+    systemInstructions: [
+      'You represent SkillCertified — a professional training and certification brand offering live instructor-led, classroom, corporate, and flexible programs across AI, Cybersecurity, Cloud, Project Management, Data, Microsoft, Cisco, VMware, and other leading tech certifications.',
+      '',
+      'INITIAL EMAIL — always ask exactly these three questions after a short course summary:',
+      '  1. When are you planning to start this training?',
+      '  2. How many participants would be there?',
+      '  3. Are you looking for an online or classroom training?',
+      '',
+      'Pull course details, dates, and format availability from the configured knowledge sources (skillcertified.com, /batches, /course/catalog). Never invent pricing or batch dates — if unsure, say you will confirm with the batches team.',
+      '',
+      'Keep every email under 180 words. Warm, professional, no marketing filler.',
+    ].join('\n'),
+    signature:
+      'Warm regards,\nThe SkillCertified Team\nhttps://www.skillcertified.com',
+    followUpDays: [3, 7, 10, 14, 17, 21, 24, 28, 31, 35],
+    maxFollowUps: 50,
+    stopOnReply: true,
+    stopKeywords:
+      'do not email me,unsubscribe,stop emailing,remove me,not interested,leave me alone',
+    coolingPeriodDays: 45,
+  },
 };
 
 export function EmailAgentWizard({
@@ -108,7 +143,14 @@ export function EmailAgentWizard({
   const utils = api.useUtils();
   const isEdit = agentId !== null;
   const [step, setStep] = useState<StepKey>('goal');
-  const [state, setState] = useState<FormState>(EMPTY_STATE);
+  const [state, setState] = useState<FormState>(() => {
+    // Prefill from ?template= on the /new route so operators don't
+    // have to hand-copy the SkillCertified boilerplate.
+    if (typeof window === 'undefined') return EMPTY_STATE;
+    const t = new URLSearchParams(window.location.search).get('template');
+    const tpl = t ? TEMPLATES[t] : null;
+    return tpl ? { ...EMPTY_STATE, ...tpl } : EMPTY_STATE;
+  });
   const [segmentConfirmOpen, setSegmentConfirmOpen] = useState(false);
 
   const agentQuery = api.emailAgent.get.useQuery(
@@ -140,6 +182,12 @@ export function EmailAgentWizard({
       stopOnReply: Boolean(schedule.stopOnReply ?? true),
       fromName: a.fromName,
       fromEmail: a.fromEmail,
+      stopKeywords:
+        (a as { stopKeywords?: string }).stopKeywords ??
+        'do not email me,unsubscribe,stop emailing,remove me',
+      coolingPeriodDays: Number(
+        (a as { coolingPeriodDays?: number }).coolingPeriodDays ?? 30,
+      ),
     });
     setHydrated(true);
   }, [isEdit, hydrated, agentQuery.data]);
@@ -219,6 +267,8 @@ export function EmailAgentWizard({
       signature: state.signature,
       fromName: state.fromName.trim(),
       fromEmail: state.fromEmail.trim().toLowerCase(),
+      stopKeywords: state.stopKeywords.trim(),
+      coolingPeriodDays: state.coolingPeriodDays,
     });
   }
 
@@ -780,16 +830,19 @@ function AudienceStep({
             }
           />
         </Field>
-        <Field label="Max follow-ups">
+        <Field label="Max follow-ups" hint="Up to 100 per enrollment.">
           <Input
             type="number"
             min={0}
-            max={10}
+            max={100}
             value={state.maxFollowUps}
             onChange={(e) =>
               setState({
                 ...state,
-                maxFollowUps: Math.max(0, Math.min(10, Number(e.target.value))),
+                maxFollowUps: Math.max(
+                  0,
+                  Math.min(100, Number(e.target.value)),
+                ),
               })
             }
           />
@@ -830,6 +883,38 @@ function AudienceStep({
           </p>
         </span>
       </label>
+      <Field
+        label="Stop keywords"
+        hint="Comma-separated phrases (case-insensitive). A reply containing any of these auto-moves the contact into Inactive and adds them to suppression."
+      >
+        <textarea
+          rows={2}
+          className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+          value={state.stopKeywords}
+          onChange={(e) => setState({ ...state, stopKeywords: e.target.value })}
+          placeholder="do not email me, unsubscribe, stop emailing, remove me"
+        />
+      </Field>
+      <Field
+        label="Cooling period (days)"
+        hint="After the last outbound with no reply, move the enrollment into Cooling Period. 0 = never."
+      >
+        <Input
+          type="number"
+          min={0}
+          max={365}
+          value={state.coolingPeriodDays}
+          onChange={(e) =>
+            setState({
+              ...state,
+              coolingPeriodDays: Math.max(
+                0,
+                Math.min(365, Number(e.target.value)),
+              ),
+            })
+          }
+        />
+      </Field>
     </div>
   );
 }

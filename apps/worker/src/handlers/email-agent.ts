@@ -201,9 +201,75 @@ export async function handleEmailAgentProcessReply(
     },
   });
 
+  // Phase 9 — stop-keyword hard match. Case-insensitive substring
+  // check against the agent's operator-configured phrases. Overrides
+  // any LLM classification because "do not email me again" is
+  // unambiguous and a wrong-answer failure mode here is legally
+  // costly (CAN-SPAM / GDPR).
+  const stopWords = (enrollment.emailAgent.stopKeywords ?? '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const replyLower = (inbound.bodyText || stripHtml(inbound.bodyHtml))
+    .toLowerCase();
+  const matchedStop = stopWords.find((kw) => kw && replyLower.includes(kw));
+
+  if (matchedStop) {
+    await prisma.emailAgentEnrollment.update({
+      where: { id: enrollmentId },
+      data: {
+        lastInboundAt: new Date(),
+        conversationStatus: 'INACTIVE',
+        status: EnrollmentStatus.EXITED,
+        exitReason: `stop_keyword:${matchedStop}`,
+        completedAt: new Date(),
+        nextActionAt: null,
+      },
+    });
+    // Best-effort suppression add so the contact never gets emailed
+    // again from any surface.
+    try {
+      const { Channel, SuppressionReason } = await import('@getyn/db');
+      await prisma.suppressionEntry.upsert({
+        where: {
+          tenantId_channel_value: {
+            tenantId: enrollment.tenantId,
+            channel: Channel.EMAIL,
+            value: inbound.fromAddress.toLowerCase(),
+          },
+        },
+        create: {
+          tenantId: enrollment.tenantId,
+          channel: Channel.EMAIL,
+          value: inbound.fromAddress.toLowerCase(),
+          reason: SuppressionReason.UNSUBSCRIBED,
+          metadata: { source: 'email_agent_stop_keyword' } as unknown as object,
+        },
+        update: {
+          reason: SuppressionReason.UNSUBSCRIBED,
+          metadata: { source: 'email_agent_stop_keyword' } as unknown as object,
+        },
+      });
+    } catch (err) {
+      console.warn(
+        '[email-agent:reply] suppression upsert failed',
+        err,
+      );
+    }
+    console.info(
+      `[email-agent:reply] ${enrollmentId} stop-keyword "${matchedStop}" → INACTIVE`,
+    );
+    return;
+  }
+
+  // Otherwise: any reply pauses the sequence and lands the card in
+  // REVIEW_RESPONSE so a human can shape the next outbound.
   await prisma.emailAgentEnrollment.update({
     where: { id: enrollmentId },
-    data: { lastInboundAt: new Date() },
+    data: {
+      lastInboundAt: new Date(),
+      conversationStatus: 'REVIEW_RESPONSE',
+    },
   });
 
   const client = await anthropic();
@@ -410,6 +476,8 @@ interface EnrollmentContext {
   tenantId: string;
   emailAgentId: string;
   status: EnrollmentStatus;
+  conversationStatus: string;
+  suggestedReplyHint: string | null;
   currentStep: number;
   lastSentAt: Date | null;
   lastInboundAt: Date | null;
@@ -422,6 +490,8 @@ interface EnrollmentContext {
     systemInstructions: string;
     signature: string;
     outboundSchedule: unknown;
+    stopKeywords: string;
+    coolingPeriodDays: number;
     fromName: string;
     fromEmail: string;
     knowledgeSources: {
@@ -563,6 +633,13 @@ function buildPrompt(
     `AGENT GOAL:\n${ctx.emailAgent.goal}`,
     ``,
     `INSTRUCTIONS FROM OPERATOR:\n${ctx.emailAgent.systemInstructions || '(none)'}`,
+    ``,
+    // Phase 9 — one-shot hint the operator submitted from the Kanban
+    // "Review Response" drawer. High priority: the model should weave
+    // it in without contradicting the goal/instructions.
+    ctx.suggestedReplyHint
+      ? `URGENT REPLY HINT FROM OPERATOR — include this in the next email:\n"${ctx.suggestedReplyHint}"`
+      : '',
     ``,
     knowledge ? `KNOWLEDGE BASE (use as needed):\n${knowledge}` : '',
     ``,
@@ -770,6 +847,9 @@ async function sendAndPersistOutbound(
       data: {
         currentStep: opts.step,
         lastSentAt: new Date(),
+        // Phase 9 — a hint is one-shot: consumed by this send, cleared
+        // so it can't leak into future follow-ups.
+        ...(ctx.suggestedReplyHint ? { suggestedReplyHint: null } : {}),
       },
     }),
   ]);

@@ -29,11 +29,21 @@ export function EmailAgentsListClient({ slug }: { slug: string }): JSX.Element {
             draft waits for your approval before sending — no exceptions.
           </p>
         </div>
-        <Button asChild size="sm">
-          <Link href={`/t/${slug}/automation/agents/new`}>
-            <Plus className="mr-1 size-4" /> Create agent
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button asChild size="sm" variant="outline">
+            <Link
+              href={`/t/${slug}/automation/agents/new?template=skillcertified`}
+              title="Prefill with the SkillCertified sales concierge template"
+            >
+              SkillCertified template
+            </Link>
+          </Button>
+          <Button asChild size="sm">
+            <Link href={`/t/${slug}/automation/agents/new`}>
+              <Plus className="mr-1 size-4" /> Create agent
+            </Link>
+          </Button>
+        </div>
       </header>
 
       <FirstVisitHint
@@ -59,10 +69,10 @@ export function EmailAgentsListClient({ slug }: { slug: string }): JSX.Element {
       ) : (
         <ul className="divide-y rounded-lg border bg-card">
           {data?.items.map((row) => (
-            <li key={row.id}>
+            <li key={row.id} className="flex items-stretch">
               <Link
                 href={`/t/${slug}/automation/agents/${row.id}`}
-                className="flex items-start justify-between gap-4 px-4 py-3 transition-colors hover:bg-muted/40"
+                className="flex flex-1 items-start justify-between gap-4 px-4 py-3 transition-colors hover:bg-muted/40"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -83,6 +93,13 @@ export function EmailAgentsListClient({ slug }: { slug: string }): JSX.Element {
                     <span className="font-mono">{row.fromEmail}</span>
                   </p>
                 </div>
+              </Link>
+              <Link
+                href={`/t/${slug}/automation/agents/${row.id}/board`}
+                className="flex shrink-0 items-center gap-1 border-l px-3 text-xs text-muted-foreground transition hover:bg-muted/40 hover:text-foreground"
+                title="Open Kanban board"
+              >
+                Board →
               </Link>
             </li>
           ))}
