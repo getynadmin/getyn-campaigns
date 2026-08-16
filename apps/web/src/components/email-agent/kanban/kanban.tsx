@@ -96,12 +96,15 @@ export function EmailAgentKanban({
             Conversation board — drag or use the arrows to move a card.
           </p>
         </div>
-        <Link
-          href={`/t/${slug}/automation/agents/${agentId}`}
-          className="text-sm text-primary hover:underline"
-        >
-          Edit agent
-        </Link>
+        <div className="flex items-center gap-2">
+          <BulkEnrollButton agentId={agentId} />
+          <Link
+            href={`/t/${slug}/automation/agents/${agentId}`}
+            className="text-sm text-primary hover:underline"
+          >
+            Edit agent
+          </Link>
+        </div>
       </header>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -160,6 +163,67 @@ export function EmailAgentKanban({
 }
 
 // ---------------------------------------------------------------------
+
+function BulkEnrollButton({ agentId }: { agentId: string }): JSX.Element {
+  const utils = api.useUtils();
+  const segments = api.emailAgent.segmentOptions.useQuery();
+  const [open, setOpen] = useState(false);
+  const [segmentId, setSegmentId] = useState<string>('');
+  const enroll = api.emailAgent.enrollFromSegment.useMutation({
+    onSuccess: (r) => {
+      toast.success(
+        `Enrolled ${r.enrolled.toLocaleString()} · skipped ${r.skipped.toLocaleString()} already enrolled.`,
+      );
+      void utils.emailAgent.board.invalidate({ id: agentId });
+      setOpen(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  return (
+    <>
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Bulk enrol from segment
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Enrol every contact in a segment</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            The agent will draft an initial email for each new contact within
+            the next minute. Already-enrolled contacts are skipped.
+          </p>
+          <select
+            value={segmentId}
+            onChange={(e) => setSegmentId(e.target.value)}
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+          >
+            <option value="">Choose a segment…</option>
+            {(segments.data ?? []).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() =>
+                enroll.mutate({ emailAgentId: agentId, segmentId })
+              }
+              disabled={!segmentId || enroll.isPending}
+              className="bg-emerald-600 text-white hover:bg-emerald-700"
+            >
+              {enroll.isPending ? 'Enrolling…' : 'Enrol'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 interface BoardRow {
   id: string;

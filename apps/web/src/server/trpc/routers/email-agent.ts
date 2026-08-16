@@ -632,6 +632,127 @@ export const emailAgentRouter = createTRPCRouter({
       return enrollment;
     }),
 
+  /**
+   * Phase 9 — Bulk-enroll every contact currently matching a segment
+   * into an already-active agent. Mirrors drip's enrollFromSegment.
+   * Cursor-paginated so a 20k segment doesn't OOM the API.
+   */
+  enrollFromSegment: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        emailAgentId: z.string().min(1),
+        segmentId: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const { compileSegmentRules } = await import('@getyn/db');
+      const { segmentRulesSchema } = await import('@getyn/types');
+      return withTenant(tenantId, async (tx) => {
+        const agent = await tx.emailAgent.findFirst({
+          where: { id: input.emailAgentId, tenantId },
+          select: {
+            id: true,
+            status: true,
+            _count: { select: { knowledgeSources: true } },
+          },
+        });
+        if (!agent) throw new TRPCError({ code: 'NOT_FOUND' });
+        if (agent.status !== AutomationStatus.ACTIVE) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Activate the agent before enrolling contacts.',
+          });
+        }
+        if (agent._count.knowledgeSources === 0) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Add at least one knowledge source before enrolling.',
+          });
+        }
+        const segment = await tx.segment.findFirst({
+          where: { id: input.segmentId, tenantId },
+          select: { rules: true },
+        });
+        if (!segment) throw new TRPCError({ code: 'NOT_FOUND' });
+        const rules = segmentRulesSchema.safeParse(segment.rules);
+        if (!rules.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Segment rules are malformed.',
+          });
+        }
+        const customFields = await tx.customField.findMany({
+          where: { tenantId },
+          select: { id: true, key: true, type: true },
+        });
+        const where = compileSegmentRules(rules.data, {
+          customFields,
+          now: new Date(),
+        });
+
+        // Cursor paginate to avoid an OOM on huge segments.
+        const BATCH = 50_000;
+        let cursor: string | undefined;
+        const allIds: string[] = [];
+        for (let more = true; more; ) {
+          const rows: { id: string }[] = await tx.contact.findMany({
+            where: { AND: [{ tenantId, deletedAt: null }, where] },
+            select: { id: true },
+            take: BATCH,
+            ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+          });
+          allIds.push(...rows.map((r) => r.id));
+          more = rows.length === BATCH;
+          if (more) cursor = rows[rows.length - 1]!.id;
+        }
+        if (allIds.length === 0) return { enrolled: 0, skipped: 0 };
+
+        // Plan cap first.
+        await assertWithinLimit(
+          tenantId,
+          PlanMetric.AUTOMATION_ENROLLMENTS_PER_MONTH,
+          allIds.length,
+        );
+
+        const existing = await tx.emailAgentEnrollment.findMany({
+          where: {
+            tenantId,
+            emailAgentId: input.emailAgentId,
+            contactId: { in: allIds },
+            status: EnrollmentStatus.ACTIVE,
+          },
+          select: { contactId: true },
+        });
+        const activeSet = new Set(existing.map((r) => r.contactId));
+        const eligible = allIds.filter((id) => !activeSet.has(id));
+        if (eligible.length === 0) {
+          return { enrolled: 0, skipped: allIds.length };
+        }
+        const now = new Date();
+        await tx.emailAgentEnrollment.createMany({
+          data: eligible.map((contactId) => ({
+            tenantId,
+            emailAgentId: input.emailAgentId,
+            contactId,
+            status: EnrollmentStatus.ACTIVE,
+            currentStep: 0,
+            nextActionAt: now,
+            enrolledAt: now,
+          })),
+          skipDuplicates: true,
+        });
+        // The 60s follow-up tick will pick these up and send the initial
+        // draft under the global admin sendRatePerSecond throttle
+        // (configured at /admin/integrations/sending-servers).
+        return {
+          enrolled: eligible.length,
+          skipped: allIds.length - eligible.length,
+        };
+      });
+    }),
+
   coolCard: tenantProcedure
     .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
     .input(
