@@ -558,7 +558,7 @@ export const emailAgentRouter = createTRPCRouter({
     .input(idSchema)
     .query(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
-      const [rows, agent] = await Promise.all([
+      const [rows, agent, inboundCounts] = await Promise.all([
         prisma.emailAgentEnrollment.findMany({
           where: { tenantId, emailAgentId: input.id },
           select: {
@@ -589,7 +589,6 @@ export const emailAgentRouter = createTRPCRouter({
               orderBy: { createdAt: 'desc' },
               take: 1,
             },
-            _count: { select: { messages: true } },
           },
           orderBy: { enrolledAt: 'desc' },
         }),
@@ -597,18 +596,39 @@ export const emailAgentRouter = createTRPCRouter({
           where: { id: input.id, tenantId },
           select: { outboundSchedule: true },
         }),
+        // Explicit inbound counts — deriving from total-messages was
+        // wrong because DRAFT_AWAITING_APPROVAL rows and status side-
+        // effects inflate the total, making cards show a phantom
+        // "1 reply" badge when no real reply exists.
+        prisma.emailAgentMessage.groupBy({
+          by: ['enrollmentId'],
+          where: {
+            tenantId,
+            enrollment: { emailAgentId: input.id },
+            direction: 'INBOUND',
+          },
+          _count: { _all: true },
+        }),
       ]);
+      const inboundByEnrollment = new Map<string, number>();
+      for (const g of inboundCounts) {
+        inboundByEnrollment.set(g.enrollmentId, g._count._all);
+      }
+      const rowsWithCounts = rows.map((r) => ({
+        ...r,
+        inboundCount: inboundByEnrollment.get(r.id) ?? 0,
+      }));
       const maxFollowUps = Number(
         (agent?.outboundSchedule as { maxFollowUps?: number } | null)
           ?.maxFollowUps ?? 3,
       );
       const byLane = {
-        ACTIVE_CONVERSATION: [] as typeof rows,
-        REVIEW_RESPONSE: [] as typeof rows,
-        COOLING_PERIOD: [] as typeof rows,
-        INACTIVE: [] as typeof rows,
+        ACTIVE_CONVERSATION: [] as typeof rowsWithCounts,
+        REVIEW_RESPONSE: [] as typeof rowsWithCounts,
+        COOLING_PERIOD: [] as typeof rowsWithCounts,
+        INACTIVE: [] as typeof rowsWithCounts,
       };
-      for (const r of rows) byLane[r.conversationStatus].push(r);
+      for (const r of rowsWithCounts) byLane[r.conversationStatus].push(r);
       return { lanes: byLane, maxFollowUps };
     }),
 

@@ -367,6 +367,28 @@ export async function handleEmailAgentProcessReply(
 // -----------------------------------------------------------------
 
 async function processFollowUp(enrollmentId: string): Promise<void> {
+  // Phase 9 dupe-send fix — reserve the row atomically BEFORE the
+  // multi-second Sonnet call. Without this, the 60s tick fires again
+  // while the LLM is still drafting and the same enrollment gets
+  // drafted+sent multiple times back-to-back (users saw 2–3 identical
+  // emails within 2 seconds).
+  //
+  // We do a conditional updateMany against (id, nextActionAt<=now,
+  // status=ACTIVE) → if count===0 another worker already claimed it.
+  // If count===1 we hold the reservation and continue safely. We
+  // clear nextActionAt for the duration; scheduleNextFollowUp at the
+  // end sets it to the real next-touch time.
+  const now = new Date();
+  const claim = await prisma.emailAgentEnrollment.updateMany({
+    where: {
+      id: enrollmentId,
+      status: EnrollmentStatus.ACTIVE,
+      nextActionAt: { lte: now },
+    },
+    data: { nextActionAt: null },
+  });
+  if (claim.count === 0) return;
+
   const enrollment = await loadEnrollment(enrollmentId);
   if (!enrollment) return;
   if (enrollment.status !== EnrollmentStatus.ACTIVE) return;

@@ -272,7 +272,7 @@ interface BoardRow {
     createdAt: Date | string;
     bodyText: string;
   }>;
-  _count?: { messages: number };
+  inboundCount?: number;
 }
 
 function Card({
@@ -300,10 +300,7 @@ function Card({
   // relative to the cap the agent will ever send.
   const sentCount = row.currentStep + (row.lastSentAt ? 1 : 0);
   const totalTouches = maxFollowUps + 1;
-  const inboundCount = Math.max(
-    0,
-    (row._count?.messages ?? 0) - sentCount,
-  );
+  const inboundCount = row.inboundCount ?? 0;
   return (
     <div className="group rounded-md border bg-background p-2.5 shadow-sm transition hover:shadow-md">
       <button onClick={onOpen} className="block w-full text-left">
