@@ -58,7 +58,18 @@ export async function createReplyRoute(
 export async function resolveReplyToken(
   token: string,
 ): Promise<ReplyRouteTarget | null> {
-  const row = await prisma.replyRoute.findUnique({ where: { token } });
+  // Try exact match first (fast path — uses the unique index).
+  let row = await prisma.replyRoute.findUnique({ where: { token } });
+  // Fall back to case-insensitive lookup so inbound emails that were
+  // lowercased upstream (e.g. by an older parser or an aggressive
+  // mail relay) still route correctly. Small perf cost — collation-
+  // insensitive scan over a small table — but the class of bug is
+  // painful (silent send/reply mismatches) so it's worth eating.
+  if (!row) {
+    row = await prisma.replyRoute.findFirst({
+      where: { token: { equals: token, mode: 'insensitive' } },
+    });
+  }
   if (!row) return null;
   if (row.expiresAt < new Date()) return null;
   return {

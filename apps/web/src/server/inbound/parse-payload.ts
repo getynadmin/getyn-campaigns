@@ -123,7 +123,11 @@ function parseResend(raw: Record<string, unknown>): ParseResult {
       messageId: (data['email_id'] as string) ?? (data['id'] as string) ?? null,
       fromAddress: fromAddress.toLowerCase(),
       fromName,
-      toAddress: toAddress.toLowerCase(),
+      // Preserve local-part case — our short-token routing uses
+      // base64url which is mixed-case. RFC 5321 says the domain is
+      // case-insensitive but the local part MAY be. Only lowercase
+      // the domain half.
+      toAddress: lowercaseDomain(toAddress),
       subject: (data['subject'] as string) ?? '',
       bodyHtml: (data['html'] as string) ?? '',
       bodyText: (data['text'] as string) ?? '',
@@ -150,7 +154,8 @@ function parseSendgrid(raw: Record<string, unknown>): ParseResult {
   const fromRaw = String(raw['from'] ?? '');
   const { email: fromAddress, name: fromName } = splitAddressLine(fromRaw);
   if (!fromAddress) return { ok: false, reason: 'missing from address' };
-  const toAddress = String(raw['to'] ?? '').toLowerCase();
+  // Preserve local-part case for token routing (see lowercaseDomain).
+  const toAddress = lowercaseDomain(String(raw['to'] ?? ''));
   if (!toAddress) return { ok: false, reason: 'missing to address' };
 
   const rawHeaders = String(raw['headers'] ?? '');
@@ -178,6 +183,18 @@ function parseSendgrid(raw: Record<string, unknown>): ParseResult {
  * Parse `Name <email>` or bare `email` into components. Handles the
  * common cases; doesn't try to be a full RFC 5322 parser.
  */
+/**
+ * Lowercase only the domain half of an email. Local parts may be
+ * case-sensitive per RFC 5321 — critical for our base64url routing
+ * tokens (e.g. `reply+Dp9t4BDG@…`) which get destroyed by a blanket
+ * toLowerCase.
+ */
+function lowercaseDomain(addr: string): string {
+  const at = addr.indexOf('@');
+  if (at === -1) return addr;
+  return `${addr.slice(0, at)}@${addr.slice(at + 1).toLowerCase()}`;
+}
+
 function splitAddressLine(line: string): { email: string; name: string | null } {
   const m = /^\s*(?:"?([^"]*?)"?\s*)?<([^>]+)>\s*$/.exec(line);
   if (m) {
