@@ -40,6 +40,9 @@ export async function handleInboundEmailProcess(
       fromAddress: true,
       matchedTo: true,
       processedAt: true,
+      messageId: true,
+      bodyText: true,
+      bodyHtml: true,
     },
   });
   if (!row) {
@@ -49,6 +52,35 @@ export async function handleInboundEmailProcess(
   // Idempotence: if a prior worker attempt succeeded, don't re-route.
   if (row.processedAt && row.matchedTo !== InboundEmailMatch.UNMATCHED) {
     return;
+  }
+
+  // Phase 9 — Resend's inbound webhook only ships metadata (from/to/
+  // subject/id). The actual body has to be fetched from Resend's REST
+  // API using the email id. Backfill both text + html into the row so
+  // downstream stages (agent draft, stop-keyword scan, delay-request
+  // detection, Kanban thread modal) all see the real reply.
+  if ((!row.bodyText || !row.bodyText.trim()) && row.messageId) {
+    try {
+      const body = await fetchInboundBodyFromResend(row.messageId);
+      if (body) {
+        await prisma.inboundEmail.update({
+          where: { id: row.id },
+          data: {
+            bodyText: body.text ?? '',
+            bodyHtml: body.html ?? '',
+          },
+        });
+        row.bodyText = body.text ?? '';
+        row.bodyHtml = body.html ?? '';
+      }
+    } catch (err) {
+      console.warn(
+        `[inbound-email] Resend body fetch failed for ${row.id}`,
+        err,
+      );
+      // Continue anyway — routing still works, thread will show
+      // an empty body until we retry.
+    }
   }
 
   const secret = process.env.REPLY_ROUTING_SECRET;
@@ -356,4 +388,41 @@ async function routeAutomationReply(
     // will read the linked reply on its next tick.
     await linkOnly;
   }
+}
+
+/**
+ * Fetch a full inbound email body from Resend's REST API. Resend's
+ * webhook payload is metadata-only; the text/html body has to be
+ * pulled separately via the email id.
+ *
+ * Endpoint (per Resend docs): GET /emails/received/:id
+ * Auth: Bearer <RESEND_API_KEY>
+ */
+async function fetchInboundBodyFromResend(
+  emailId: string,
+): Promise<{ text?: string; html?: string } | null> {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) {
+    console.warn('[inbound-email] RESEND_API_KEY missing — cannot fetch body');
+    return null;
+  }
+  const res = await fetch(
+    `https://api.resend.com/emails/received/${encodeURIComponent(emailId)}`,
+    { headers: { authorization: `Bearer ${key}` } },
+  );
+  if (!res.ok) {
+    console.warn(
+      `[inbound-email] Resend body fetch ${emailId} → ${res.status}`,
+    );
+    return null;
+  }
+  const body = (await res.json()) as {
+    text?: string;
+    html?: string;
+    data?: { text?: string; html?: string };
+  };
+  return {
+    text: body.text ?? body.data?.text,
+    html: body.html ?? body.data?.html,
+  };
 }
