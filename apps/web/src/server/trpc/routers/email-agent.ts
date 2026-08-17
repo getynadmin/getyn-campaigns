@@ -989,18 +989,39 @@ export const emailAgentRouter = createTRPCRouter({
       z.object({
         enrollmentId: z.string().min(1),
         hint: z.string().trim().min(1).max(4_000),
+        // Optional one-shot CC (comma-separated addresses). Each
+        // address is basic-shape validated; the worker splits + trims
+        // before passing to Resend. Cleared after send so subsequent
+        // follow-ups don't repeatedly bother the CC'd party.
+        cc: z
+          .string()
+          .trim()
+          .max(500)
+          .optional()
+          .transform((v) => (v && v.length > 0 ? v : null))
+          .refine(
+            (v) =>
+              !v ||
+              v
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean)
+                .every((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)),
+            'One or more CC addresses look invalid',
+          ),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
-      // Stash the hint on the enrollment; flip the card back to
-      // ACTIVE_CONVERSATION. The email-agent worker's next tick
-      // (followup or direct enqueue) will pick up the hint, weave it
-      // into the Sonnet prompt, and clear it after send.
+      // Stash the hint (and one-shot CC) on the enrollment; flip the
+      // card back to ACTIVE_CONVERSATION. The follow-up tick picks
+      // up the hint on the next pass, weaves it into the Sonnet
+      // prompt, and clears both hint + CC after send.
       const updated = await prisma.emailAgentEnrollment.updateMany({
         where: { id: input.enrollmentId, tenantId },
         data: {
           suggestedReplyHint: input.hint,
+          suggestedReplyCc: input.cc ?? null,
           conversationStatus: 'ACTIVE_CONVERSATION',
           nextActionAt: new Date(), // wake immediately
         },

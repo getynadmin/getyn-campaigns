@@ -530,6 +530,7 @@ interface EnrollmentContext {
   status: EnrollmentStatus;
   conversationStatus: string;
   suggestedReplyHint: string | null;
+  suggestedReplyCc: string | null;
   currentStep: number;
   lastSentAt: Date | null;
   lastInboundAt: Date | null;
@@ -992,9 +993,17 @@ async function sendAndPersistOutbound(
     try {
       const { claimSendSlot } = await import('../utils/send-rate-limit');
       await claimSendSlot();
+      // Phase 9 — one-shot CC set by an operator on the Review
+      // Response suggest-a-reply form. Split, trim, dedupe against
+      // the primary recipient; cleared below alongside the hint.
+      const ccList = (ctx.suggestedReplyCc ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0 && s.toLowerCase() !== ctx.contact.email!.toLowerCase());
       const result = await resend.emails.send({
         from: `${ctx.emailAgent.fromName} <${ctx.emailAgent.fromEmail}>`,
         to: ctx.contact.email,
+        ...(ccList.length ? { cc: ccList } : {}),
         subject: draft.subject,
         html: finalBodyHtml,
         text: finalBodyText,
@@ -1035,6 +1044,7 @@ async function sendAndPersistOutbound(
         // Phase 9 — a hint is one-shot: consumed by this send, cleared
         // so it can't leak into future follow-ups.
         ...(ctx.suggestedReplyHint ? { suggestedReplyHint: null } : {}),
+        ...(ctx.suggestedReplyCc ? { suggestedReplyCc: null } : {}),
       },
     }),
   ]);

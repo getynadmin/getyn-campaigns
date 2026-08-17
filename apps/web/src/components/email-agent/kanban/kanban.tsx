@@ -8,9 +8,13 @@ import {
   Clock,
   Eye,
   MessageCircle,
+  Search,
   Slash,
   Snowflake,
   Sparkles,
+  Trash2,
+  UserX,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -81,6 +85,41 @@ export function EmailAgentKanban({
 
   const [openEnrollmentId, setOpenEnrollmentId] = useState<string | null>(null);
 
+  // Client-side filters — the board query already ships every card;
+  // filtering here is instantaneous and avoids a round-trip on every
+  // keystroke. Search matches email / first / last (case-insensitive
+  // substring); the extra chips narrow by activity signal.
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<
+    'all' | 'with_replies' | 'awaiting_reply' | 'active_24h' | 'active_7d'
+  >('all');
+
+  const matches = (r: BoardRow): boolean => {
+    const q = search.trim().toLowerCase();
+    if (q) {
+      const hay = [
+        r.contact.email,
+        r.contact.firstName,
+        r.contact.lastName,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    if (filter === 'with_replies' && !(r.inboundCount && r.inboundCount > 0)) return false;
+    if (filter === 'awaiting_reply' && !!r.lastInboundAt) return false;
+    if (filter === 'active_24h' || filter === 'active_7d') {
+      const cutoff = Date.now() - (filter === 'active_24h' ? 1 : 7) * 24 * 3600_000;
+      const last = Math.max(
+        r.lastSentAt ? new Date(r.lastSentAt).getTime() : 0,
+        r.lastInboundAt ? new Date(r.lastInboundAt).getTime() : 0,
+      );
+      if (last < cutoff) return false;
+    }
+    return true;
+  };
+
   return (
     <div className="mx-auto max-w-[1600px] px-6 py-6">
       <header className="mb-6 flex items-center justify-between">
@@ -108,9 +147,57 @@ export function EmailAgentKanban({
         </div>
       </header>
 
+      {/* Search + filters — client-side over already-loaded rows so
+          typing is instant. Search spans every lane so an operator
+          can find "yooo@example.com" regardless of its status. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[240px] max-w-md">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search across all lanes by name or email…"
+            className="w-full rounded-md border bg-background pl-8 pr-8 py-2 text-sm"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted"
+              title="Clear"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-1 text-xs">
+          {(
+            [
+              ['all', 'All'],
+              ['with_replies', 'With replies'],
+              ['awaiting_reply', 'Awaiting reply'],
+              ['active_24h', 'Active · 24h'],
+              ['active_7d', 'Active · 7d'],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setFilter(k)}
+              className={`rounded-full border px-2.5 py-1 transition ${
+                filter === k
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-muted bg-background text-muted-foreground hover:bg-muted'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {LANES.map((lane) => {
-          const rows = (data?.lanes[lane.key] ?? []) as BoardRow[];
+          const rawRows = (data?.lanes[lane.key] ?? []) as BoardRow[];
+          const rows = rawRows.filter(matches);
           return (
             <section
               key={lane.key}
@@ -120,7 +207,11 @@ export function EmailAgentKanban({
                 <lane.Icon className="size-4" />
                 <span className="text-sm font-semibold">{lane.label}</span>
                 <span className="ml-auto rounded-full bg-background px-2 py-0.5 text-[11px] font-medium">
-                  {isLoading ? '…' : rows.length}
+                  {isLoading
+                    ? '…'
+                    : rows.length === rawRows.length
+                      ? rows.length
+                      : `${rows.length}/${rawRows.length}`}
                 </span>
               </header>
               {/* Fixed viewport ~10 cards; the column scrolls internally
@@ -496,6 +587,8 @@ function ThreadDialog({
       toast.success('Hint submitted — agent will draft a reply within a minute.');
       void utils.emailAgent.board.invalidate();
       void utils.emailAgent.thread.invalidate();
+      setHint('');
+      setCc('');
       onClose();
     },
     onError: (e) => toast.error(e.message),
@@ -521,6 +614,7 @@ function ThreadDialog({
   });
 
   const [hint, setHint] = useState('');
+  const [cc, setCc] = useState('');
   const [coolDays, setCoolDays] = useState<number>(7);
 
   const name = data?.contact.firstName
@@ -533,14 +627,26 @@ function ThreadDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between gap-3">
             <span className="truncate">{name}</span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               {data && (
-                <span className="text-xs font-normal text-muted-foreground">
+                <span className="mr-2 text-xs font-normal text-muted-foreground">
                   {data.conversationStatus.replaceAll('_', ' ').toLowerCase()}
                 </span>
               )}
+              {enrollmentId && data && data.conversationStatus !== 'INACTIVE' && (
+                <IconAction
+                  Icon={UserX}
+                  tooltip="Mark inactive — moves to the Inactive lane and stops all future follow-ups. Reversible from that lane."
+                  variant="warning"
+                  onClick={() => onMove('INACTIVE')}
+                />
+              )}
               {enrollmentId && (
-                <button
+                <IconAction
+                  Icon={Trash2}
+                  tooltip="Delete enrollment — removes this card and all its messages. Cannot be undone; the contact can be re-enrolled fresh afterwards."
+                  variant="danger"
+                  disabled={del.isPending}
                   onClick={() => {
                     if (
                       !window.confirm(
@@ -550,12 +656,7 @@ function ThreadDialog({
                       return;
                     del.mutate({ enrollmentId });
                   }}
-                  disabled={del.isPending}
-                  className="rounded-md border border-red-300 px-2 py-0.5 text-[11px] font-medium text-red-700 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40"
-                  title="Delete enrollment (cannot be undone)"
-                >
-                  Delete
-                </button>
+                />
               )}
             </div>
           </DialogTitle>
@@ -656,21 +757,32 @@ function ThreadDialog({
                   className="w-full rounded-md border bg-background p-2 text-sm"
                   placeholder="e.g. Mention that the September AI batch is full but October has open seats. Ask if they'd like a call this week."
                 />
+                <label className="block text-[11px] font-medium text-muted-foreground">
+                  CC (optional, one-shot)
+                </label>
+                <input
+                  value={cc}
+                  onChange={(e) => setCc(e.target.value)}
+                  placeholder="alice@team.com, bob@team.com"
+                  className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Applied only to the next outbound reply. Any follow-ups the
+                  agent sends after that go directly to the contact without CC.
+                </p>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     onClick={() =>
                       submitHint.mutate({
                         enrollmentId: enrollmentId!,
                         hint: hint.trim(),
+                        cc: cc.trim() || undefined,
                       })
                     }
                     disabled={!hint.trim() || submitHint.isPending}
                     className="bg-emerald-600 text-white hover:bg-emerald-700"
                   >
                     Submit hint & resume
-                  </Button>
-                  <Button variant="outline" onClick={() => onMove('INACTIVE')}>
-                    Mark inactive
                   </Button>
                   <div className="ml-auto flex items-center gap-1 rounded-md border bg-background p-1 text-sm">
                     <Snowflake className="ml-1 size-3.5 text-sky-600" />
@@ -712,5 +824,47 @@ function ThreadDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------
+
+/**
+ * Small icon-only button for drawer toolbar actions (mark inactive,
+ * delete, etc.). Uses the browser's native `title` attribute for the
+ * hover tooltip so we don't need to pull in a full Tooltip primitive
+ * for what is essentially a one-liner. Colour variants match the
+ * usual destructive/warning conventions.
+ */
+function IconAction({
+  Icon,
+  tooltip,
+  variant = 'default',
+  onClick,
+  disabled,
+}: {
+  Icon: React.ComponentType<{ className?: string }>;
+  tooltip: string;
+  variant?: 'default' | 'warning' | 'danger';
+  onClick: () => void;
+  disabled?: boolean;
+}): JSX.Element {
+  const styles =
+    variant === 'danger'
+      ? 'text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40'
+      : variant === 'warning'
+        ? 'text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/40'
+        : 'text-muted-foreground hover:bg-muted';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={tooltip}
+      aria-label={tooltip}
+      className={`rounded-md p-1.5 transition disabled:opacity-40 ${styles}`}
+    >
+      <Icon className="size-4" />
+    </button>
   );
 }

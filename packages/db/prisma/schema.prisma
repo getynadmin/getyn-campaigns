@@ -2387,6 +2387,10 @@ model EmailAgentEnrollment {
   /// Cleared after the reply is sent so it doesn't leak into
   /// subsequent follow-ups.
   suggestedReplyHint String?                      @db.Text
+  /// One-shot CC list (comma-separated emails). Applied only to the
+  /// next outbound; cleared after send so subsequent follow-ups
+  /// don't spam the CC'd party.
+  suggestedReplyCc   String?
   /// Phase 9 — when set + conversationStatus=COOLING_PERIOD, the
   /// cooling-wake cron flips the card back to ACTIVE_CONVERSATION at
   /// this timestamp and lets the follow-up sequence resume.
