@@ -361,6 +361,36 @@ async function handleInbound(event: {
           metadata: { metaMessageId: messageId } as Prisma.JsonObject,
         },
       });
+
+      // WhatsApp Agent reply routing: if this contact has an ACTIVE
+      // enrollment on any agent for this tenant, enqueue processReply.
+      const enrollment = await tx.whatsAppAgentEnrollment.findFirst({
+        where: {
+          tenantId: phone.tenantId,
+          contactId: conv.contactId,
+          status: { in: ['ACTIVE', 'PAUSED_AWAITING_APPROVAL'] },
+        },
+        select: { id: true },
+      });
+      if (enrollment) {
+        try {
+          const persistedMsg = await tx.whatsAppMessage.findFirst({
+            where: { tenantId: phone.tenantId, metaMessageId: messageId },
+            select: { id: true },
+          });
+          if (persistedMsg) {
+            const producer = await getWhatsAppAgentProducer();
+            await producer.enqueueProcessReply({
+              enrollmentId: enrollment.id,
+              tenantId: phone.tenantId,
+              waMessageId: persistedMsg.id,
+              bodyText: body ?? '',
+            });
+          }
+        } catch (err) {
+          console.warn('[wa-webhooks:inbound] agent enqueue failed', err);
+        }
+      }
     }
   });
 }
@@ -632,4 +662,33 @@ async function handleAccountAlert(event: {
     tags: { queue: 'wa-webhooks', event: 'account_alerts' },
     extra: { dedupeKey: event.dedupeKey },
   });
+}
+
+// Lazy WhatsApp Agent producer — same pattern as inbound-emails.ts.
+let cachedWaAgentProducer: {
+  enqueueProcessReply: (payload: {
+    enrollmentId: string;
+    tenantId: string;
+    waMessageId: string;
+    bodyText: string;
+  }) => Promise<void>;
+} | null = null;
+
+async function getWhatsAppAgentProducer(): Promise<NonNullable<typeof cachedWaAgentProducer>> {
+  if (cachedWaAgentProducer) return cachedWaAgentProducer;
+  const { Queue } = await import('bullmq');
+  const { createRedisConnection } = await import('../redis');
+  const { QUEUE_NAMES, JOB_NAMES } = await import('@getyn/types');
+  const url = process.env.REDIS_URL;
+  if (!url) throw new Error('REDIS_URL missing');
+  const connection = createRedisConnection(url);
+  const q = new Queue(QUEUE_NAMES.whatsappAgent, { connection });
+  cachedWaAgentProducer = {
+    enqueueProcessReply: async (payload) => {
+      await q.add(JOB_NAMES.whatsappAgent.processReply, payload, {
+        jobId: `wa-reply_${payload.waMessageId}`,
+      });
+    },
+  };
+  return cachedWaAgentProducer;
 }

@@ -53,6 +53,12 @@ import {
   handleEmailAgentProcessReply,
 } from './handlers/email-agent';
 import { handleEmailAgentIngestKnowledgeSource } from './handlers/email-agent-ingest';
+import {
+  handleWhatsAppAgentCoolingWake,
+  handleWhatsAppAgentEnroll,
+  handleWhatsAppAgentFollowUpTick,
+  handleWhatsAppAgentProcessReply,
+} from './handlers/whatsapp-agent';
 import { createRedisConnection } from './redis';
 
 const env = loadEnv();
@@ -194,6 +200,29 @@ workers.push(
   ),
 );
 const emailAgentQueue = new Queue(QUEUE_NAMES.emailAgent, { connection });
+
+// WhatsApp Agent queue — mirror of email-agent.
+workers.push(
+  new Worker(
+    QUEUE_NAMES.whatsappAgent,
+    async (job) => {
+      switch (job.name) {
+        case JOB_NAMES.whatsappAgent.enroll:
+          return handleWhatsAppAgentEnroll(job);
+        case JOB_NAMES.whatsappAgent.followUpTick:
+          return handleWhatsAppAgentFollowUpTick();
+        case JOB_NAMES.whatsappAgent.processReply:
+          return handleWhatsAppAgentProcessReply(job);
+        case JOB_NAMES.whatsappAgent.coolingWake:
+          return handleWhatsAppAgentCoolingWake();
+        default:
+          throw new Error(`Unknown whatsapp-agent job: ${job.name}`);
+      }
+    },
+    { connection, concurrency: 3, lockDuration: 120_000 },
+  ),
+);
+const whatsappAgentQueue = new Queue(QUEUE_NAMES.whatsappAgent, { connection });
 
 // Sends queue — Phase 3 M6's campaign send pipeline.
 //
@@ -540,6 +569,18 @@ async function setupCronJobs(): Promise<void> {
       repeat: { pattern: '*/5 * * * *', tz: 'UTC' },
       jobId: 'cron_email-agent-cooling-wake',
     },
+  );
+
+  // WhatsApp Agent — follow-up tick every minute + cooling wake every 5m.
+  await whatsappAgentQueue.add(
+    JOB_NAMES.whatsappAgent.followUpTick,
+    {},
+    { repeat: { pattern: '* * * * *', tz: 'UTC' }, jobId: 'cron_whatsapp-agent-followup-tick' },
+  );
+  await whatsappAgentQueue.add(
+    JOB_NAMES.whatsappAgent.coolingWake,
+    {},
+    { repeat: { pattern: '*/5 * * * *', tz: 'UTC' }, jobId: 'cron_whatsapp-agent-cooling-wake' },
   );
 
   // Phase 4 M4 — wa-phone-refresh tick. Every 6h fans out per-WABA
