@@ -429,6 +429,41 @@ async function handleStatus(event: {
 
   // Look up the campaign send by metaMessageId — single global
   // index is enough; tenant scoping via the row's tenantId.
+  // Mirror the status onto a WhatsApp Agent message row if the
+  // metaMessageId belongs to one — otherwise a delivery.failed on
+  // the agent's initial template send stays silently SENT on the
+  // Kanban card. Independent of the campaign-send lookup below;
+  // both can coexist.
+  const agentMsg = await prisma.whatsAppAgentMessage.findFirst({
+    where: { messageId },
+    select: { id: true, tenantId: true },
+  });
+  if (agentMsg) {
+    const agentStatus =
+      status === 'delivered'
+        ? 'DELIVERED'
+        : status === 'read'
+          ? 'OPENED'
+          : status === 'failed'
+            ? 'FAILED'
+            : null;
+    if (agentStatus) {
+      const errText =
+        status === 'failed'
+          ? `[delivery failed] ${meta.errors?.[0]?.code ?? ''} ${meta.errors?.[0]?.title ?? ''} — ${meta.errors?.[0]?.message ?? ''}`.trim()
+          : null;
+      await prisma.whatsAppAgentMessage.update({
+        where: { id: agentMsg.id },
+        data: {
+          status: agentStatus as never,
+          ...(errText
+            ? { bodyText: `${errText}\n\n(original wamid: ${messageId})` }
+            : {}),
+        },
+      });
+    }
+  }
+
   const send = await prisma.whatsAppCampaignSend.findFirst({
     where: { metaMessageId: messageId },
   });
