@@ -500,6 +500,14 @@ function ThreadDialog({
     },
     onError: (e) => toast.error(e.message),
   });
+  const del = api.emailAgent.deleteEnrollment.useMutation({
+    onSuccess: () => {
+      toast.success('Enrollment deleted. You can now re-enrol the same email.');
+      void utils.emailAgent.board.invalidate();
+      onClose();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const cool = api.emailAgent.coolCard.useMutation({
     onSuccess: (r) => {
       toast.success(
@@ -523,13 +531,33 @@ function ThreadDialog({
     <Dialog open={!!enrollmentId} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center justify-between">
+          <DialogTitle className="flex items-center justify-between gap-3">
             <span className="truncate">{name}</span>
-            {data && (
-              <span className="text-xs font-normal text-muted-foreground">
-                {data.conversationStatus.replaceAll('_', ' ').toLowerCase()}
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {data && (
+                <span className="text-xs font-normal text-muted-foreground">
+                  {data.conversationStatus.replaceAll('_', ' ').toLowerCase()}
+                </span>
+              )}
+              {enrollmentId && (
+                <button
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        `Delete this enrollment and all its messages? "${name}" will be removed from the board and can be re-enrolled fresh.`,
+                      )
+                    )
+                      return;
+                    del.mutate({ enrollmentId });
+                  }}
+                  disabled={del.isPending}
+                  className="rounded-md border border-red-300 px-2 py-0.5 text-[11px] font-medium text-red-700 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40"
+                  title="Delete enrollment (cannot be undone)"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
           </DialogTitle>
         </DialogHeader>
 

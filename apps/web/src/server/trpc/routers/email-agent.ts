@@ -912,6 +912,24 @@ export const emailAgentRouter = createTRPCRouter({
       });
     }),
 
+  /**
+   * Delete an enrollment + all its messages. Used by the Kanban's
+   * per-card delete action so operators can wipe test enrollments
+   * (or genuine junk) and re-enroll the same contact cleanly.
+   */
+  deleteEnrollment: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(z.object({ enrollmentId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      // Cascade delete on the FK removes messages automatically.
+      const result = await prisma.emailAgentEnrollment.deleteMany({
+        where: { id: input.enrollmentId, tenantId },
+      });
+      if (result.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
+      return { ok: true as const };
+    }),
+
   coolCard: tenantProcedure
     .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
     .input(

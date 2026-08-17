@@ -287,6 +287,12 @@ export async function enqueueEmailAgentEnroll(
   const queue = getEmailAgentQueue();
   await queue.add(JOB_NAMES.emailAgent.enroll, validated, {
     jobId: `enroll_${validated.enrollmentId}`,
+    // Test-agent enqueues jump the queue — otherwise a single test
+    // click sits behind a 17k-enrollment backlog and appears broken.
+    // BullMQ priority: lower number = higher priority. 1 is our
+    // ceiling; regular follow-up tick jobs run at the default 0.
+    // (Non-test enrolls keep default priority; they're bulk work.)
+    ...(validated.isTest ? { priority: 1 } : {}),
   });
 }
 
