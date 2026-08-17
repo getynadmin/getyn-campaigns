@@ -183,7 +183,7 @@ export async function refreshPhoneNumbersForWaba(
           phoneNumber: detail.display_phone_number ?? p.display_phone_number,
           verifiedName: detail.verified_name ?? p.verified_name,
           qualityRating: mapQuality(detail.quality_rating ?? p.quality_rating),
-          messagingTier: mapTier(detail.messaging_limit ?? p.messaging_limit),
+          messagingTier: mapTier(detail.messaging_limit_tier ?? detail.messaging_limit ?? p.messaging_limit_tier ?? p.messaging_limit),
           displayPhoneNumberStatus: mapPhoneStatus(detail.status ?? p.status),
           pinSetAt: (detail.pin ?? p.pin) ? new Date() : null,
           currentTier24hUsage: usage ?? 0,
@@ -194,7 +194,7 @@ export async function refreshPhoneNumbersForWaba(
           phoneNumber: detail.display_phone_number ?? p.display_phone_number,
           verifiedName: detail.verified_name ?? p.verified_name,
           qualityRating: mapQuality(detail.quality_rating ?? p.quality_rating),
-          messagingTier: mapTier(detail.messaging_limit ?? p.messaging_limit),
+          messagingTier: mapTier(detail.messaging_limit_tier ?? detail.messaging_limit ?? p.messaging_limit_tier ?? p.messaging_limit),
           displayPhoneNumberStatus: mapPhoneStatus(detail.status ?? p.status),
           // Only overwrite tier-window when Meta actually returned it —
           // some Graph versions omit it for newly-promoted numbers.

@@ -140,7 +140,7 @@ export const whatsAppPhoneNumbersRouter = createTRPCRouter({
               phoneNumber: detail.display_phone_number ?? row.phoneNumber,
               verifiedName: detail.verified_name ?? row.verifiedName,
               qualityRating: mapQuality(detail.quality_rating),
-              messagingTier: mapTier(detail.messaging_limit),
+              messagingTier: mapTier(detail.messaging_limit_tier ?? detail.messaging_limit),
               displayPhoneNumberStatus: mapPhoneStatus(detail.status),
               ...(usage !== null ? { currentTier24hUsage: usage } : {}),
               ...(reset !== null ? { tier24hWindowResetAt: reset } : {}),

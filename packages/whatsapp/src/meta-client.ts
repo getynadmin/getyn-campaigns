@@ -249,8 +249,14 @@ export interface MetaPhoneNumber {
    * Unique recipients allowed in 24h.
    * "TIER_50" | "TIER_250" | "TIER_1K" | "TIER_10K" | "TIER_100K" | "TIER_UNLIMITED"
    * — Meta has shipped both string and numeric variants over time;
-   * we accept both and normalise downstream.
+   * we accept both and normalise downstream. The field was renamed
+   * from `messaging_limit` to `messaging_limit_tier` in Graph v19+;
+   * requesting the old name now returns (#100) "Tried accessing
+   * nonexisting field (messaging_limit)". We accept both when
+   * parsing responses so mocks + older API versions still work,
+   * but only request the new name in outgoing queries.
    */
+  messaging_limit_tier?: string;
   messaging_limit?: string;
   /** Display status — "CONNECTED" | "PENDING_REVIEW" | "DISCONNECTED" | "FLAGGED". */
   status?: string;
@@ -274,7 +280,7 @@ export async function listWabaPhoneNumbers(
     {
       accessToken,
       query: {
-        fields: 'id,display_phone_number,verified_name,quality_rating,messaging_limit,status,pin,certificate',
+        fields: 'id,display_phone_number,verified_name,quality_rating,messaging_limit_tier,status,pin,certificate',
       },
       fetchImpl: opts?.fetchImpl,
       baseUrl: opts?.baseUrl,
@@ -339,7 +345,7 @@ export async function getPhoneNumber(
     accessToken,
     query: {
       fields:
-        'id,display_phone_number,verified_name,quality_rating,messaging_limit,status,pin,certificate,throughput,current_limit,current_24h_usage,next_24h_window_starts_at',
+        'id,display_phone_number,verified_name,quality_rating,messaging_limit_tier,status,pin,certificate,throughput,current_limit,current_24h_usage,next_24h_window_starts_at',
     },
     fetchImpl: opts?.fetchImpl,
     baseUrl: opts?.baseUrl,
