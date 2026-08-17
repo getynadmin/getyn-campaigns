@@ -37,6 +37,23 @@ export async function handleResendWebhook(job: Job): Promise<void> {
     job.data,
   );
 
+  // Phase 9 — inbound events (customer reply → Resend inbound → us).
+  // Persist the raw payload as an InboundEmail row and enqueue the
+  // inbound-emails routing worker which handles token decode + fan-
+  // out to campaign / agent / automation reply hooks.
+  //
+  // Resend's inbound event name at the time of writing is one of
+  // `email.inbound` or `email.received` depending on account tier —
+  // handle both defensively.
+  if (
+    eventType === 'email.inbound' ||
+    eventType === 'email.received' ||
+    eventType === 'email.inbound.received'
+  ) {
+    await handleInboundEvent(messageId, payload);
+    return;
+  }
+
   // Resolve the send by messageId. Resend's globally-unique id is
   // `(tenantId, messageId)` indexed on CampaignSend.
   const send = await prisma.campaignSend.findFirst({
@@ -298,4 +315,127 @@ async function bumpCachedRate(
       });
     }
   });
+}
+
+// -----------------------------------------------------------------
+// Phase 9 — Resend inbound event handler
+// -----------------------------------------------------------------
+
+/**
+ * Persist an inbound email + hand off to the inbound-emails routing
+ * worker (which already exists for Phase 8 M1c). Kept intentionally
+ * dumb: extract fields defensively, insert row, enqueue. The routing
+ * worker owns token decode + fan-out.
+ *
+ * Resend's inbound event `data` shape (fields we care about):
+ *   { id, from, to[], subject, text, html, headers, in_reply_to?, references? }
+ *
+ * We defensively coerce because Resend has changed field names in
+ * beta and different tiers report subtly different shapes.
+ */
+async function handleInboundEvent(
+  messageId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const data = ((payload.data ?? {}) as Record<string, unknown>) || {};
+
+  // `from` may be a string or an object like { address, name }.
+  const fromRaw = data.from as unknown;
+  let fromAddress = '';
+  let fromName: string | null = null;
+  if (typeof fromRaw === 'string') {
+    fromAddress = fromRaw;
+  } else if (fromRaw && typeof fromRaw === 'object') {
+    fromAddress = String(
+      (fromRaw as { address?: unknown; email?: unknown }).address ??
+        (fromRaw as { email?: unknown }).email ??
+        '',
+    );
+    fromName =
+      String((fromRaw as { name?: unknown }).name ?? '') || null;
+  }
+
+  // `to` may be a comma-separated string or a string[] or [{address}].
+  // We want the one that has our `reply+<token>@` local part.
+  const toCandidates = Array.isArray(data.to)
+    ? (data.to as unknown[]).map((t) =>
+        typeof t === 'string'
+          ? t
+          : String((t as { address?: unknown })?.address ?? ''),
+      )
+    : typeof data.to === 'string'
+      ? String(data.to).split(',').map((s) => s.trim())
+      : [];
+  const toAddress =
+    toCandidates.find((t) => /reply\+/i.test(t)) || toCandidates[0] || '';
+
+  const subject = String(data.subject ?? '(no subject)');
+  const bodyText = String(data.text ?? '');
+  const bodyHtml = String(data.html ?? '');
+  const inReplyTo = data.in_reply_to
+    ? String(data.in_reply_to)
+    : (data.headers as { 'in-reply-to'?: string } | undefined)?.['in-reply-to']
+      ?? null;
+  const referencesHeader = Array.isArray(data.references)
+    ? (data.references as unknown[]).map(String)
+    : [];
+
+  if (!fromAddress || !toAddress) {
+    console.warn(
+      `[webhook:resend:inbound] missing from/to on payload id=${messageId}; skipping`,
+    );
+    return;
+  }
+
+  // Idempotent on messageId — Resend retries on non-2xx.
+  const existing = messageId
+    ? await prisma.inboundEmail.findUnique({ where: { messageId } })
+    : null;
+  if (existing) {
+    console.info(
+      `[webhook:resend:inbound] duplicate inbound messageId=${messageId}; skipping`,
+    );
+    return;
+  }
+
+  const row = await prisma.inboundEmail.create({
+    data: {
+      messageId: messageId || null,
+      fromAddress: fromAddress.toLowerCase(),
+      fromName,
+      toAddress: toAddress.toLowerCase(),
+      subject,
+      bodyHtml,
+      bodyText,
+      inReplyTo,
+      referencesHeader,
+      rawPayload: payload as unknown as object,
+    },
+    select: { id: true },
+  });
+
+  console.info(
+    `[webhook:resend:inbound] persisted InboundEmail=${row.id} from=${fromAddress} to=${toAddress}`,
+  );
+
+  // Hand off to the routing worker.
+  try {
+    const { Queue } = await import('bullmq');
+    const { createRedisConnection } = await import('../redis');
+    const { QUEUE_NAMES, JOB_NAMES } = await import('@getyn/types');
+    const url = process.env.REDIS_URL;
+    if (!url) throw new Error('REDIS_URL missing');
+    const connection = createRedisConnection(url);
+    const q = new Queue(QUEUE_NAMES.inboundEmails, { connection });
+    await q.add(
+      JOB_NAMES.inboundEmails.process,
+      { inboundEmailId: row.id },
+      { jobId: `inbound_${row.id}` },
+    );
+  } catch (err) {
+    console.error(
+      `[webhook:resend:inbound] failed to enqueue routing for ${row.id}`,
+      err,
+    );
+  }
 }
