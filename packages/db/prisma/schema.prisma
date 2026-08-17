@@ -2391,6 +2391,10 @@ model EmailAgentEnrollment {
   /// next outbound; cleared after send so subsequent follow-ups
   /// don't spam the CC'd party.
   suggestedReplyCc   String?
+  /// Free-form operator tags (Hot / Interested / Out of budget…).
+  /// Persist across lane transitions. Indexed as GIN for the tag
+  /// filter chips on the Kanban board.
+  tags               String[]                     @default([])
   /// Phase 9 — when set + conversationStatus=COOLING_PERIOD, the
   /// cooling-wake cron flips the card back to ACTIVE_CONVERSATION at
   /// this timestamp and lets the follow-up sequence resume.

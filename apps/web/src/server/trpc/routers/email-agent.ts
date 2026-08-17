@@ -579,6 +579,7 @@ export const emailAgentRouter = createTRPCRouter({
             lastInboundAt: true,
             cooldownUntil: true,
             suggestedReplyHint: true,
+            tags: true,
             contact: {
               select: {
                 id: true,
@@ -981,6 +982,40 @@ export const emailAgentRouter = createTRPCRouter({
       });
       if (result.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
       return { ok: true as const };
+    }),
+
+  setTags: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        enrollmentId: z.string().min(1),
+        // Replace-all semantics — simplest client story. Tag strings
+        // are trimmed, deduped case-insensitively, capped at 8 per
+        // card to keep the card UI legible.
+        tags: z
+          .array(z.string().trim().min(1).max(40))
+          .max(8)
+          .transform((arr) => {
+            const seen = new Set<string>();
+            const out: string[] = [];
+            for (const t of arr) {
+              const k = t.toLowerCase();
+              if (seen.has(k)) continue;
+              seen.add(k);
+              out.push(t);
+            }
+            return out;
+          }),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const result = await prisma.emailAgentEnrollment.updateMany({
+        where: { id: input.enrollmentId, tenantId },
+        data: { tags: input.tags },
+      });
+      if (result.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
+      return { tags: input.tags };
     }),
 
   submitSuggestedReply: tenantProcedure

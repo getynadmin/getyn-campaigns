@@ -8,7 +8,9 @@ import {
   Clock,
   Eye,
   MessageCircle,
+  Plus,
   Search,
+  Tag as TagIcon,
   Slash,
   Snowflake,
   Sparkles,
@@ -29,6 +31,38 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/trpc';
 
 type LaneKey = 'ACTIVE_CONVERSATION' | 'REVIEW_RESPONSE' | 'COOLING_PERIOD' | 'INACTIVE';
+
+// Preset warm-palette tags. Operators can pick any of these on any
+// card in any lane; tags persist across lane transitions. Colours
+// stay in a warm/muted family so the board reads as one surface
+// instead of a party. Lookup is case-insensitive so "Hot" and "hot"
+// share the same colour.
+const TAG_PRESETS: Array<{ label: string; classes: string }> = [
+  { label: 'Hot', classes: 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950/50 dark:text-red-200 dark:border-red-900' },
+  { label: 'Interested', classes: 'bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950/50 dark:text-orange-200 dark:border-orange-900' },
+  { label: 'Future Potential', classes: 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-900' },
+  { label: 'Out of budget', classes: 'bg-yellow-100 text-yellow-900 border-yellow-300 dark:bg-yellow-950/50 dark:text-yellow-200 dark:border-yellow-900' },
+  { label: 'Out of scope', classes: 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/50 dark:text-rose-200 dark:border-rose-900' },
+  { label: 'Follow-up later', classes: 'bg-pink-100 text-pink-800 border-pink-300 dark:bg-pink-950/50 dark:text-pink-200 dark:border-pink-900' },
+  { label: 'Not a fit', classes: 'bg-stone-200 text-stone-800 border-stone-300 dark:bg-stone-800/60 dark:text-stone-200 dark:border-stone-700' },
+];
+
+// Deterministic colour for custom tags (anything the operator types
+// that isn't in the preset list). Same tag string → same colour
+// across sessions so the board looks stable.
+const CUSTOM_TAG_CLASSES = [
+  'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300 dark:bg-fuchsia-950/50 dark:text-fuchsia-200 dark:border-fuchsia-900',
+  'bg-lime-100 text-lime-800 border-lime-300 dark:bg-lime-950/50 dark:text-lime-200 dark:border-lime-900',
+  'bg-teal-100 text-teal-800 border-teal-300 dark:bg-teal-950/50 dark:text-teal-200 dark:border-teal-900',
+];
+
+function tagClasses(tag: string): string {
+  const preset = TAG_PRESETS.find((p) => p.label.toLowerCase() === tag.toLowerCase());
+  if (preset) return preset.classes;
+  let h = 0;
+  for (let i = 0; i < tag.length; i++) h = (h * 31 + tag.charCodeAt(i)) >>> 0;
+  return CUSTOM_TAG_CLASSES[h % CUSTOM_TAG_CLASSES.length]!;
+}
 
 const LANES: Array<{
   key: LaneKey;
@@ -93,6 +127,21 @@ export function EmailAgentKanban({
   const [filter, setFilter] = useState<
     'all' | 'with_replies' | 'awaiting_reply' | 'active_24h' | 'active_7d'
   >('all');
+  // Tag filter — multi-select, OR semantics (a card matches if it
+  // has at least one of the selected tags). Empty set = no tag
+  // filter applied.
+  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
+
+  // Every tag that currently appears anywhere on the board — used to
+  // render the filter chips so custom tags show up alongside presets.
+  const allTagsOnBoard = (() => {
+    const s = new Set<string>();
+    for (const lane of LANES) {
+      const rows = (data?.lanes[lane.key] ?? []) as BoardRow[];
+      for (const r of rows) for (const t of r.tags ?? []) s.add(t);
+    }
+    return Array.from(s);
+  })();
 
   const matches = (r: BoardRow): boolean => {
     const q = search.trim().toLowerCase();
@@ -116,6 +165,17 @@ export function EmailAgentKanban({
         r.lastInboundAt ? new Date(r.lastInboundAt).getTime() : 0,
       );
       if (last < cutoff) return false;
+    }
+    if (tagFilter.size > 0) {
+      const rowTagsLower = (r.tags ?? []).map((t) => t.toLowerCase());
+      let hit = false;
+      for (const t of tagFilter) {
+        if (rowTagsLower.includes(t.toLowerCase())) {
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) return false;
     }
     return true;
   };
@@ -193,6 +253,57 @@ export function EmailAgentKanban({
           ))}
         </div>
       </div>
+
+      {/* Tag filter row — presets first, then any custom tags that
+          exist on the board. Click toggles multi-select. */}
+      {(TAG_PRESETS.length > 0 || allTagsOnBoard.length > 0) && (
+        <div className="mb-4 flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="mr-1 inline-flex items-center gap-1 text-muted-foreground">
+            <TagIcon className="size-3" /> Tags:
+          </span>
+          {(() => {
+            const presetLabels = TAG_PRESETS.map((p) => p.label);
+            const extras = allTagsOnBoard.filter(
+              (t) => !presetLabels.some((p) => p.toLowerCase() === t.toLowerCase()),
+            );
+            return [...presetLabels, ...extras].map((label) => {
+              const active = Array.from(tagFilter).some(
+                (t) => t.toLowerCase() === label.toLowerCase(),
+              );
+              return (
+                <button
+                  key={label}
+                  onClick={() =>
+                    setTagFilter((prev) => {
+                      const next = new Set(prev);
+                      if (active) {
+                        for (const t of prev)
+                          if (t.toLowerCase() === label.toLowerCase()) next.delete(t);
+                      } else {
+                        next.add(label);
+                      }
+                      return next;
+                    })
+                  }
+                  className={`rounded-full border px-2 py-0.5 transition ${tagClasses(label)} ${
+                    active ? 'ring-2 ring-offset-1 ring-primary/60' : 'opacity-70 hover:opacity-100'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            });
+          })()}
+          {tagFilter.size > 0 && (
+            <button
+              onClick={() => setTagFilter(new Set())}
+              className="ml-1 rounded-full border border-transparent px-2 py-0.5 text-muted-foreground hover:bg-muted"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {LANES.map((lane) => {
@@ -439,6 +550,7 @@ interface BoardRow {
   lastInboundAt: Date | string | null;
   cooldownUntil?: Date | string | null;
   suggestedReplyHint: string | null;
+  tags?: string[];
   contact: {
     id: string;
     email: string | null;
@@ -521,6 +633,18 @@ function Card({
             {last.bodyText.slice(0, 120)}
           </p>
         )}
+        {(row.tags?.length ?? 0) > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {row.tags!.map((t) => (
+              <span
+                key={t}
+                className={`rounded-full border px-1.5 py-0 text-[9px] font-medium ${tagClasses(t)}`}
+              >
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
         {row.suggestedReplyHint && laneKey === 'REVIEW_RESPONSE' && (
           <p className="mt-2 rounded bg-amber-100 px-2 py-1 text-[10px] text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
             <Sparkles className="mr-1 inline size-2.5" />
@@ -598,6 +722,13 @@ function ThreadDialog({
       toast.success('Enrollment deleted. You can now re-enrol the same email.');
       void utils.emailAgent.board.invalidate();
       onClose();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const setTagsM = api.emailAgent.setTags.useMutation({
+    onSuccess: () => {
+      void utils.emailAgent.board.invalidate();
+      void utils.emailAgent.thread.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -709,6 +840,18 @@ function ThreadDialog({
                     </button>
                   </div>
                 )}
+            </div>
+
+            {/* Tag editor — presets + free-form. Persists across
+                lane transitions; multiple tags per card. */}
+            <div className="mb-4">
+              <TagEditor
+                current={(data as { tags?: string[] }).tags ?? []}
+                pending={setTagsM.isPending}
+                onChange={(tags) =>
+                  setTagsM.mutate({ enrollmentId: enrollmentId!, tags })
+                }
+              />
             </div>
 
             {/* Outlook-style thread */}
@@ -828,6 +971,117 @@ function ThreadDialog({
 }
 
 // ---------------------------------------------------------------------
+
+/**
+ * Tag chooser used inside the thread drawer. Renders current tags as
+ * removable chips, then the preset palette (click to add), then a
+ * small text input for custom tags. Every change is a replace-all
+ * mutation — keeps the wire simple.
+ */
+function TagEditor({
+  current,
+  pending,
+  onChange,
+}: {
+  current: string[];
+  pending: boolean;
+  onChange: (tags: string[]) => void;
+}): JSX.Element {
+  const [custom, setCustom] = useState('');
+  const eqIgnoreCase = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  const toggle = (tag: string) => {
+    if (current.some((t) => eqIgnoreCase(t, tag))) {
+      onChange(current.filter((t) => !eqIgnoreCase(t, tag)));
+    } else {
+      if (current.length >= 8) {
+        toast.error('Max 8 tags per conversation.');
+        return;
+      }
+      onChange([...current, tag]);
+    }
+  };
+  const addCustom = () => {
+    const v = custom.trim();
+    if (!v) return;
+    if (current.some((t) => eqIgnoreCase(t, v))) {
+      setCustom('');
+      return;
+    }
+    if (current.length >= 8) {
+      toast.error('Max 8 tags per conversation.');
+      return;
+    }
+    onChange([...current, v]);
+    setCustom('');
+  };
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold">
+        <TagIcon className="size-3.5" /> Tags
+        {pending && <span className="text-[10px] font-normal text-muted-foreground">saving…</span>}
+      </div>
+      {current.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1">
+          {current.map((t) => (
+            <span
+              key={t}
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${tagClasses(t)}`}
+            >
+              {t}
+              <button
+                onClick={() => onChange(current.filter((x) => x !== t))}
+                className="rounded-full opacity-70 hover:opacity-100"
+                title={`Remove "${t}"`}
+                aria-label={`Remove ${t}`}
+              >
+                <X className="size-2.5" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1">
+        {TAG_PRESETS.map((p) => {
+          const active = current.some((t) => eqIgnoreCase(t, p.label));
+          return (
+            <button
+              key={p.label}
+              onClick={() => toggle(p.label)}
+              className={`rounded-full border px-2 py-0.5 text-[10px] transition ${p.classes} ${
+                active ? 'ring-2 ring-primary/60' : 'opacity-70 hover:opacity-100'
+              }`}
+            >
+              {active ? '✓ ' : '+ '}
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex gap-1">
+        <input
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addCustom();
+            }
+          }}
+          placeholder="Add custom tag…"
+          className="flex-1 rounded-md border bg-background px-2 py-1 text-xs"
+          maxLength={40}
+        />
+        <button
+          onClick={addCustom}
+          disabled={!custom.trim()}
+          className="rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-40"
+        >
+          <Plus className="size-3" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Small icon-only button for drawer toolbar actions (mark inactive,
