@@ -397,6 +397,7 @@ async function processBatch(input: BatchInput): Promise<BatchResult> {
                 id: true,
                 email: true,
                 phone: true,
+                whatsappStatus: true,
                 customFields: true,
               },
             })
@@ -539,7 +540,25 @@ async function processBatch(input: BatchInput): Promise<BatchResult> {
           try {
             const data: Prisma.ContactUpdateInput = {};
             if (u.ext.email) data.email = u.ext.email;
-            if (u.ext.phone) data.phone = u.ext.phone;
+            if (u.ext.phone) {
+              data.phone = u.ext.phone;
+              // Re-uploading the same list with a phone column now
+              // populated should flip whatsappStatus to the batch
+              // default — but only for contacts that just gained
+              // their first phone and only if their current status
+              // is still the neutral SUBSCRIBED default (never
+              // downgrade a UNSUBSCRIBED/BOUNCED/COMPLAINED row).
+              // If the operator explicitly set defaultWhatsappStatus
+              // to UNSUBSCRIBED for this import (e.g. a suppression
+              // load), honour that too.
+              if (
+                !u.existing.phone &&
+                (u.existing.whatsappStatus === 'SUBSCRIBED' ||
+                  u.existing.whatsappStatus === 'PENDING')
+              ) {
+                data.whatsappStatus = defaults.whatsappStatus as never;
+              }
+            }
             if (u.ext.firstName) data.firstName = u.ext.firstName;
             if (u.ext.lastName) data.lastName = u.ext.lastName;
             if (u.ext.language) data.language = u.ext.language;

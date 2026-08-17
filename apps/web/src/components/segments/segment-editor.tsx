@@ -204,7 +204,65 @@ export function SegmentEditor({
             <CardHeader>
               <CardTitle className="text-base">Rules</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
+              {/* Presets — one-click drop-ins for the segments we
+                  build over and over (WhatsApp reachable, email
+                  reachable). Replaces the whole rule tree so the
+                  intent is obvious; the operator can still edit
+                  after. */}
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="text-muted-foreground">Presets:</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setRules({
+                      kind: 'group',
+                      operator: 'AND',
+                      children: [
+                        {
+                          kind: 'condition',
+                          field: 'whatsapp_status',
+                          operator: 'equals',
+                          value: 'SUBSCRIBED',
+                        },
+                        {
+                          kind: 'condition',
+                          field: 'phone',
+                          operator: 'is_set',
+                        },
+                      ],
+                    })
+                  }
+                  className="rounded-full border border-emerald-500/40 bg-emerald-50/40 px-2.5 py-1 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-200"
+                >
+                  WhatsApp reachable
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setRules({
+                      kind: 'group',
+                      operator: 'AND',
+                      children: [
+                        {
+                          kind: 'condition',
+                          field: 'email_status',
+                          operator: 'equals',
+                          value: 'SUBSCRIBED',
+                        },
+                        {
+                          kind: 'condition',
+                          field: 'email',
+                          operator: 'is_set',
+                        },
+                      ],
+                    })
+                  }
+                  className="rounded-full border border-sky-500/40 bg-sky-50/40 px-2.5 py-1 text-sky-800 hover:bg-sky-100 dark:bg-sky-950/30 dark:text-sky-200"
+                >
+                  Email reachable
+                </button>
+              </div>
               {loadingCatalog ? (
                 <Skeleton className="h-32 w-full" />
               ) : (
