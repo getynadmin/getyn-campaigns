@@ -547,3 +547,50 @@ export async function enqueueAttachmentParse(
     jobId: validated.agentAttachmentId,
   });
 }
+
+// -----------------------------------------------------------------
+// WhatsApp Agent
+// -----------------------------------------------------------------
+
+import {
+  whatsappAgentEnrollPayloadSchema,
+  whatsappAgentProcessReplyPayloadSchema,
+  type WhatsappAgentEnrollPayload,
+  type WhatsappAgentProcessReplyPayload,
+} from '@getyn/types';
+
+let cachedWhatsappAgentQueue: Queue | null = null;
+function getWhatsappAgentQueue(): Queue {
+  if (cachedWhatsappAgentQueue) return cachedWhatsappAgentQueue;
+  cachedWhatsappAgentQueue = new Queue(QUEUE_NAMES.whatsappAgent, {
+    connection: getConnection(),
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5_000 },
+      removeOnComplete: { age: 60 * 60 * 24 * 3, count: 5000 },
+      removeOnFail: { age: 60 * 60 * 24 * 30 },
+    },
+  });
+  return cachedWhatsappAgentQueue;
+}
+
+export async function enqueueWhatsappAgentEnroll(
+  payload: WhatsappAgentEnrollPayload,
+): Promise<void> {
+  const validated = whatsappAgentEnrollPayloadSchema.parse(payload);
+  const queue = getWhatsappAgentQueue();
+  await queue.add(JOB_NAMES.whatsappAgent.enroll, validated, {
+    jobId: `wa-enroll_${validated.enrollmentId}`,
+    ...(validated.isTest ? { priority: 1 } : {}),
+  });
+}
+
+export async function enqueueWhatsappAgentProcessReply(
+  payload: WhatsappAgentProcessReplyPayload,
+): Promise<void> {
+  const validated = whatsappAgentProcessReplyPayloadSchema.parse(payload);
+  const queue = getWhatsappAgentQueue();
+  await queue.add(JOB_NAMES.whatsappAgent.processReply, validated, {
+    jobId: `wa-reply_${validated.waMessageId}`,
+  });
+}

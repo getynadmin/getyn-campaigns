@@ -532,6 +532,45 @@ export interface MetaMessageStatus {
   errors?: Array<{ code?: number; title?: string; message?: string }>;
 }
 
+// ------------------------------------------------------------------
+// POST /{phoneNumberId}/messages — send a free-form text message.
+// Only valid inside the 24h customer service window; outside of it
+// Meta requires a template message.
+// ------------------------------------------------------------------
+
+export interface SendTextBody {
+  to: string; // E.164, no leading + per Meta's spec
+  text: string;
+  previewUrl?: boolean;
+}
+
+export async function sendTextMessage(
+  phoneNumberId: string,
+  accessToken: string,
+  body: SendTextBody,
+  opts?: { fetchImpl?: typeof fetch; baseUrl?: string },
+): Promise<SendTemplateResponse> {
+  const toBare = body.to.replace(/^\+/, '');
+  return metaFetch<SendTemplateResponse>(
+    `/${encodeURIComponent(phoneNumberId)}/messages`,
+    {
+      accessToken,
+      method: 'POST',
+      body: {
+        messaging_product: 'whatsapp',
+        to: toBare,
+        type: 'text',
+        text: {
+          body: body.text,
+          preview_url: body.previewUrl ?? false,
+        },
+      },
+      fetchImpl: opts?.fetchImpl,
+      baseUrl: opts?.baseUrl,
+    },
+  );
+}
+
 export async function getMessageStatus(
   messageId: string,
   accessToken: string,

@@ -48,6 +48,8 @@ export const QUEUE_NAMES = {
   // (sharp, pdf-parse, xlsx) so a separate queue keeps it from
   // blocking agent-turn jobs / send fan-outs.
   attachmentParse: 'attachment-parse',
+  // WhatsApp Agent — mirror of Email Agent for WhatsApp channel.
+  whatsappAgent: 'whatsapp-agent',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -323,7 +325,39 @@ export const JOB_NAMES = {
   attachmentParse: {
     parse: 'parse-attachment',
   },
+  // WhatsApp Agent
+  whatsappAgent: {
+    enroll: 'whatsapp-agent-enroll',
+    followUpTick: 'whatsapp-agent-followup-tick',
+    processReply: 'whatsapp-agent-process-reply',
+    coolingWake: 'whatsapp-agent-cooling-wake',
+  },
 } as const;
+
+// -----------------------------------------------------------------
+// WhatsApp Agent payloads
+// -----------------------------------------------------------------
+
+export const whatsappAgentEnrollPayloadSchema = z.object({
+  enrollmentId: cuidSchema,
+  tenantId: cuidSchema,
+  isTest: z.boolean().optional(),
+});
+export type WhatsappAgentEnrollPayload = z.infer<typeof whatsappAgentEnrollPayloadSchema>;
+
+export const whatsappAgentFollowUpTickPayloadSchema = z.object({});
+export type WhatsappAgentFollowUpTickPayload = z.infer<typeof whatsappAgentFollowUpTickPayloadSchema>;
+
+export const whatsappAgentProcessReplyPayloadSchema = z.object({
+  enrollmentId: cuidSchema,
+  tenantId: cuidSchema,
+  waMessageId: cuidSchema,
+  bodyText: z.string(),
+});
+export type WhatsappAgentProcessReplyPayload = z.infer<typeof whatsappAgentProcessReplyPayloadSchema>;
+
+export const whatsappAgentCoolingWakePayloadSchema = z.object({});
+export type WhatsappAgentCoolingWakePayload = z.infer<typeof whatsappAgentCoolingWakePayloadSchema>;
 
 /**
  * Payload for the wa-phone-refresh queue (Phase 4 M4).
