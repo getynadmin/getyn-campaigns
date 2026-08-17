@@ -107,18 +107,42 @@ export async function handleWhatsAppAgentEnroll(
     enrollment.tenantId,
   );
 
+  // Count {{n}} placeholders in the BODY component so we can send
+  // the right number of bodyParams. Meta rejects the message
+  // otherwise with a param-count mismatch. Fill with sensible
+  // defaults (firstName → lastName → phone → "there"); operators
+  // can later override via a template-params UI.
+  const bodyParams = fillTemplateParams(template, {
+    firstName: enrollment.contact.firstName,
+    lastName: enrollment.contact.lastName,
+    phone: enrollment.contact.phone,
+  });
+
   let metaMessageId: string | null = null;
+  let sendError: string | null = null;
   try {
     const resp = await sendTemplateMessage(phone.phoneNumberId, accessToken, {
       to: enrollment.contact.phone,
       templateName: template.name,
       templateLanguage: template.language,
-      bodyParams: [],
+      bodyParams,
     });
     metaMessageId = resp.messages[0]?.id ?? null;
   } catch (err) {
+    sendError = err instanceof Error ? err.message : String(err);
     console.error('[wa-agent:enroll] send failed', err);
     Sentry.captureException(err, { tags: { handler: 'wa-agent-enroll' } });
+    // Persist a FAILED row so the operator sees the exact Meta
+    // error in the Kanban drawer instead of a silent "0 sent" card.
+    await prisma.whatsAppAgentMessage.create({
+      data: {
+        tenantId: enrollment.tenantId,
+        enrollmentId,
+        direction: EmailAgentMessageDirection.OUTBOUND,
+        status: EmailAgentMessageStatus.FAILED,
+        bodyText: `[send failed] ${sendError}\n\nTemplate: ${template.name} (${template.language})\nParams sent: ${JSON.stringify(bodyParams)}`,
+      },
+    });
     return;
   }
 
@@ -818,4 +842,36 @@ function renderTemplatePreview(template: {
   const body = comps.find((c) => c?.type === 'BODY' || c?.type === 'body');
   if (body?.text) return body.text;
   return `[template: ${template.name}]`;
+}
+
+/**
+ * Count `{{n}}` placeholders in the BODY component and return an
+ * array of the same length filled with sensible defaults from the
+ * contact. Meta rejects template sends when the parameter count
+ * doesn't match the template, so we must always send exactly N
+ * strings — never zero — when N placeholders exist.
+ *
+ * Fill order: firstName → lastName → phone → literal "there" as a
+ * last resort. This isn't personalization intelligence — it's a
+ * survival default so the send goes through. A dedicated
+ * per-template params UI is the proper long-term fix.
+ */
+function fillTemplateParams(
+  template: { components: unknown },
+  contact: { firstName: string | null; lastName: string | null; phone: string | null },
+): string[] {
+  const comps = (template.components as Array<{ type?: string; text?: string }>) ?? [];
+  const body = comps.find((c) => c?.type === 'BODY' || c?.type === 'body');
+  const text = body?.text ?? '';
+  const matches = text.match(/\{\{\d+\}\}/g) ?? [];
+  const fallbacks = [
+    contact.firstName || '',
+    contact.lastName || '',
+    contact.phone || '',
+  ].filter((s): s is string => s.length > 0);
+  const params: string[] = [];
+  for (let i = 0; i < matches.length; i++) {
+    params.push(fallbacks[i] ?? fallbacks[0] ?? 'there');
+  }
+  return params;
 }
