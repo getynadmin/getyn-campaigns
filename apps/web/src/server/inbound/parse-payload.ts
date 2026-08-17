@@ -73,13 +73,45 @@ export function parseInbound(
  */
 function parseResend(raw: Record<string, unknown>): ParseResult {
   const data = (raw['data'] ?? raw) as Record<string, unknown>;
-  const from = (data['from'] ?? {}) as Record<string, unknown>;
-  const to = data['to'];
-  const toAddress = Array.isArray(to) ? String(to[0] ?? '') : String(to ?? '');
-  if (!toAddress) return { ok: false, reason: 'missing to address' };
 
-  const fromAddress = String(from['email'] ?? data['from_email'] ?? '');
+  // Phase 9 — Resend's inbound delivery format is not what the beta
+  // docs suggested. Real payloads land with `from` as a raw
+  // "Name <addr@x>" string (or occasionally just "addr@x"), and `to`
+  // as a comma-separated string OR an array of strings/objects.
+  // Accept every shape.
+  const fromRaw = data['from'];
+  let fromAddress = '';
+  let fromName: string | null = null;
+  if (typeof fromRaw === 'string') {
+    const split = splitAddressLine(fromRaw);
+    fromAddress = split.email;
+    fromName = split.name;
+  } else if (fromRaw && typeof fromRaw === 'object') {
+    const f = fromRaw as Record<string, unknown>;
+    fromAddress = String(f['email'] ?? f['address'] ?? '');
+    fromName = (f['name'] as string) || null;
+  }
+  if (!fromAddress) fromAddress = String(data['from_email'] ?? '');
   if (!fromAddress) return { ok: false, reason: 'missing from address' };
+
+  const toRaw = data['to'];
+  const toCandidates = Array.isArray(toRaw)
+    ? (toRaw as unknown[]).map((t) => {
+        if (typeof t === 'string') return splitAddressLine(t).email || t;
+        if (t && typeof t === 'object') {
+          const o = t as Record<string, unknown>;
+          return String(o['email'] ?? o['address'] ?? '');
+        }
+        return '';
+      })
+    : typeof toRaw === 'string'
+      ? toRaw.split(',').map((s) => splitAddressLine(s.trim()).email || s.trim())
+      : [];
+  // Prefer the address that looks like our routing token so replies
+  // aren't misrouted when the customer CCs someone else.
+  const toAddress =
+    toCandidates.find((t) => /reply\+/i.test(t)) || toCandidates[0] || '';
+  if (!toAddress) return { ok: false, reason: 'missing to address' };
 
   const headers = (data['headers'] ?? {}) as Record<string, unknown>;
   const inReplyToRaw = headers['in-reply-to'] ?? headers['In-Reply-To'];
@@ -90,7 +122,7 @@ function parseResend(raw: Record<string, unknown>): ParseResult {
     parsed: {
       messageId: (data['email_id'] as string) ?? (data['id'] as string) ?? null,
       fromAddress: fromAddress.toLowerCase(),
-      fromName: (from['name'] as string) || null,
+      fromName,
       toAddress: toAddress.toLowerCase(),
       subject: (data['subject'] as string) ?? '',
       bodyHtml: (data['html'] as string) ?? '',
