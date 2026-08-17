@@ -262,6 +262,9 @@ model User {
   emailAgentsCreated    EmailAgent[]        @relation("EmailAgentsCreatedBy")
   emailAgentApprovals   EmailAgentMessage[] @relation("EmailAgentApprovals")
 
+  // WhatsApp Agent (mirror of Email Agent)
+  whatsAppAgentsCreated WhatsAppAgent[]     @relation("WhatsAppAgentsCreatedBy")
+
   // Phase 9 — checkout orders the user initiated
   checkoutOrders CheckoutOrder[]
 
@@ -350,6 +353,11 @@ model Tenant {
   emailAgentMessages     EmailAgentMessage[]
   inboundEmails          InboundEmail[]
 
+  // WhatsApp Agent (mirror of Email Agent)
+  whatsAppAgents            WhatsAppAgent[]
+  whatsAppAgentEnrollments  WhatsAppAgentEnrollment[]
+  whatsAppAgentMessages     WhatsAppAgentMessage[]
+
   // Phase 9 — checkout orders that provisioned this tenant
   checkoutOrders CheckoutOrder[]
 
@@ -436,6 +444,7 @@ model Contact {
   // Phase 8 — Automation + Email Agent
   automationEnrollments AutomationEnrollment[]
   emailAgentEnrollments EmailAgentEnrollment[]
+  whatsAppAgentEnrollments WhatsAppAgentEnrollment[]
   // Partial unique indexes on (tenantId, email) and (tenantId, phone) are
   // added via raw SQL in the migration because Prisma 5.22 cannot declare
   // partial indexes in the schema.
@@ -1026,6 +1035,7 @@ model WhatsAppPhoneNumber {
   whatsAppAccount WhatsAppAccount        @relation(fields: [whatsAppAccountId], references: [id], onDelete: Cascade)
   campaigns       WhatsAppCampaign[]
   conversations   WhatsAppConversation[]
+  agents          WhatsAppAgent[]
 
   @@unique([tenantId, phoneNumberId])
   @@index([whatsAppAccountId])
@@ -1064,6 +1074,7 @@ model WhatsAppTemplate {
   createdBy       User?              @relation("WhatsAppTemplatesCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   campaigns       WhatsAppCampaign[]
   messages        WhatsAppMessage[]
+  agentInitialFor WhatsAppAgent[]    @relation("WhatsAppAgentInitialTemplate")
 
   // Partial unique index (whatsAppAccountId, name, language) WHERE
   // deletedAt IS NULL — added in 0004 migration (Prisma can't express
@@ -2505,4 +2516,91 @@ model InboundEmail {
   @@index([matchedTo, processedAt])
   @@index([emailAgentEnrollmentId])
   @@index([automationEnrollmentId])
+}
+
+// ------------------------------------------------------------------
+// WhatsApp Agent — mirror of Email Agent for WhatsApp channel.
+// Reuses EmailAgent* enums (AutomationStatus, EnrollmentStatus,
+// EmailAgentConversationStatus, EmailAgentMessageDirection,
+// EmailAgentMessageStatus).
+// ------------------------------------------------------------------
+
+model WhatsAppAgent {
+  id                String           @id @default(cuid())
+  tenantId          String
+  name              String
+  status            AutomationStatus @default(DRAFT)
+  persona           String           @db.Text
+  goal              String           @db.Text
+  knowledgeUrls     String[]         @default([])
+  phoneNumberId     String
+  initialTemplateId String?
+  signature         String?          @db.Text
+  /// `{ followUpDays: number[], maxFollowUps: number }`
+  outboundSchedule  Json             @default("{\"followUpDays\": [3, 7, 14], \"maxFollowUps\": 3}")
+  stopKeywords      String           @default("stop,unsubscribe,do not message me,remove me")
+  coolingPeriodDays Int              @default(30)
+  createdByUserId   String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phoneNumber     WhatsAppPhoneNumber @relation(fields: [phoneNumberId], references: [id], onDelete: Restrict)
+  initialTemplate WhatsAppTemplate?   @relation("WhatsAppAgentInitialTemplate", fields: [initialTemplateId], references: [id], onDelete: SetNull)
+  createdBy       User?               @relation("WhatsAppAgentsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  enrollments     WhatsAppAgentEnrollment[]
+
+  @@index([tenantId, status])
+}
+
+model WhatsAppAgentEnrollment {
+  id                 String                       @id @default(cuid())
+  tenantId           String
+  whatsappAgentId    String
+  contactId          String
+  status             EnrollmentStatus             @default(ACTIVE)
+  conversationStatus EmailAgentConversationStatus @default(ACTIVE_CONVERSATION)
+  currentStep        Int                          @default(0)
+  enrolledAt         DateTime                     @default(now())
+  lastSentAt         DateTime?
+  lastInboundAt      DateTime?
+  nextActionAt       DateTime?
+  exitReason         String?
+  suggestedReplyHint String?                      @db.Text
+  cooldownUntil      DateTime?
+  tags               String[]                     @default([])
+  completedAt        DateTime?
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+
+  tenant        Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsappAgent WhatsAppAgent          @relation(fields: [whatsappAgentId], references: [id], onDelete: Cascade)
+  contact       Contact                @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages      WhatsAppAgentMessage[]
+
+  @@unique([whatsappAgentId, contactId])
+  @@index([tenantId, conversationStatus])
+  @@index([tenantId, nextActionAt])
+  @@index([whatsappAgentId, conversationStatus])
+  @@index([status, nextActionAt])
+}
+
+model WhatsAppAgentMessage {
+  id                    String                     @id @default(cuid())
+  tenantId              String
+  enrollmentId          String
+  direction             EmailAgentMessageDirection
+  status                EmailAgentMessageStatus    @default(SENT)
+  bodyText              String                     @db.Text
+  messageId             String?
+  sentAt                DateTime?
+  aiGenerationContext   Json?
+  aiGenerationCostCents Int?
+  createdAt             DateTime                   @default(now())
+
+  tenant     Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  enrollment WhatsAppAgentEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@index([enrollmentId, createdAt])
+  @@index([tenantId, status])
 }
