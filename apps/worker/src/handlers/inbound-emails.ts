@@ -395,8 +395,10 @@ async function routeAutomationReply(
  * webhook payload is metadata-only; the text/html body has to be
  * pulled separately via the email id.
  *
- * Endpoint (per Resend docs): GET /emails/received/:id
+ * Endpoint (per Resend docs — https://resend.com/docs/dashboard/receiving/get-email-content):
+ *   GET https://api.resend.com/emails/receiving/{email_id}
  * Auth: Bearer <RESEND_API_KEY>
+ * Response shape: { data: { html, text, headers } }
  */
 async function fetchInboundBodyFromResend(
   emailId: string,
@@ -407,22 +409,24 @@ async function fetchInboundBodyFromResend(
     return null;
   }
   const res = await fetch(
-    `https://api.resend.com/emails/received/${encodeURIComponent(emailId)}`,
+    `https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`,
     { headers: { authorization: `Bearer ${key}` } },
   );
   if (!res.ok) {
+    const body = await res.text().catch(() => '');
     console.warn(
-      `[inbound-email] Resend body fetch ${emailId} → ${res.status}`,
+      `[inbound-email] Resend receiving fetch ${emailId} → ${res.status}: ${body.slice(0, 200)}`,
     );
     return null;
   }
-  const body = (await res.json()) as {
+  const parsed = (await res.json()) as {
+    data?: { text?: string; html?: string };
     text?: string;
     html?: string;
-    data?: { text?: string; html?: string };
   };
-  return {
-    text: body.text ?? body.data?.text,
-    html: body.html ?? body.data?.html,
-  };
+  const data = parsed.data ?? parsed;
+  console.info(
+    `[inbound-email] Resend receiving fetch OK ${emailId} — ${data.text?.length ?? 0} txt / ${data.html?.length ?? 0} html`,
+  );
+  return { text: data.text, html: data.html };
 }
