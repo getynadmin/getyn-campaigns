@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { MessageSquare, Plus } from 'lucide-react';
+import { MessageSquare, Plus, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,11 +20,18 @@ export function WhatsappAgentsListClient({ slug }: { slug: string }): JSX.Elemen
             then follows up + drafts replies inside the 24h session window.
           </p>
         </div>
-        <Button asChild size="sm">
-          <Link href={`/t/${slug}/automation/whatsapp-agents/new`}>
-            <Plus className="mr-1 size-4" /> Create agent
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button asChild size="sm" variant="outline">
+            <Link href={`/t/${slug}/automation/whatsapp-agents/new?template=skillcertified`}>
+              <Sparkles className="mr-1 size-4" /> Use SkillCertified template
+            </Link>
+          </Button>
+          <Button asChild size="sm">
+            <Link href={`/t/${slug}/automation/whatsapp-agents/new`}>
+              <Plus className="mr-1 size-4" /> Create agent
+            </Link>
+          </Button>
+        </div>
       </header>
 
       {isLoading ? (
@@ -71,11 +78,18 @@ function EmptyState({ slug }: { slug: string }): JSX.Element {
       <p className="mt-1 text-sm text-muted-foreground">
         Pick an approved template, a persona, and a segment to enroll from — the agent handles the rest.
       </p>
-      <Button asChild className="mt-4">
-        <Link href={`/t/${slug}/automation/whatsapp-agents/new`}>
-          <Plus className="mr-1 size-4" /> Create your first agent
-        </Link>
-      </Button>
+      <div className="mt-4 flex items-center justify-center gap-2">
+        <Button asChild variant="outline">
+          <Link href={`/t/${slug}/automation/whatsapp-agents/new?template=skillcertified`}>
+            <Sparkles className="mr-1 size-4" /> Use SkillCertified template
+          </Link>
+        </Button>
+        <Button asChild>
+          <Link href={`/t/${slug}/automation/whatsapp-agents/new`}>
+            <Plus className="mr-1 size-4" /> Create your first agent
+          </Link>
+        </Button>
+      </div>
     </div>
   );
 }

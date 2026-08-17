@@ -42,6 +42,34 @@ interface FormState {
   coolingPeriodDays: number;
 }
 
+// Prefill templates for /automation/whatsapp-agents/new?template=<slug>.
+// SkillCertified — old-customer re-engagement over WhatsApp. Persona
+// + goal + signature + schedule + stop keywords match the Email Agent
+// SkillCertified template so the operator gets a consistent brand
+// voice across channels. Approved WA template picking still lives in
+// the Sender step — Meta requires an approved template for the
+// initial outbound, so we can't prefill that.
+const TEMPLATES: Record<string, Partial<FormState>> = {
+  skillcertified: {
+    name: 'SkillCertified — WhatsApp Concierge',
+    persona:
+      'You are a warm, professional SkillCertified concierge on WhatsApp. Keep messages short — WhatsApp reads more like SMS than email. Be helpful, never pushy, and never marketing-y.',
+    goal:
+      'Re-engage past SkillCertified inquiries who never confirmed a course. We do not know which specific course each contact previously asked about, so the opening (via the approved template) is a warm check-in that spans our top tracks — Microsoft, SAP, VMware, Cisco, Cybersecurity, Cloud, AI, Business & Finance — and surfaces 2026 in-demand certifications. Goal: reopen the conversation and learn what they need this year.',
+    signature: '— The SkillCertified Team',
+    knowledgeUrls: [
+      'https://www.skillcertified.com',
+      'https://www.skillcertified.com/batches',
+      'https://www.skillcertified.com/course/catalog',
+    ],
+    followUpDays: [4, 8, 12, 16, 20, 24, 28, 32, 36, 40],
+    maxFollowUps: 10,
+    stopKeywords:
+      'stop,unsubscribe,do not message me,remove me,not interested,leave me alone',
+    coolingPeriodDays: 45,
+  },
+};
+
 const EMPTY: FormState = {
   name: '',
   persona: '',
@@ -66,7 +94,14 @@ export function WhatsappAgentWizard({
   const utils = api.useUtils();
   const isEdit = agentId !== null;
   const [step, setStep] = useState<StepKey>('goal');
-  const [state, setState] = useState<FormState>(EMPTY);
+  const [state, setState] = useState<FormState>(() => {
+    // Prefill from ?template=<slug> so operators don't hand-copy the
+    // SkillCertified boilerplate every time.
+    if (typeof window === 'undefined') return EMPTY;
+    const t = new URLSearchParams(window.location.search).get('template');
+    const tpl = t ? TEMPLATES[t] : null;
+    return tpl ? { ...EMPTY, ...tpl } : EMPTY;
+  });
 
   const agentQuery = api.whatsappAgent.get.useQuery({ id: agentId ?? '' }, { enabled: isEdit });
   const phoneOptions = api.whatsappAgent.phoneOptions.useQuery();
@@ -148,7 +183,7 @@ export function WhatsappAgentWizard({
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-6">
+    <div className="mx-auto max-w-5xl space-y-6 p-6">
       <header className="flex items-start justify-between gap-3">
         <div>
           <Button asChild variant="ghost" size="sm" className="-ml-2">
@@ -180,16 +215,42 @@ export function WhatsappAgentWizard({
         )}
       </header>
 
-      <ol className="grid grid-cols-5 gap-1 rounded-md border bg-card p-1">
-        {STEPS.map((s, i) => (
-          <li key={s.key}>
-            <button onClick={() => setStep(s.key)}
-              className={cn('w-full rounded px-2 py-1.5 text-center text-xs font-medium transition-colors',
-                s.key === step ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>
-              <span className="mr-1 opacity-60">{i + 1}.</span> {s.label}
-            </button>
-          </li>
-        ))}
+      {/* Step strip — five equal columns on md+, stacks on mobile.
+          Active step gets the brand yellow chip with a subtle ring so
+          it reads as the current step without collapsing into a solid
+          block of colour; labels wrap on narrower widths instead of
+          truncating. */}
+      <ol className="grid grid-cols-2 gap-1.5 rounded-lg border bg-card p-1.5 sm:grid-cols-3 md:grid-cols-5">
+        {STEPS.map((s, i) => {
+          const active = s.key === step;
+          return (
+            <li key={s.key}>
+              <button
+                type="button"
+                onClick={() => setStep(s.key)}
+                className={cn(
+                  'flex w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-2 text-xs font-medium transition-colors',
+                  active
+                    ? 'bg-amber-300 text-amber-950 shadow-sm ring-1 ring-amber-400/70 dark:bg-amber-400/90 dark:text-amber-950'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                )}
+                aria-current={active ? 'step' : undefined}
+              >
+                <span
+                  className={cn(
+                    'inline-flex size-4 items-center justify-center rounded-full text-[10px] font-semibold',
+                    active
+                      ? 'bg-amber-950/15 text-amber-950'
+                      : 'bg-muted-foreground/15 text-muted-foreground',
+                  )}
+                >
+                  {i + 1}
+                </span>
+                <span>{s.label}</span>
+              </button>
+            </li>
+          );
+        })}
       </ol>
 
       <div className="rounded-lg border bg-card p-5">
