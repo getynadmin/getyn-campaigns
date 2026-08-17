@@ -123,6 +123,11 @@ function buildSections(slug: string): SidebarSection[] {
           icon: Bot,
         },
         {
+          href: t('/automation/whatsapp-agents'),
+          label: 'WhatsApp Agent',
+          icon: MessageSquare,
+        },
+        {
           href: t('/automation/agents/inbox'),
           label: 'Approval Inbox',
           icon: Bot,
