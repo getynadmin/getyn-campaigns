@@ -770,18 +770,16 @@ async function callDrafter(
   const stableSystem = buildStableSystem(ctx);
   const userMessage = buildDynamicUser(ctx, { task: args.task, history: args.history });
   const routing = pickDraftModel(args.kind);
-  try {
-    const res = await client.messages.create({
+  // Try the caching-enabled path first (system as an array with
+  // cache_control on the stable block). If the SDK/API rejects that
+  // shape for any reason — usually an older @anthropic-ai/sdk that
+  // predates GA prompt caching — fall back to the plain-string form
+  // so the drafter still returns a message. Losing the cache saving
+  // is preferable to silently dropping every outbound email.
+  const callWithCache = () =>
+    client.messages.create({
       model: routing.model,
       max_tokens: MAX_TOKENS_DRAFT,
-      // System as an array so we can attach cache_control per block.
-      // Ephemeral cache = 5 min TTL by default; hits at 10% of input
-      // price. The stable block is identical across every enrollment
-      // on the same EmailAgent, so a batched follow-up tick that
-      // processes N cards for the same agent gets N-1 cache hits.
-      // Cast because older SDK types don't include cache_control on
-      // TextBlockParam; the API accepts it regardless. Safe to drop
-      // the cast once we bump @anthropic-ai/sdk.
       system: [
         {
           type: 'text',
@@ -791,6 +789,27 @@ async function callDrafter(
       ] as never,
       messages: [{ role: 'user', content: userMessage }],
     });
+  const callPlain = () =>
+    client.messages.create({
+      model: routing.model,
+      max_tokens: MAX_TOKENS_DRAFT,
+      system: stableSystem,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+
+  try {
+    let res: Awaited<ReturnType<typeof callWithCache>>;
+    try {
+      res = await callWithCache();
+    } catch (cacheErr) {
+      // Log once so we notice if this always falls back — otherwise
+      // the caching optimization would be silently disabled.
+      console.warn(
+        '[email-agent] cache_control path rejected, falling back to plain system prompt',
+        cacheErr instanceof Error ? cacheErr.message : cacheErr,
+      );
+      res = await callPlain();
+    }
     const text = (res.content as { type: string; text?: string }[])
       .filter((c) => c.type === 'text')
       .map((c) => c.text ?? '')
