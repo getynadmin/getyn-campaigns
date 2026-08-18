@@ -590,11 +590,10 @@ async function draftInitial(
   client: Anthropic,
   ctx: EnrollmentContext,
 ): Promise<Draft | null> {
-  const prompt = buildPrompt(ctx, {
+  return callDrafter(client, ctx, {
     kind: 'initial',
     task: 'Write the first outreach email to this contact based on the agent goal + knowledge below. Keep it under 150 words, personalized to what we know about them, direct, and end with a single specific ask.',
   });
-  return callSonnet(client, prompt, 'initial');
 }
 
 async function draftFollowUp(
@@ -602,12 +601,11 @@ async function draftFollowUp(
   ctx: EnrollmentContext,
   args: { stepNumber: number; history: ThreadMessage[] },
 ): Promise<Draft | null> {
-  const prompt = buildPrompt(ctx, {
+  return callDrafter(client, ctx, {
     kind: 'followup',
     task: `Write follow-up #${args.stepNumber}. Reference the previous ${args.history.length} message(s) in the thread. Keep it short, add new value (not just a bump), and change the ask if the earlier one didn't land.`,
     history: args.history,
   });
-  return callSonnet(client, prompt, 'followup');
 }
 
 async function draftReply(
@@ -619,7 +617,7 @@ async function draftReply(
     history: ThreadMessage[];
   },
 ): Promise<Draft | null> {
-  const prompt = buildPrompt(ctx, {
+  return callDrafter(client, ctx, {
     kind: 'reply',
     task: `The contact replied. Draft a response that engages with what they actually said. Use the knowledge sources when they asked about product/pricing/etc. Keep it conversational and match their length.`,
     history: [
@@ -627,7 +625,6 @@ async function draftReply(
       { direction: 'INBOUND', subject: args.inboundSubject, body: args.inboundBody },
     ],
   });
-  return callSonnet(client, prompt, 'reply');
 }
 
 interface ThreadMessage {
@@ -654,18 +651,51 @@ async function loadThreadHistory(enrollmentId: string): Promise<ThreadMessage[]>
   }));
 }
 
-function buildPrompt(
-  ctx: EnrollmentContext,
-  args: {
-    kind: 'initial' | 'followup' | 'reply';
-    task: string;
-    history?: ThreadMessage[];
-  },
-): string {
+/**
+ * Split the drafting prompt into three parts so Anthropic prompt
+ * caching can amortise the stable prefix across every follow-up on
+ * the same agent (Phase 9 cost optimisation):
+ *
+ *   1. `buildStableSystem` — persona/goal/tone/operator-instructions
+ *      /knowledge. Identical for every enrollment on the same
+ *      EmailAgent, so we mark it `cache_control: ephemeral` and pay
+ *      10% of input price after the first hit within the cache TTL.
+ *   2. `buildDynamicUser` — per-enrollment (contact, thread, task,
+ *      one-shot operator hint). Not cached.
+ *   3. `buildTailInstructions` — fixed JSON-output contract. Kept
+ *      inside the user message so cache invalidation stays scoped
+ *      to the stable block above.
+ *
+ * For a 10-touch enrollment the persona/knowledge block gets sent
+ * once at full price and hit 9 more times at the 10% cache rate —
+ * roughly a 60–70% input-token cost reduction on drafts alone.
+ */
+function buildStableSystem(ctx: EnrollmentContext): string {
   const knowledge = ctx.emailAgent.knowledgeSources
     .filter((s) => s.summary && !s.summary.startsWith('(URL — extracting'))
     .map((s, i) => `[${i + 1}] ${s.rawTitle}${s.sourceUrl ? ` (${s.sourceUrl})` : ''}\n${s.summary}`)
     .join('\n\n');
+  return [
+    `You are an outbound email agent for ${ctx.tenant.companyDisplayName ?? ctx.tenant.name}.`,
+    `Tone: ${ctx.emailAgent.tone.toLowerCase()}.`,
+    ``,
+    `AGENT GOAL:\n${ctx.emailAgent.goal}`,
+    ``,
+    `INSTRUCTIONS FROM OPERATOR:\n${ctx.emailAgent.systemInstructions || '(none)'}`,
+    ``,
+    knowledge ? `KNOWLEDGE BASE (use as needed):\n${knowledge}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildDynamicUser(
+  ctx: EnrollmentContext,
+  args: {
+    task: string;
+    history?: ThreadMessage[];
+  },
+): string {
   const contactBits = [
     ctx.contact.firstName && `First name: ${ctx.contact.firstName}`,
     ctx.contact.lastName && `Last name: ${ctx.contact.lastName}`,
@@ -680,21 +710,12 @@ function buildPrompt(
     .map((m) => `[${m.direction}] ${m.subject}\n${m.body}`)
     .join('\n\n---\n\n');
   return [
-    `You are an outbound email agent for ${ctx.tenant.companyDisplayName ?? ctx.tenant.name}.`,
-    `Tone: ${ctx.emailAgent.tone.toLowerCase()}.`,
-    ``,
-    `AGENT GOAL:\n${ctx.emailAgent.goal}`,
-    ``,
-    `INSTRUCTIONS FROM OPERATOR:\n${ctx.emailAgent.systemInstructions || '(none)'}`,
-    ``,
     // Phase 9 — one-shot hint the operator submitted from the Kanban
     // "Review Response" drawer. High priority: the model should weave
     // it in without contradicting the goal/instructions.
     ctx.suggestedReplyHint
       ? `URGENT REPLY HINT FROM OPERATOR — include this in the next email:\n"${ctx.suggestedReplyHint}"`
       : '',
-    ``,
-    knowledge ? `KNOWLEDGE BASE (use as needed):\n${knowledge}` : '',
     ``,
     `CONTACT:\n${contactBits || '(no profile data)'}`,
     ``,
@@ -708,41 +729,104 @@ function buildPrompt(
     .join('\n');
 }
 
-async function callSonnet(
+/**
+ * Tier-by-touch model routing. Sonnet 4.6 for the two touches that
+ * matter most (first outbound + replies to a real human), Haiku 4.5
+ * for follow-up nudges — same output-token budget, ~5x cheaper on
+ * input, ~3x cheaper on output. Combined with prompt caching this
+ * takes typical enrollment spend from ~$0.20 to ~$0.04.
+ */
+function pickDraftModel(kind: 'initial' | 'followup' | 'reply'): {
+  model: string;
+  inputPricePerMTok: number;
+  cacheReadPricePerMTok: number;
+  outputPricePerMTok: number;
+} {
+  if (kind === 'followup') {
+    return {
+      model: CLASSIFIER_MODEL, // Haiku 4.5
+      inputPricePerMTok: 1.0,
+      cacheReadPricePerMTok: 0.1,
+      outputPricePerMTok: 5.0,
+    };
+  }
+  return {
+    model: DRAFTING_MODEL, // Sonnet 4.6
+    inputPricePerMTok: 3.0,
+    cacheReadPricePerMTok: 0.3,
+    outputPricePerMTok: 15.0,
+  };
+}
+
+async function callDrafter(
   client: Anthropic,
-  prompt: string,
-  kind: 'initial' | 'followup' | 'reply',
+  ctx: EnrollmentContext,
+  args: {
+    kind: 'initial' | 'followup' | 'reply';
+    task: string;
+    history?: ThreadMessage[];
+  },
 ): Promise<Draft | null> {
+  const stableSystem = buildStableSystem(ctx);
+  const userMessage = buildDynamicUser(ctx, { task: args.task, history: args.history });
+  const routing = pickDraftModel(args.kind);
   try {
     const res = await client.messages.create({
-      model: DRAFTING_MODEL,
+      model: routing.model,
       max_tokens: MAX_TOKENS_DRAFT,
-      messages: [{ role: 'user', content: prompt }],
+      // System as an array so we can attach cache_control per block.
+      // Ephemeral cache = 5 min TTL by default; hits at 10% of input
+      // price. The stable block is identical across every enrollment
+      // on the same EmailAgent, so a batched follow-up tick that
+      // processes N cards for the same agent gets N-1 cache hits.
+      // Cast because older SDK types don't include cache_control on
+      // TextBlockParam; the API accepts it regardless. Safe to drop
+      // the cast once we bump @anthropic-ai/sdk.
+      system: [
+        {
+          type: 'text',
+          text: stableSystem,
+          cache_control: { type: 'ephemeral' },
+        },
+      ] as never,
+      messages: [{ role: 'user', content: userMessage }],
     });
     const text = (res.content as { type: string; text?: string }[])
-      .filter((c) => c.type === "text")
-      .map((c) => c.text ?? "")
+      .filter((c) => c.type === 'text')
+      .map((c) => c.text ?? '')
       .join('');
     const parsed = extractJson(text);
     if (!parsed || typeof parsed.subject !== 'string' || typeof parsed.body !== 'string') {
-      Sentry.captureMessage('[email-agent] Sonnet output not parseable', {
+      Sentry.captureMessage('[email-agent] draft output not parseable', {
         level: 'warning',
-        extra: { text: text.slice(0, 500) },
+        extra: { text: text.slice(0, 500), model: routing.model, kind: args.kind },
       });
       return null;
     }
-    const usage = res.usage;
+    // Anthropic reports cache reads + writes separately in usage.
+    // Full-price input tokens = input_tokens - cache_read_input_tokens
+    // - cache_creation_input_tokens. Cache writes are billed at 1.25x
+    // input; reads at 0.1x input. Approximate here with two lines.
+    const u = res.usage as {
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    };
+    const cacheReads = u.cache_read_input_tokens ?? 0;
+    const cacheWrites = u.cache_creation_input_tokens ?? 0;
+    const freshInput = Math.max(0, u.input_tokens - cacheReads - cacheWrites);
     const costCents = Math.round(
-      ((usage.input_tokens / 1_000_000) * 3.0 +
-        (usage.output_tokens / 1_000_000) * 15.0) *
+      ((freshInput / 1_000_000) * routing.inputPricePerMTok +
+        (cacheWrites / 1_000_000) * routing.inputPricePerMTok * 1.25 +
+        (cacheReads / 1_000_000) * routing.cacheReadPricePerMTok +
+        (u.output_tokens / 1_000_000) * routing.outputPricePerMTok) *
         100,
     );
-    // Hard per-call cap: $0.30 per draft. If a single Sonnet call
-    // somehow exceeds this, log loudly — indicates a runaway prompt.
     if (costCents > 30) {
       Sentry.captureMessage('[email-agent] draft exceeded $0.30 cap', {
         level: 'warning',
-        extra: { costCents, kind, tokens: usage },
+        extra: { costCents, kind: args.kind, model: routing.model, tokens: u },
       });
     }
     const subject = parsed.subject.trim();
@@ -753,15 +837,17 @@ async function callSonnet(
       bodyHtml: textToHtml(bodyText),
       costCents,
       context: {
-        prompt,
-        knowledgeSourceCount: 0, // set by callsite when useful
-        model: DRAFTING_MODEL,
-        kind,
+        prompt: userMessage, // stable system omitted from context row; it's on the agent
+        knowledgeSourceCount: 0,
+        model: routing.model,
+        kind: args.kind,
       },
     };
   } catch (err) {
-    console.error('[email-agent] Sonnet call failed', err);
-    Sentry.captureException(err, { tags: { handler: 'email-agent-draft' } });
+    console.error('[email-agent] draft call failed', err);
+    Sentry.captureException(err, {
+      tags: { handler: 'email-agent-draft', model: routing.model, kind: args.kind },
+    });
     return null;
   }
 }
