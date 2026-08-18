@@ -984,6 +984,78 @@ export const emailAgentRouter = createTRPCRouter({
       return { ok: true as const };
     }),
 
+  // Count of enrollments whose initial-send job silently failed —
+  // currentStep=0, lastSentAt=null, nextActionAt=null, status=ACTIVE,
+  // and older than the grace window. The tick sweeper picks these
+  // up on its own cadence, but exposing the count + a manual
+  // "re-enqueue now" button lets an operator kick a big backlog
+  // through immediately after fixing a root cause (credit outage,
+  // SDK bug, etc.) rather than waiting for the sweep.
+  orphanCount: tenantProcedure
+    .input(idSchema)
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const count = await prisma.emailAgentEnrollment.count({
+        where: {
+          tenantId,
+          emailAgentId: input.id,
+          status: EnrollmentStatus.ACTIVE,
+          currentStep: 0,
+          lastSentAt: null,
+          nextActionAt: null,
+        },
+      });
+      return { count };
+    }),
+
+  reEnqueueOrphans: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(
+      z.object({
+        id: z.string().min(1),
+        // Cap per call so a 20k backlog doesn't tie up one request
+        // for minutes. The button in the UI can be clicked again to
+        // continue until orphanCount hits 0.
+        maxBatch: z.number().int().min(1).max(5000).default(1000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const orphans = await prisma.emailAgentEnrollment.findMany({
+        where: {
+          tenantId,
+          emailAgentId: input.id,
+          status: EnrollmentStatus.ACTIVE,
+          currentStep: 0,
+          lastSentAt: null,
+          nextActionAt: null,
+        },
+        select: { id: true },
+        take: input.maxBatch,
+        orderBy: { enrolledAt: 'asc' },
+      });
+      let enqueued = 0;
+      for (const r of orphans) {
+        try {
+          await enqueueEmailAgentEnroll({ enrollmentId: r.id, tenantId });
+          enqueued += 1;
+        } catch (err) {
+          console.error('[emailAgent.reEnqueueOrphans] enqueue failed', err);
+        }
+      }
+      const remaining = await prisma.emailAgentEnrollment.count({
+        where: {
+          tenantId,
+          emailAgentId: input.id,
+          status: EnrollmentStatus.ACTIVE,
+          currentStep: 0,
+          lastSentAt: null,
+          nextActionAt: null,
+        },
+      });
+      return { enqueued, remaining };
+    }),
+
   setTags: tenantProcedure
     .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
     .input(

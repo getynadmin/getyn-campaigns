@@ -157,15 +157,54 @@ export async function handleEmailAgentFollowupTick(): Promise<void> {
     orderBy: [{ nextActionAt: 'asc' }, { id: 'asc' }],
     take: FOLLOWUP_BATCH_SIZE,
   });
-  if (due.length === 0) return;
-  console.info(`[email-agent:followup] processing ${due.length} follow-ups`);
-  for (const row of due) {
+  if (due.length > 0) {
+    console.info(`[email-agent:followup] processing ${due.length} follow-ups`);
+    for (const row of due) {
+      try {
+        await processFollowUp(row.id);
+      } catch (err) {
+        console.error(`[email-agent:followup] ${row.id} failed`, err);
+        Sentry.captureException(err, {
+          tags: { handler: 'email-agent-followup' },
+          extra: { enrollmentId: row.id },
+        });
+      }
+    }
+  }
+
+  // Orphan sweeper — enrollments whose initial-send job silently
+  // failed (Anthropic outage, transient SDK rejection, worker crash
+  // mid-draft). They sit at currentStep=0, lastSentAt=null,
+  // nextActionAt=null forever because the follow-up filter only
+  // matches nextActionAt<=now. Ten-minute grace so we don't race
+  // an enroll job currently in flight from the same tick.
+  const ORPHAN_GRACE_MS = 10 * 60 * 1000;
+  const orphans = await prisma.emailAgentEnrollment.findMany({
+    where: {
+      status: EnrollmentStatus.ACTIVE,
+      currentStep: 0,
+      lastSentAt: null,
+      nextActionAt: null,
+      enrolledAt: { lt: new Date(now.getTime() - ORPHAN_GRACE_MS) },
+      emailAgent: { status: 'ACTIVE' },
+    },
+    select: { id: true, tenantId: true },
+    orderBy: [{ enrolledAt: 'asc' }],
+    take: FOLLOWUP_BATCH_SIZE,
+  });
+  if (orphans.length === 0) return;
+  console.info(`[email-agent:followup] re-enqueueing ${orphans.length} orphaned initials`);
+  const { enqueueEmailAgentEnrollFromWorker } = await import('../index');
+  for (const row of orphans) {
     try {
-      await processFollowUp(row.id);
+      await enqueueEmailAgentEnrollFromWorker({
+        enrollmentId: row.id,
+        tenantId: row.tenantId,
+      });
     } catch (err) {
-      console.error(`[email-agent:followup] ${row.id} failed`, err);
+      console.error(`[email-agent:orphan-sweep] ${row.id} failed`, err);
       Sentry.captureException(err, {
-        tags: { handler: 'email-agent-followup' },
+        tags: { handler: 'email-agent-orphan-sweep' },
         extra: { enrollmentId: row.id },
       });
     }

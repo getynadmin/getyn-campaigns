@@ -201,6 +201,27 @@ workers.push(
 );
 const emailAgentQueue = new Queue(QUEUE_NAMES.emailAgent, { connection });
 
+// Exposed for handlers that need to re-enqueue an enroll job — e.g.
+// the orphan sweeper in the follow-up tick (see email-agent.ts).
+// Using this handle avoids a circular dep on the web app's queues
+// helper and shares the same Redis connection as the worker itself.
+export async function enqueueEmailAgentEnrollFromWorker(payload: {
+  enrollmentId: string;
+  tenantId: string;
+  isTest?: boolean;
+}): Promise<void> {
+  await emailAgentQueue.add(
+    JOB_NAMES.emailAgent.enroll,
+    payload,
+    {
+      jobId: `enroll_${payload.enrollmentId}`,
+      ...(payload.isTest ? { priority: 1 } : {}),
+      removeOnComplete: { age: 60 * 60 * 24 * 3, count: 5000 },
+      removeOnFail: { age: 60 * 60 * 24 * 30 },
+    },
+  );
+}
+
 // WhatsApp Agent queue — mirror of email-agent.
 workers.push(
   new Worker(

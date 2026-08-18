@@ -110,6 +110,21 @@ export function EmailAgentKanban({
     { id: agentId },
     { refetchInterval: 15_000 },
   );
+  const orphan = api.emailAgent.orphanCount.useQuery(
+    { id: agentId },
+    { refetchInterval: 30_000 },
+  );
+  const reEnqueue = api.emailAgent.reEnqueueOrphans.useMutation({
+    onSuccess: (r) => {
+      toast.success(
+        `Re-enqueued ${r.enqueued.toLocaleString()} · ${r.remaining.toLocaleString()} still pending.`,
+      );
+      void utils.emailAgent.orphanCount.invalidate({ id: agentId });
+      void utils.emailAgent.board.invalidate({ id: agentId });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const move = api.emailAgent.moveCard.useMutation({
     onSuccess: () => {
       void utils.emailAgent.board.invalidate({ id: agentId });
@@ -206,6 +221,36 @@ export function EmailAgentKanban({
           </Link>
         </div>
       </header>
+
+      {/* Orphan banner — enrollments whose initial send failed
+          silently sit invisible to the follow-up tick. Sweeper picks
+          them up on its own cadence, but this button lets the
+          operator kick a big backlog through immediately (e.g. after
+          restoring Anthropic credits or fixing an SDK regression). */}
+      {(orphan.data?.count ?? 0) > 0 && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-50/50 px-3 py-2 text-sm dark:bg-amber-950/20">
+          <div>
+            <span className="font-medium text-amber-900 dark:text-amber-200">
+              {orphan.data!.count.toLocaleString()} enrollments never received
+              their initial email
+            </span>
+            <span className="ml-2 text-xs text-muted-foreground">
+              (initial-send job failed silently — usually an Anthropic
+              credit outage or transient error; safe to re-enqueue now)
+            </span>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => reEnqueue.mutate({ id: agentId, maxBatch: 1000 })}
+            disabled={reEnqueue.isPending}
+            className="bg-amber-600 text-white hover:bg-amber-700"
+          >
+            {reEnqueue.isPending
+              ? 'Re-enqueueing…'
+              : `Re-enqueue ${Math.min(1000, orphan.data!.count).toLocaleString()}`}
+          </Button>
+        </div>
+      )}
 
       {/* Search + filters — client-side over already-loaded rows so
           typing is instant. Search spans every lane so an operator
