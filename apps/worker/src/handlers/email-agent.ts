@@ -230,7 +230,7 @@ export async function handleEmailAgentProcessReply(
 
   // Persist the inbound as an EmailAgentMessage row so the approval
   // inbox has a single source of truth for the thread.
-  await prisma.emailAgentMessage.create({
+  const inboundRow = await prisma.emailAgentMessage.create({
     data: {
       tenantId: enrollment.tenantId,
       enrollmentId,
@@ -241,7 +241,24 @@ export async function handleEmailAgentProcessReply(
       status: EmailAgentMessageStatus.REPLIED,
       messageId: `inbound_${inbound.id}`,
     },
+    select: { id: true },
   });
+
+  // Accumulator for every LLM call this reply-processing pipeline
+  // makes (classify + delay-detect Haiku fallback + reply draft).
+  // We charge it to the outbound reply's aiGenerationCostCents when
+  // we produce one; on paths that early-return without drafting
+  // (delay-request, OUT_OF_OFFICE, BOUNCE, NOT_INTERESTED, drafter
+  // failure) we attach it to the inbound row instead so no LLM
+  // spend goes unrecorded.
+  let processingCostCents = 0;
+  const attachToInbound = async (): Promise<void> => {
+    if (processingCostCents === 0) return;
+    await prisma.emailAgentMessage.update({
+      where: { id: inboundRow.id },
+      data: { aiGenerationCostCents: processingCostCents },
+    });
+  };
 
   // Phase 9 — stop-keyword hard match. Case-insensitive substring
   // check against the agent's operator-configured phrases. Overrides
@@ -315,6 +332,7 @@ export async function handleEmailAgentProcessReply(
     client,
     inbound.bodyText || stripHtml(inbound.bodyHtml),
   );
+  if (delay) processingCostCents += delay.costCents;
   if (delay) {
     const until = new Date(Date.now() + delay.days * 24 * 60 * 60 * 1000);
     await prisma.emailAgentEnrollment.update({
@@ -329,6 +347,7 @@ export async function handleEmailAgentProcessReply(
     console.info(
       `[email-agent:reply] ${enrollmentId} delay-request ${delay.days}d (${delay.source}) → COOLING_PERIOD until ${until.toISOString()}`,
     );
+    await attachToInbound();
     return;
   }
 
@@ -350,11 +369,13 @@ export async function handleEmailAgentProcessReply(
     replyText: inbound.bodyText || stripHtml(inbound.bodyHtml),
   });
   const classified = classification.classification;
+  processingCostCents += classification.costCents;
 
   // Route by classification.
   if (classified === ReplyClassification.OUT_OF_OFFICE || classified === ReplyClassification.BOUNCE) {
     // Don't draft; keep the follow-up sequence going.
     console.info(`[email-agent:reply] ${enrollmentId} classified ${classified}; continuing`);
+    await attachToInbound();
     return;
   }
   if (classified === ReplyClassification.NOT_INTERESTED) {
@@ -367,6 +388,7 @@ export async function handleEmailAgentProcessReply(
         nextActionAt: null,
       },
     });
+    await attachToInbound();
     return;
   }
 
@@ -377,7 +399,17 @@ export async function handleEmailAgentProcessReply(
     inboundBody: inbound.bodyText || stripHtml(inbound.bodyHtml),
     history,
   });
-  if (!draft) return;
+  if (!draft) {
+    // Sonnet call returned null — still record the classify+delay
+    // cost we already burned on the inbound row.
+    await attachToInbound();
+    return;
+  }
+  // Fold classify + delay-detect cost into the outbound draft's
+  // costCents so a single row captures the total AI spend attributable
+  // to processing this reply. Matches how initial-send prompt costs
+  // are already recorded on the outbound row.
+  const totalDraftCost = draft.costCents + processingCostCents;
 
   await prisma.$transaction([
     prisma.emailAgentMessage.create({
@@ -391,7 +423,7 @@ export async function handleEmailAgentProcessReply(
         status: EmailAgentMessageStatus.DRAFT_AWAITING_APPROVAL,
         inboundClassification: classified,
         aiGenerationContext: draft.context as unknown as object,
-        aiGenerationCostCents: draft.costCents,
+        aiGenerationCostCents: totalDraftCost,
       },
     }),
     prisma.emailAgentEnrollment.update({
@@ -874,13 +906,18 @@ async function callDrafter(
     const cacheReads = u.cache_read_input_tokens ?? 0;
     const cacheWrites = u.cache_creation_input_tokens ?? 0;
     const freshInput = Math.max(0, u.input_tokens - cacheReads - cacheWrites);
-    const costCents = Math.round(
+    // Bill at least 1¢ per call so Haiku follow-ups (which typically
+    // land under 0.5¢ each and would round to 0) still show up in
+    // aggregate spend queries. Slight overcount vs Anthropic's actual
+    // bill on the very cheap end, but the alternative — silently
+    // recording $0 — makes cost dashboards lie.
+    const rawCents =
       ((freshInput / 1_000_000) * routing.inputPricePerMTok +
         (cacheWrites / 1_000_000) * routing.inputPricePerMTok * 1.25 +
         (cacheReads / 1_000_000) * routing.cacheReadPricePerMTok +
         (u.output_tokens / 1_000_000) * routing.outputPricePerMTok) *
-        100,
-    );
+      100;
+    const costCents = Math.max(1, Math.ceil(rawCents));
     if (costCents > 30) {
       Sentry.captureMessage('[email-agent] draft exceeded $0.30 cap', {
         level: 'warning',
@@ -993,7 +1030,7 @@ async function classifyReply(
 async function detectDelayRequest(
   client: Anthropic | null,
   replyText: string,
-): Promise<{ days: number; source: 'regex' | 'haiku' } | null> {
+): Promise<{ days: number; source: 'regex' | 'haiku'; costCents: number } | null> {
   const t = replyText.toLowerCase().slice(0, 4000);
 
   // -- Stage 1: regex ------------------------------------------------
@@ -1007,23 +1044,23 @@ async function detectDelayRequest(
     if (n > 0) {
       const days =
         unit.startsWith('month') ? n * 30 : unit.startsWith('week') ? n * 7 : n;
-      return { days: Math.min(days, 365), source: 'regex' };
+      return { days: Math.min(days, 365), source: 'regex', costCents: 0 };
     }
   }
   // Phrases: "next week", "next month", "after N days", "in 2 weeks".
   if (/(after|in)\s+(a\s+)?(week|month)/.test(t)) {
-    return { days: /month/.test(t) ? 30 : 7, source: 'regex' };
+    return { days: /month/.test(t) ? 30 : 7, source: 'regex', costCents: 0 };
   }
   if (/next\s+(week|month|quarter)/.test(t)) {
     const days = /month/.test(t) ? 30 : /quarter/.test(t) ? 90 : 7;
-    return { days, source: 'regex' };
+    return { days, source: 'regex', costCents: 0 };
   }
   // "not now, later / not right now" — treat as 30-day soft hold.
   if (/(not\s+(now|right now|at the moment)|busy right now|check back|later)/.test(t)) {
     // Be conservative — only if the reply is short and doesn't sound
     // like a rejection.
     if (t.length < 300 && !/never|remove/.test(t)) {
-      return { days: 30, source: 'regex' };
+      return { days: 30, source: 'regex', costCents: 0 };
     }
   }
 
@@ -1048,9 +1085,19 @@ async function detectDelayRequest(
       .join('')
       .trim();
     const m = text.match(/"delay_days"\s*:\s*(\d{1,3})/);
+    // Haiku is cheap — bill the call even if the answer was 0 days.
+    const costCents = Math.max(
+      1,
+      Math.round(
+        ((res.usage.input_tokens / 1_000_000) * 0.8 +
+          (res.usage.output_tokens / 1_000_000) * 4.0) *
+          100,
+      ),
+    );
     if (!m) return null;
     const days = Number.parseInt(m[1] ?? '0', 10);
-    if (days > 0) return { days: Math.min(days, 365), source: 'haiku' };
+    if (days > 0)
+      return { days: Math.min(days, 365), source: 'haiku', costCents };
   } catch (err) {
     console.warn('[email-agent] delay-request Haiku call failed', err);
   }
