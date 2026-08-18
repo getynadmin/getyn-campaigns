@@ -55,7 +55,7 @@ type SidebarItem = {
   /** Item appears disabled (future phase). */
   soon?: boolean;
   /** Live badge type. */
-  badge?: 'inboxUnread' | 'agentPending';
+  badge?: 'inboxUnread' | 'agentPending' | 'emailAgentActive' | 'whatsappAgentActive';
 };
 
 type SidebarSection = {
@@ -121,11 +121,13 @@ function buildSections(slug: string): SidebarSection[] {
           href: t('/automation/agents'),
           label: 'Email Agent',
           icon: Bot,
+          badge: 'emailAgentActive',
         },
         {
           href: t('/automation/whatsapp-agents'),
           label: 'WhatsApp Agent',
           icon: MessageSquare,
+          badge: 'whatsappAgentActive',
         },
         {
           href: t('/automation/agents/inbox'),
@@ -214,6 +216,21 @@ export function Sidebar({
   });
   const agentPendingCount = agentPending.data?.total ?? 0;
 
+  // Live count of ACTIVE agents per channel — small green pill next
+  // to Email Agent / WhatsApp Agent in the sidebar so an operator
+  // sees at a glance how many agents are running without opening
+  // the list.
+  const emailAgentActive = api.emailAgent.activeCount.useQuery(undefined, {
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const emailAgentActiveCount = emailAgentActive.data?.total ?? 0;
+  const whatsappAgentActive = api.whatsappAgent.activeCount.useQuery(undefined, {
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const whatsappAgentActiveCount = whatsappAgentActive.data?.total ?? 0;
+
   const firstLetter = (appName.trim()[0] ?? 'G').toUpperCase();
 
   return (
@@ -226,7 +243,10 @@ export function Sidebar({
         // theme.
         'bg-card text-foreground',
         '[html[data-sidebar-theme=dark]_&]:bg-[#0E0F14] [html[data-sidebar-theme=dark]_&]:border-white/5 [html[data-sidebar-theme=dark]_&]:text-zinc-200',
-        collapsed ? 'w-[68px]' : 'w-64',
+        // Slightly wider than the previous 16rem to make room for
+        // the "Active N" pills next to Email Agent / WhatsApp Agent
+        // without wrapping.
+        collapsed ? 'w-[68px]' : 'w-72',
       )}
       // Without this `visible` opacity gate, the labels render
       // overflowing during the width transition until JS swaps state.
@@ -363,7 +383,19 @@ export function Sidebar({
                     ? inboxCount
                     : item.badge === 'agentPending'
                       ? agentPendingCount
-                      : null;
+                      : item.badge === 'emailAgentActive'
+                        ? emailAgentActiveCount
+                        : item.badge === 'whatsappAgentActive'
+                          ? whatsappAgentActiveCount
+                          : null;
+                // 'active' badges render as a small green "Active N"
+                // pill (status signal); pending/unread render as the
+                // usual rose count.
+                const badgeTone: 'rose' | 'green' =
+                  item.badge === 'emailAgentActive' ||
+                  item.badge === 'whatsappAgentActive'
+                    ? 'green'
+                    : 'rose';
                 return (
                   <li key={item.href}>
                     <NavRow
@@ -371,6 +403,7 @@ export function Sidebar({
                       active={active}
                       collapsed={collapsed}
                       badgeNumber={badgeNumber}
+                      badgeTone={badgeTone}
                     />
                   </li>
                 );
@@ -391,11 +424,13 @@ function NavRow({
   active,
   collapsed,
   badgeNumber,
+  badgeTone = 'rose',
 }: {
   item: SidebarItem;
   active: boolean;
   collapsed: boolean;
   badgeNumber: number | null;
+  badgeTone?: 'rose' | 'green';
 }): JSX.Element {
   const Icon = item.icon;
   const showBadge = !item.soon && badgeNumber !== null && badgeNumber > 0;
@@ -445,7 +480,12 @@ function NavRow({
       </span>
       {!collapsed && (
         <span className="flex items-center gap-1.5">
-          {showBadge && (
+          {showBadge && badgeTone === 'green' && (
+            <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+              Active {badgeNumber > 99 ? '99+' : badgeNumber}
+            </span>
+          )}
+          {showBadge && badgeTone === 'rose' && (
             <span className="grid min-w-5 place-items-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
               {badgeNumber > 99 ? '99+' : badgeNumber}
             </span>

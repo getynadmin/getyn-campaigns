@@ -8,9 +8,14 @@ import {
   Clock,
   Eye,
   MessageCircle,
+  MoreHorizontal,
   Plus,
+  RefreshCw,
   Search,
+  Send,
+  Settings2,
   Tag as TagIcon,
+  Users,
   Slash,
   Snowflake,
   Sparkles,
@@ -21,6 +26,13 @@ import {
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Dialog,
   DialogContent,
@@ -133,6 +145,8 @@ export function EmailAgentKanban({
   });
 
   const [openEnrollmentId, setOpenEnrollmentId] = useState<string | null>(null);
+  const [testOpen, setTestOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   // Client-side filters — the board query already ships every card;
   // filtering here is instantaneous and avoids a round-trip on every
@@ -211,16 +225,37 @@ export function EmailAgentKanban({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <TestAgentButton agentId={agentId} />
-          <BulkEnrollButton agentId={agentId} />
-          <Link
-            href={`/t/${slug}/automation/agents/${agentId}`}
-            className="text-sm text-primary hover:underline"
-          >
-            Edit agent
-          </Link>
+          <BoardRefreshButton
+            onRefresh={() => {
+              void utils.emailAgent.board.invalidate({ id: agentId });
+              void utils.emailAgent.orphanCount.invalidate({ id: agentId });
+              void utils.emailAgent.thread.invalidate();
+            }}
+            isBusy={data ? false : isLoading}
+          />
+          <ActionsMenu
+            slug={slug}
+            agentId={agentId}
+            channel="email"
+            onOpenTest={() => setTestOpen(true)}
+            onOpenBulk={() => setBulkOpen(true)}
+          />
         </div>
       </header>
+
+      {/* Modals for the actions surfaced in the dropdown — hoisted
+          out of the header so the dropdown items can trigger them
+          without re-rendering the buttons themselves. */}
+      <TestAgentDialog
+        agentId={agentId}
+        open={testOpen}
+        onOpenChange={setTestOpen}
+      />
+      <BulkEnrollDialog
+        agentId={agentId}
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+      />
 
       {/* Orphan banner — enrollments whose initial send failed
           silently sit invisible to the follow-up tick. Sweeper picks
@@ -437,9 +472,16 @@ function relTime(d: Date | string): string {
   return `${mo}mo ago`;
 }
 
-function TestAgentButton({ agentId }: { agentId: string }): JSX.Element {
+function TestAgentDialog({
+  agentId,
+  open,
+  onOpenChange,
+}: {
+  agentId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}): JSX.Element {
   const utils = api.useUtils();
-  const [open, setOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -451,7 +493,7 @@ function TestAgentButton({ agentId }: { agentId: string }): JSX.Element {
           : 'Enrolled — initial email fires within a minute.',
       );
       void utils.emailAgent.board.invalidate({ id: agentId });
-      setOpen(false);
+      onOpenChange(false);
       setEmail('');
       setFirstName('');
       setLastName('');
@@ -460,15 +502,7 @@ function TestAgentButton({ agentId }: { agentId: string }): JSX.Element {
   });
   return (
     <>
-      <Button
-        size="sm"
-        variant="outline"
-        className="border-emerald-500/60 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
-        onClick={() => setOpen(true)}
-      >
-        Test agent
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Send a test to any email</DialogTitle>
@@ -501,7 +535,7 @@ function TestAgentButton({ agentId }: { agentId: string }): JSX.Element {
             className="w-full rounded-md border bg-background px-3 py-2 text-sm"
           />
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button
@@ -525,10 +559,17 @@ function TestAgentButton({ agentId }: { agentId: string }): JSX.Element {
   );
 }
 
-function BulkEnrollButton({ agentId }: { agentId: string }): JSX.Element {
+function BulkEnrollDialog({
+  agentId,
+  open,
+  onOpenChange,
+}: {
+  agentId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}): JSX.Element {
   const utils = api.useUtils();
   const segments = api.emailAgent.segmentOptions.useQuery();
-  const [open, setOpen] = useState(false);
   const [segmentId, setSegmentId] = useState<string>('');
   const enroll = api.emailAgent.enrollFromSegment.useMutation({
     onSuccess: (r) => {
@@ -536,16 +577,13 @@ function BulkEnrollButton({ agentId }: { agentId: string }): JSX.Element {
         `Enrolled ${r.enrolled.toLocaleString()} · skipped ${r.skipped.toLocaleString()} already enrolled.`,
       );
       void utils.emailAgent.board.invalidate({ id: agentId });
-      setOpen(false);
+      onOpenChange(false);
     },
     onError: (e) => toast.error(e.message),
   });
   return (
     <>
-      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-        Bulk enrol from segment
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Enrol every contact in a segment</DialogTitle>
@@ -567,7 +605,7 @@ function BulkEnrollButton({ agentId }: { agentId: string }): JSX.Element {
             ))}
           </select>
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button
@@ -1165,5 +1203,110 @@ function IconAction({
     >
       <Icon className="size-4" />
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------
+
+/**
+ * Manual refresh button. Sits *outside* the Actions dropdown so the
+ * one-hand common case — refresh the board — is a single click. Spins
+ * the icon while a refetch is in flight; the icon revert is what tells
+ * the operator the refetch actually completed (vs the toast, which is
+ * a shorter, easier-to-miss signal).
+ */
+export function BoardRefreshButton({
+  onRefresh,
+  isBusy,
+}: {
+  onRefresh: () => void | Promise<unknown>;
+  isBusy?: boolean;
+}): JSX.Element {
+  const [spinning, setSpinning] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        setSpinning(true);
+        try {
+          await onRefresh();
+        } finally {
+          // A short minimum so the spin registers on very fast
+          // refetches — otherwise the icon flashes and the click
+          // feels like it did nothing.
+          setTimeout(() => setSpinning(false), 400);
+        }
+      }}
+      disabled={isBusy || spinning}
+      className="inline-flex size-9 items-center justify-center rounded-md border bg-background text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-60"
+      title="Refresh board"
+      aria-label="Refresh board"
+    >
+      <RefreshCw className={`size-4 ${spinning ? 'animate-spin' : ''}`} />
+    </button>
+  );
+}
+
+/**
+ * Consolidated Actions menu for the Kanban header — collapses the
+ * Test agent / Bulk enrol / Edit agent buttons that used to sit in
+ * the top-right. Refresh stays outside the dropdown because that's
+ * the one action operators reach for most.
+ *
+ * `channel` toggles the edit-agent link path so the same component
+ * serves both the Email Agent and WhatsApp Agent kanbans.
+ */
+export function ActionsMenu({
+  slug,
+  agentId,
+  channel,
+  onOpenTest,
+  onOpenBulk,
+}: {
+  slug: string;
+  agentId: string;
+  channel: 'email' | 'whatsapp';
+  onOpenTest: () => void;
+  onOpenBulk: () => void;
+}): JSX.Element {
+  const editHref =
+    channel === 'email'
+      ? `/t/${slug}/automation/agents/${agentId}`
+      : `/t/${slug}/automation/whatsapp-agents/${agentId}`;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" variant="outline" className="gap-1.5">
+          <MoreHorizontal className="size-4" /> Actions
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuItem
+          onSelect={(e) => {
+            e.preventDefault();
+            onOpenTest();
+          }}
+        >
+          <Send className="mr-2 size-4 text-emerald-600" />
+          Test agent
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={(e) => {
+            e.preventDefault();
+            onOpenBulk();
+          }}
+        >
+          <Users className="mr-2 size-4" />
+          Bulk enrol from segment
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href={editHref}>
+            <Settings2 className="mr-2 size-4" />
+            Edit agent
+          </Link>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

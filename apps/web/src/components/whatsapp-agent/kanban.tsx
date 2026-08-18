@@ -34,6 +34,10 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/trpc';
+import {
+  ActionsMenu,
+  BoardRefreshButton,
+} from '@/components/email-agent/kanban/kanban';
 
 type LaneKey = 'ACTIVE_CONVERSATION' | 'REVIEW_RESPONSE' | 'COOLING_PERIOD' | 'INACTIVE';
 
@@ -115,6 +119,8 @@ export function WhatsappAgentKanban({
   });
 
   const [openEnrollmentId, setOpenEnrollmentId] = useState<string | null>(null);
+  const [testOpen, setTestOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'with_replies' | 'awaiting_reply' | 'active_24h' | 'active_7d'>('all');
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
@@ -166,14 +172,25 @@ export function WhatsappAgentKanban({
           <p className="text-sm text-muted-foreground">Conversation board — drag or use the arrows to move a card.</p>
         </div>
         <div className="flex items-center gap-2">
-          <TestAgentButton agentId={agentId} />
-          <BulkEnrollButton agentId={agentId} />
-          <Link href={`/t/${slug}/automation/whatsapp-agents/${agentId}`}
-            className="text-sm text-primary hover:underline">
-            Edit agent
-          </Link>
+          <BoardRefreshButton
+            onRefresh={() => {
+              void utils.whatsappAgent.board.invalidate({ id: agentId });
+              void utils.whatsappAgent.thread.invalidate();
+            }}
+            isBusy={data ? false : isLoading}
+          />
+          <ActionsMenu
+            slug={slug}
+            agentId={agentId}
+            channel="whatsapp"
+            onOpenTest={() => setTestOpen(true)}
+            onOpenBulk={() => setBulkOpen(true)}
+          />
         </div>
       </header>
+
+      <TestAgentDialog agentId={agentId} open={testOpen} onOpenChange={setTestOpen} />
+      <BulkEnrollDialog agentId={agentId} open={bulkOpen} onOpenChange={setBulkOpen} />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[240px] max-w-md">
@@ -261,9 +278,12 @@ export function WhatsappAgentKanban({
   );
 }
 
-function TestAgentButton({ agentId }: { agentId: string }): JSX.Element {
+function TestAgentDialog({
+  agentId, open, onOpenChange,
+}: {
+  agentId: string; open: boolean; onOpenChange: (v: boolean) => void;
+}): JSX.Element {
   const utils = api.useUtils();
-  const [open, setOpen] = useState(false);
   const [phone, setPhone] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -273,16 +293,13 @@ function TestAgentButton({ agentId }: { agentId: string }): JSX.Element {
         ? 'Already enrolled — check the Active column.'
         : 'Enrolled — initial message fires within a minute.');
       void utils.whatsappAgent.board.invalidate({ id: agentId });
-      setOpen(false); setPhone(''); setFirstName(''); setLastName('');
+      onOpenChange(false); setPhone(''); setFirstName(''); setLastName('');
     },
     onError: (e) => toast.error(e.message),
   });
   return (
     <>
-      <Button size="sm" variant="outline"
-        className="border-emerald-500/60 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
-        onClick={() => setOpen(true)}>Test agent</Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>Send a test to any phone</DialogTitle></DialogHeader>
           <p className="text-xs text-muted-foreground">
@@ -298,7 +315,7 @@ function TestAgentButton({ agentId }: { agentId: string }): JSX.Element {
           <input type="tel" placeholder="+14155551234" value={phone} onChange={(e) => setPhone(e.target.value)}
             className="w-full rounded-md border bg-background px-3 py-2 text-sm" />
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button onClick={() => enroll.mutate({
               whatsappAgentId: agentId, phone,
               firstName: firstName || undefined, lastName: lastName || undefined,
@@ -313,23 +330,25 @@ function TestAgentButton({ agentId }: { agentId: string }): JSX.Element {
   );
 }
 
-function BulkEnrollButton({ agentId }: { agentId: string }): JSX.Element {
+function BulkEnrollDialog({
+  agentId, open, onOpenChange,
+}: {
+  agentId: string; open: boolean; onOpenChange: (v: boolean) => void;
+}): JSX.Element {
   const utils = api.useUtils();
   const segments = api.whatsappAgent.segmentOptions.useQuery();
-  const [open, setOpen] = useState(false);
   const [segmentId, setSegmentId] = useState<string>('');
   const enroll = api.whatsappAgent.enrollFromSegment.useMutation({
     onSuccess: (r) => {
       toast.success(`Enrolled ${r.enrolled.toLocaleString()} · skipped ${r.skipped.toLocaleString()}.`);
       void utils.whatsappAgent.board.invalidate({ id: agentId });
-      setOpen(false);
+      onOpenChange(false);
     },
     onError: (e) => toast.error(e.message),
   });
   return (
     <>
-      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>Bulk enrol from segment</Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>Enrol every subscribed contact in a segment</DialogTitle></DialogHeader>
           <p className="text-xs text-muted-foreground">
@@ -341,7 +360,7 @@ function BulkEnrollButton({ agentId }: { agentId: string }): JSX.Element {
             {(segments.data ?? []).map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
           </select>
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button onClick={() => enroll.mutate({ whatsappAgentId: agentId, segmentId })}
               disabled={!segmentId || enroll.isPending}
               className="bg-emerald-600 text-white hover:bg-emerald-700">

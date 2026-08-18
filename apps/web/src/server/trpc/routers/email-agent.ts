@@ -87,6 +87,17 @@ const knowledgeSourceInputSchema = z.discriminatedUnion('kind', [
 ]);
 
 export const emailAgentRouter = createTRPCRouter({
+  // Lightweight count for sidebar badges — refetched every 30s on
+  // every page, so keep this a pure count(). Filters to ACTIVE
+  // (paused/draft/archived agents are not "running").
+  activeCount: tenantProcedure.query(async ({ ctx }) => {
+    const tenantId = ctx.tenantContext.tenant.id;
+    const total = await prisma.emailAgent.count({
+      where: { tenantId, status: 'ACTIVE' },
+    });
+    return { total };
+  }),
+
   list: tenantProcedure.query(async ({ ctx }) => {
     const tenantId = ctx.tenantContext.tenant.id;
     return withTenant(tenantId, async (tx) => {
