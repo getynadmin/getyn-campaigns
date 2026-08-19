@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -118,9 +118,27 @@ export function EmailAgentKanban({
   slug: string;
 }): JSX.Element {
   const utils = api.useUtils();
+  // Server-side per-lane pagination — 50 rows per lane, `laneCounts`
+  // carries the true totals for the column badges. The old client
+  // filter over the whole set worked at 100 enrollments but pinned
+  // the page for seconds at 18k+.
   const { data, isLoading } = api.emailAgent.board.useQuery(
     { id: agentId },
     { refetchInterval: 15_000 },
+  );
+  // Debounced search — server-side ILIKE across every lane (the
+  // paginated board can't see cards outside its top-50 slice).
+  // Fires only when the input has been idle for 250ms so every
+  // keystroke doesn't round-trip.
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+  const searchQuery = api.emailAgent.boardSearch.useQuery(
+    { id: agentId, q: debouncedSearch },
+    { enabled: debouncedSearch.length > 0 },
   );
   const orphan = api.emailAgent.orphanCount.useQuery(
     { id: agentId },
@@ -148,11 +166,9 @@ export function EmailAgentKanban({
   const [testOpen, setTestOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
 
-  // Client-side filters — the board query already ships every card;
-  // filtering here is instantaneous and avoids a round-trip on every
-  // keystroke. Search matches email / first / last (case-insensitive
-  // substring); the extra chips narrow by activity signal.
-  const [search, setSearch] = useState('');
+  // Non-search filters still run client-side over whichever slice we
+  // have loaded (paginated board OR search-results set). Fast, no
+  // extra round-trips.
   const [filter, setFilter] = useState<
     'all' | 'with_replies' | 'awaiting_reply' | 'active_24h' | 'active_7d'
   >('all');
@@ -173,18 +189,8 @@ export function EmailAgentKanban({
   })();
 
   const matches = (r: BoardRow): boolean => {
-    const q = search.trim().toLowerCase();
-    if (q) {
-      const hay = [
-        r.contact.email,
-        r.contact.firstName,
-        r.contact.lastName,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
+    // Search is server-side now; the client only applies the
+    // activity/tag chips over whichever slice we've loaded.
     if (filter === 'with_replies' && !(r.inboundCount && r.inboundCount > 0)) return false;
     if (filter === 'awaiting_reply' && !!r.lastInboundAt) return false;
     if (filter === 'active_24h' || filter === 'active_7d') {
@@ -387,8 +393,22 @@ export function EmailAgentKanban({
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {LANES.map((lane) => {
-          const rawRows = (data?.lanes[lane.key] ?? []) as BoardRow[];
+          // Data source: server search results when a query is
+          // active; the paginated board otherwise.
+          const searchActive = debouncedSearch.length > 0;
+          const source = searchActive
+            ? (searchQuery.data?.lanes[lane.key] ?? [])
+            : (data?.lanes[lane.key] ?? []);
+          const rawRows = source as BoardRow[];
           const rows = rawRows.filter(matches);
+          // Badge shows the true lane total (from the board's
+          // laneCounts) not the sampled 50; while searching, it
+          // shows only the number of matches in this lane.
+          const laneTotal =
+            searchActive
+              ? rawRows.length
+              : (data?.laneCounts?.[lane.key] ?? rawRows.length);
+          const loading = searchActive ? searchQuery.isLoading : isLoading;
           return (
             <section
               key={lane.key}
@@ -398,25 +418,25 @@ export function EmailAgentKanban({
                 <lane.Icon className="size-4" />
                 <span className="text-sm font-semibold">{lane.label}</span>
                 <span className="ml-auto rounded-full bg-background px-2 py-0.5 text-[11px] font-medium">
-                  {isLoading
+                  {loading
                     ? '…'
-                    : rows.length === rawRows.length
+                    : rows.length === laneTotal
                       ? rows.length
-                      : `${rows.length}/${rawRows.length}`}
+                      : `${rows.length}/${laneTotal.toLocaleString()}`}
                 </span>
               </header>
               {/* Fixed viewport ~10 cards; the column scrolls internally
                   so the page itself stays a single screen even at 18k
                   cards. */}
               <div className="max-h-[calc(100vh-260px)] min-h-[240px] flex-1 space-y-2 overflow-y-auto p-2">
-                {isLoading ? (
+                {loading ? (
                   <>
                     <Skeleton className="h-20" />
                     <Skeleton className="h-20" />
                   </>
                 ) : rows.length === 0 ? (
                   <p className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
-                    No cards
+                    {searchActive ? 'No matches' : 'No cards'}
                   </p>
                 ) : (
                   rows.map((r) => (
@@ -431,9 +451,9 @@ export function EmailAgentKanban({
                   ))
                 )}
               </div>
-              {rows.length > 10 && (
+              {!searchActive && laneTotal > rows.length && (
                 <div className="border-t px-3 py-1 text-center text-[10px] text-muted-foreground">
-                  Scroll to see all {rows.length}
+                  Showing {rows.length} of {laneTotal.toLocaleString()} · refine with search or filters
                 </div>
               )}
             </section>

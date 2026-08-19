@@ -266,9 +266,117 @@ export const whatsappAgentRouter = createTRPCRouter({
   // ==== Kanban ====
   board: tenantProcedure.input(idSchema).query(async ({ ctx, input }) => {
     const tenantId = ctx.tenantContext.tenant.id;
-    const [rows, agent, inboundCounts] = await Promise.all([
-      prisma.whatsAppAgentEnrollment.findMany({
-        where: { tenantId, whatsappAgentId: input.id },
+    // Per-lane pagination — mirrors emailAgent.board. See the note
+    // there for why: rendering 40 cards should not require fetching
+    // 18k rows.
+    const PER_LANE = 50;
+    const LANES = [
+      'ACTIVE_CONVERSATION',
+      'REVIEW_RESPONSE',
+      'COOLING_PERIOD',
+      'INACTIVE',
+    ] as const;
+    const selectShape = {
+      id: true,
+      conversationStatus: true,
+      status: true,
+      currentStep: true,
+      lastSentAt: true,
+      lastInboundAt: true,
+      cooldownUntil: true,
+      suggestedReplyHint: true,
+      tags: true,
+      contact: { select: { id: true, email: true, phone: true, firstName: true, lastName: true } },
+      messages: {
+        select: { id: true, direction: true, createdAt: true, bodyText: true },
+        orderBy: { createdAt: 'desc' as const },
+        take: 1,
+      },
+    };
+    const [laneRows, laneTotals, agent] = await Promise.all([
+      Promise.all(
+        LANES.map((lane) =>
+          prisma.whatsAppAgentEnrollment.findMany({
+            where: {
+              tenantId,
+              whatsappAgentId: input.id,
+              conversationStatus: lane,
+            },
+            select: selectShape,
+            orderBy: { enrolledAt: 'desc' },
+            take: PER_LANE,
+          }),
+        ),
+      ),
+      Promise.all(
+        LANES.map((lane) =>
+          prisma.whatsAppAgentEnrollment.count({
+            where: {
+              tenantId,
+              whatsappAgentId: input.id,
+              conversationStatus: lane,
+            },
+          }),
+        ),
+      ),
+      prisma.whatsAppAgent.findFirst({
+        where: { id: input.id, tenantId },
+        select: { outboundSchedule: true },
+      }),
+    ]);
+    const visibleIds = laneRows.flat().map((r) => r.id);
+    const inboundCounts = visibleIds.length
+      ? await prisma.whatsAppAgentMessage.groupBy({
+          by: ['enrollmentId'],
+          where: { tenantId, enrollmentId: { in: visibleIds }, direction: 'INBOUND' },
+          _count: { _all: true },
+        })
+      : [];
+    const inboundByEnrollment = new Map<string, number>();
+    for (const g of inboundCounts) inboundByEnrollment.set(g.enrollmentId, g._count._all);
+    const shape = <T extends { id: string; contact: { email: string | null; phone: string | null } | null; messages: Array<{ id: string; direction: unknown; createdAt: unknown; bodyText: string }> }>(r: T) => ({
+      ...r,
+      contact: r.contact
+        ? { ...r.contact, email: r.contact.phone ?? r.contact.email }
+        : r.contact,
+      messages: r.messages.map((m) => ({ ...m, subject: '' })),
+      inboundCount: inboundByEnrollment.get(r.id) ?? 0,
+    });
+    const byLane = {
+      ACTIVE_CONVERSATION: laneRows[0]!.map(shape),
+      REVIEW_RESPONSE: laneRows[1]!.map(shape),
+      COOLING_PERIOD: laneRows[2]!.map(shape),
+      INACTIVE: laneRows[3]!.map(shape),
+    };
+    const laneCounts = {
+      ACTIVE_CONVERSATION: laneTotals[0]!,
+      REVIEW_RESPONSE: laneTotals[1]!,
+      COOLING_PERIOD: laneTotals[2]!,
+      INACTIVE: laneTotals[3]!,
+    };
+    const maxFollowUps = Number(
+      (agent?.outboundSchedule as { maxFollowUps?: number } | null)?.maxFollowUps ?? 3,
+    );
+    return { lanes: byLane, laneCounts, maxFollowUps };
+  }),
+
+  boardSearch: tenantProcedure
+    .input(z.object({ id: z.string().min(1), q: z.string().trim().min(1).max(200) }))
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const rows = await prisma.whatsAppAgentEnrollment.findMany({
+        where: {
+          tenantId,
+          whatsappAgentId: input.id,
+          contact: {
+            OR: [
+              { email: { contains: input.q, mode: 'insensitive' } },
+              { firstName: { contains: input.q, mode: 'insensitive' } },
+              { lastName: { contains: input.q, mode: 'insensitive' } },
+              { phone: { contains: input.q } },
+            ],
+          },
+        },
         select: {
           id: true,
           conversationStatus: true,
@@ -287,42 +395,32 @@ export const whatsappAgentRouter = createTRPCRouter({
           },
         },
         orderBy: { enrolledAt: 'desc' },
-      }),
-      prisma.whatsAppAgent.findFirst({
-        where: { id: input.id, tenantId },
-        select: { outboundSchedule: true },
-      }),
-      prisma.whatsAppAgentMessage.groupBy({
-        by: ['enrollmentId'],
-        where: { tenantId, enrollment: { whatsappAgentId: input.id }, direction: 'INBOUND' },
-        _count: { _all: true },
-      }),
-    ]);
-    const inboundByEnrollment = new Map<string, number>();
-    for (const g of inboundCounts) inboundByEnrollment.set(g.enrollmentId, g._count._all);
-    const rowsWithCounts = rows.map((r) => ({
-      ...r,
-      // Board consumers use `email` for search; alias phone into that
-      // slot too so the shared card can search either. Keep both.
-      contact: {
-        ...r.contact,
-        email: r.contact.phone ?? r.contact.email,
-      },
-      messages: r.messages.map((m) => ({ ...m, subject: '' })),
-      inboundCount: inboundByEnrollment.get(r.id) ?? 0,
-    }));
-    const maxFollowUps = Number(
-      (agent?.outboundSchedule as { maxFollowUps?: number } | null)?.maxFollowUps ?? 3,
-    );
-    const byLane = {
-      ACTIVE_CONVERSATION: [] as typeof rowsWithCounts,
-      REVIEW_RESPONSE: [] as typeof rowsWithCounts,
-      COOLING_PERIOD: [] as typeof rowsWithCounts,
-      INACTIVE: [] as typeof rowsWithCounts,
-    };
-    for (const r of rowsWithCounts) byLane[r.conversationStatus].push(r);
-    return { lanes: byLane, maxFollowUps };
-  }),
+        take: 200,
+      });
+      const ids = rows.map((r) => r.id);
+      const inboundCounts = ids.length
+        ? await prisma.whatsAppAgentMessage.groupBy({
+            by: ['enrollmentId'],
+            where: { tenantId, enrollmentId: { in: ids }, direction: 'INBOUND' },
+            _count: { _all: true },
+          })
+        : [];
+      const inboundByEnrollment = new Map<string, number>();
+      for (const g of inboundCounts) inboundByEnrollment.set(g.enrollmentId, g._count._all);
+      const shaped = rows.map((r) => ({
+        ...r,
+        contact: { ...r.contact, email: r.contact.phone ?? r.contact.email },
+        messages: r.messages.map((m) => ({ ...m, subject: '' })),
+        inboundCount: inboundByEnrollment.get(r.id) ?? 0,
+      }));
+      const byLane = {
+        ACTIVE_CONVERSATION: shaped.filter((r) => r.conversationStatus === 'ACTIVE_CONVERSATION'),
+        REVIEW_RESPONSE: shaped.filter((r) => r.conversationStatus === 'REVIEW_RESPONSE'),
+        COOLING_PERIOD: shaped.filter((r) => r.conversationStatus === 'COOLING_PERIOD'),
+        INACTIVE: shaped.filter((r) => r.conversationStatus === 'INACTIVE'),
+      };
+      return { lanes: byLane, matchTotal: rows.length };
+    }),
 
   thread: tenantProcedure
     .input(z.object({ enrollmentId: z.string().min(1) }))

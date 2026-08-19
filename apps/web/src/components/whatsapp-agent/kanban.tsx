@@ -11,7 +11,7 @@
  */
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -122,6 +122,16 @@ export function WhatsappAgentKanban({
   const [testOpen, setTestOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [search, setSearch] = useState('');
+  // Server-side search — see the note in email-agent kanban.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+  const searchQuery = api.whatsappAgent.boardSearch.useQuery(
+    { id: agentId, q: debouncedSearch },
+    { enabled: debouncedSearch.length > 0 },
+  );
   const [filter, setFilter] = useState<'all' | 'with_replies' | 'awaiting_reply' | 'active_24h' | 'active_7d'>('all');
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
 
@@ -135,12 +145,8 @@ export function WhatsappAgentKanban({
   })();
 
   const matches = (r: BoardRow): boolean => {
-    const q = search.trim().toLowerCase();
-    if (q) {
-      const hay = [r.contact.email, r.contact.phone, r.contact.firstName, r.contact.lastName]
-        .filter(Boolean).join(' ').toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
+    // Search runs server-side (see boardSearch). Client-side only
+    // applies the activity/tag chips over the currently loaded slice.
     if (filter === 'with_replies' && !(r.inboundCount && r.inboundCount > 0)) return false;
     if (filter === 'awaiting_reply' && !!r.lastInboundAt) return false;
     if (filter === 'active_24h' || filter === 'active_7d') {
@@ -246,27 +252,42 @@ export function WhatsappAgentKanban({
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {LANES.map((lane) => {
-          const rawRows = (data?.lanes[lane.key] ?? []) as BoardRow[];
+          const searchActive = debouncedSearch.length > 0;
+          const source = searchActive
+            ? (searchQuery.data?.lanes[lane.key] ?? [])
+            : (data?.lanes[lane.key] ?? []);
+          const rawRows = source as BoardRow[];
           const rows = rawRows.filter(matches);
+          const laneTotal = searchActive
+            ? rawRows.length
+            : (data?.laneCounts?.[lane.key] ?? rawRows.length);
+          const loading = searchActive ? searchQuery.isLoading : isLoading;
           return (
             <section key={lane.key} className={`flex flex-col rounded-lg border ${lane.color}`}>
               <header className="flex items-center gap-2 border-b px-3 py-2">
                 <lane.Icon className="size-4" />
                 <span className="text-sm font-semibold">{lane.label}</span>
                 <span className="ml-auto rounded-full bg-background px-2 py-0.5 text-[11px] font-medium">
-                  {isLoading ? '…' : rows.length === rawRows.length ? rows.length : `${rows.length}/${rawRows.length}`}
+                  {loading ? '…' : rows.length === laneTotal ? rows.length : `${rows.length}/${laneTotal.toLocaleString()}`}
                 </span>
               </header>
               <div className="max-h-[calc(100vh-260px)] min-h-[240px] flex-1 space-y-2 overflow-y-auto p-2">
-                {isLoading ? (<><Skeleton className="h-20" /><Skeleton className="h-20" /></>)
+                {loading ? (<><Skeleton className="h-20" /><Skeleton className="h-20" /></>)
                   : rows.length === 0 ? (
-                    <p className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">No cards</p>
+                    <p className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+                      {searchActive ? 'No matches' : 'No cards'}
+                    </p>
                   ) : rows.map((r) => (
                     <Card key={r.id} row={r} laneKey={lane.key} maxFollowUps={data?.maxFollowUps ?? 3}
                       onOpen={() => setOpenEnrollmentId(r.id)}
                       onMove={(to) => move.mutate({ enrollmentId: r.id, to })} />
                   ))}
               </div>
+              {!searchActive && laneTotal > rows.length && (
+                <div className="border-t px-3 py-1 text-center text-[10px] text-muted-foreground">
+                  Showing {rows.length} of {laneTotal.toLocaleString()} · refine with search or filters
+                </div>
+              )}
             </section>
           );
         })}

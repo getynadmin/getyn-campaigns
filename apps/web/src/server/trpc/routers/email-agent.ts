@@ -578,79 +578,202 @@ export const emailAgentRouter = createTRPCRouter({
     .input(idSchema)
     .query(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
-      const [rows, agent, inboundCounts] = await Promise.all([
-        prisma.emailAgentEnrollment.findMany({
-          where: { tenantId, emailAgentId: input.id },
+      // Server-side per-lane pagination. The UI shows the first ~10
+      // cards per lane and scrolls; loading all 18k+ enrollments to
+      // render 40 visible ones was pinning the page for seconds.
+      // 50 per lane leaves headroom to scroll a bit without a
+      // round-trip, at 200 rows total instead of 18k+.
+      const PER_LANE = 50;
+      const LANES = [
+        'ACTIVE_CONVERSATION',
+        'REVIEW_RESPONSE',
+        'COOLING_PERIOD',
+        'INACTIVE',
+      ] as const;
+      const selectShape = {
+        id: true,
+        conversationStatus: true,
+        status: true,
+        currentStep: true,
+        lastSentAt: true,
+        lastInboundAt: true,
+        cooldownUntil: true,
+        suggestedReplyHint: true,
+        tags: true,
+        contact: {
           select: {
             id: true,
-            conversationStatus: true,
-            status: true,
-            currentStep: true,
-            lastSentAt: true,
-            lastInboundAt: true,
-            cooldownUntil: true,
-            suggestedReplyHint: true,
-            tags: true,
-            contact: {
-              select: {
-                id: true,
-                email: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-            messages: {
-              select: {
-                id: true,
-                direction: true,
-                subject: true,
-                createdAt: true,
-                bodyText: true,
-              },
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-            },
+            email: true,
+            firstName: true,
+            lastName: true,
           },
+        },
+        messages: {
+          select: {
+            id: true,
+            direction: true,
+            subject: true,
+            createdAt: true,
+            bodyText: true,
+          },
+          orderBy: { createdAt: 'desc' as const },
+          take: 1,
+        },
+      };
+      const laneQueries = LANES.map((lane) =>
+        prisma.emailAgentEnrollment.findMany({
+          where: {
+            tenantId,
+            emailAgentId: input.id,
+            conversationStatus: lane,
+          },
+          select: selectShape,
           orderBy: { enrolledAt: 'desc' },
+          take: PER_LANE,
         }),
+      );
+      const countQueries = LANES.map((lane) =>
+        prisma.emailAgentEnrollment.count({
+          where: {
+            tenantId,
+            emailAgentId: input.id,
+            conversationStatus: lane,
+          },
+        }),
+      );
+      const [laneRows, laneTotals, agent] = await Promise.all([
+        Promise.all(laneQueries),
+        Promise.all(countQueries),
         prisma.emailAgent.findFirst({
           where: { id: input.id, tenantId },
           select: { outboundSchedule: true },
         }),
-        // Explicit inbound counts — deriving from total-messages was
-        // wrong because DRAFT_AWAITING_APPROVAL rows and status side-
-        // effects inflate the total, making cards show a phantom
-        // "1 reply" badge when no real reply exists.
-        prisma.emailAgentMessage.groupBy({
-          by: ['enrollmentId'],
-          where: {
-            tenantId,
-            enrollment: { emailAgentId: input.id },
-            direction: 'INBOUND',
-          },
-          _count: { _all: true },
-        }),
       ]);
+      // Only fetch inbound counts for enrollments we're actually
+      // returning — dropping the "scan every INBOUND row for the
+      // agent" pattern that was fine at 100 enrollments and painful
+      // at 18k.
+      const visibleIds = laneRows.flat().map((r) => r.id);
+      const inboundCounts = visibleIds.length
+        ? await prisma.emailAgentMessage.groupBy({
+            by: ['enrollmentId'],
+            where: {
+              tenantId,
+              enrollmentId: { in: visibleIds },
+              direction: 'INBOUND',
+            },
+            _count: { _all: true },
+          })
+        : [];
       const inboundByEnrollment = new Map<string, number>();
       for (const g of inboundCounts) {
         inboundByEnrollment.set(g.enrollmentId, g._count._all);
       }
-      const rowsWithCounts = rows.map((r) => ({
-        ...r,
-        inboundCount: inboundByEnrollment.get(r.id) ?? 0,
-      }));
       const maxFollowUps = Number(
         (agent?.outboundSchedule as { maxFollowUps?: number } | null)
           ?.maxFollowUps ?? 3,
       );
+      const attachCount = <T extends { id: string }>(r: T) => ({
+        ...r,
+        inboundCount: inboundByEnrollment.get(r.id) ?? 0,
+      });
       const byLane = {
-        ACTIVE_CONVERSATION: [] as typeof rowsWithCounts,
-        REVIEW_RESPONSE: [] as typeof rowsWithCounts,
-        COOLING_PERIOD: [] as typeof rowsWithCounts,
-        INACTIVE: [] as typeof rowsWithCounts,
+        ACTIVE_CONVERSATION: laneRows[0]!.map(attachCount),
+        REVIEW_RESPONSE: laneRows[1]!.map(attachCount),
+        COOLING_PERIOD: laneRows[2]!.map(attachCount),
+        INACTIVE: laneRows[3]!.map(attachCount),
       };
-      for (const r of rowsWithCounts) byLane[r.conversationStatus].push(r);
-      return { lanes: byLane, maxFollowUps };
+      const laneCounts = {
+        ACTIVE_CONVERSATION: laneTotals[0]!,
+        REVIEW_RESPONSE: laneTotals[1]!,
+        COOLING_PERIOD: laneTotals[2]!,
+        INACTIVE: laneTotals[3]!,
+      };
+      return { lanes: byLane, laneCounts, maxFollowUps };
+    }),
+
+  // Server-side search across every lane — kicks in when the operator
+  // types in the board's search box. Client-side filter over the
+  // paginated 200 rows can't find a card that isn't currently
+  // materialised, so this endpoint hits the DB with an ILIKE on
+  // email / firstName / lastName and returns up to 200 matches
+  // (grouped by lane, same shape as `board`).
+  boardSearch: tenantProcedure
+    .input(
+      z.object({
+        id: z.string().min(1),
+        q: z.string().trim().min(1).max(200),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const rows = await prisma.emailAgentEnrollment.findMany({
+        where: {
+          tenantId,
+          emailAgentId: input.id,
+          contact: {
+            OR: [
+              { email: { contains: input.q, mode: 'insensitive' } },
+              { firstName: { contains: input.q, mode: 'insensitive' } },
+              { lastName: { contains: input.q, mode: 'insensitive' } },
+            ],
+          },
+        },
+        select: {
+          id: true,
+          conversationStatus: true,
+          status: true,
+          currentStep: true,
+          lastSentAt: true,
+          lastInboundAt: true,
+          cooldownUntil: true,
+          suggestedReplyHint: true,
+          tags: true,
+          contact: {
+            select: { id: true, email: true, firstName: true, lastName: true },
+          },
+          messages: {
+            select: {
+              id: true,
+              direction: true,
+              subject: true,
+              createdAt: true,
+              bodyText: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+        orderBy: { enrolledAt: 'desc' },
+        take: 200,
+      });
+      const ids = rows.map((r) => r.id);
+      const inboundCounts = ids.length
+        ? await prisma.emailAgentMessage.groupBy({
+            by: ['enrollmentId'],
+            where: {
+              tenantId,
+              enrollmentId: { in: ids },
+              direction: 'INBOUND',
+            },
+            _count: { _all: true },
+          })
+        : [];
+      const inboundByEnrollment = new Map<string, number>();
+      for (const g of inboundCounts) {
+        inboundByEnrollment.set(g.enrollmentId, g._count._all);
+      }
+      const withCounts = rows.map((r) => ({
+        ...r,
+        inboundCount: inboundByEnrollment.get(r.id) ?? 0,
+      }));
+      const byLane = {
+        ACTIVE_CONVERSATION: withCounts.filter((r) => r.conversationStatus === 'ACTIVE_CONVERSATION'),
+        REVIEW_RESPONSE: withCounts.filter((r) => r.conversationStatus === 'REVIEW_RESPONSE'),
+        COOLING_PERIOD: withCounts.filter((r) => r.conversationStatus === 'COOLING_PERIOD'),
+        INACTIVE: withCounts.filter((r) => r.conversationStatus === 'INACTIVE'),
+      };
+      return { lanes: byLane, matchTotal: rows.length };
     }),
 
   thread: tenantProcedure
