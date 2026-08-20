@@ -287,14 +287,22 @@ export async function enqueueEmailAgentEnroll(
 ): Promise<void> {
   const validated = emailAgentEnrollPayloadSchema.parse(payload);
   const queue = getEmailAgentQueue();
+  const jobId = `enroll_${validated.enrollmentId}`;
+  // Prior failed job with the same id would silently block re-add
+  // (same class of bug as immediateFollowUp above). Remove first.
+  try {
+    const existing = await queue.getJob(jobId);
+    if (existing) await existing.remove();
+  } catch (e) {
+    console.warn('[emailAgent.enroll] pre-remove failed', jobId, e);
+  }
   await queue.add(JOB_NAMES.emailAgent.enroll, validated, {
-    jobId: `enroll_${validated.enrollmentId}`,
-    // Test-agent enqueues jump the queue — otherwise a single test
-    // click sits behind a 17k-enrollment backlog and appears broken.
-    // BullMQ priority: lower number = higher priority. 1 is our
-    // ceiling; regular follow-up tick jobs run at the default 0.
-    // (Non-test enrolls keep default priority; they're bulk work.)
+    jobId,
     ...(validated.isTest ? { priority: 1 } : {}),
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 30_000 },
+    removeOnComplete: { age: 60 * 60 * 24 * 3, count: 5000 },
+    removeOnFail: { age: 60 * 60 * 6 },
   });
 }
 
@@ -310,9 +318,25 @@ export async function enqueueEmailAgentImmediateFollowUp(
 ): Promise<void> {
   const validated = emailAgentImmediateFollowUpPayloadSchema.parse(payload);
   const queue = getEmailAgentQueue();
+  const jobId = `immediate_${validated.enrollmentId}`;
+  // BullMQ silently no-ops if a job with this id lives in ANY set
+  // (waiting/active/failed/completed). A prior priority attempt that
+  // failed leaves the id in the failed set — every subsequent Submit
+  // hint click for the same enrollment gets silently dropped. Remove
+  // the ghost first so retries actually retry.
+  try {
+    const existing = await queue.getJob(jobId);
+    if (existing) await existing.remove();
+  } catch (e) {
+    console.warn('[emailAgent.immediateFollowUp] pre-remove failed', jobId, e);
+  }
   await queue.add(JOB_NAMES.emailAgent.immediateFollowUp, validated, {
-    jobId: `immediate_${validated.enrollmentId}`,
+    jobId,
     priority: 1,
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 15_000 },
+    removeOnComplete: { age: 60 * 60 * 24 * 3, count: 1000 },
+    removeOnFail: { age: 60 * 60 * 6 },
   });
 }
 

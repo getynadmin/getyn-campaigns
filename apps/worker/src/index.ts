@@ -213,14 +213,39 @@ export async function enqueueEmailAgentEnrollFromWorker(payload: {
   tenantId: string;
   isTest?: boolean;
 }): Promise<void> {
+  // Remove any prior job with the deterministic id first — BullMQ's
+  // add() silently no-ops if a job with the same id exists in ANY
+  // set (waiting/active/failed/completed). The orphan sweeper was
+  // firing every minute for 10k orphans; the first attempts landed
+  // in the failed set (Anthropic credit outage), and every retry
+  // after that was silently discarded — the reason no send has
+  // happened for hours despite the tick running normally.
+  const jobId = `enroll_${payload.enrollmentId}`;
+  try {
+    const existing = await emailAgentQueue.getJob(jobId);
+    if (existing) await existing.remove();
+  } catch (e) {
+    // remove() throws if the job is currently locked/active; leave
+    // it — the worker will finish it, and the atomic-claim on
+    // processFollowUp gates the DB-level dupe.
+    console.warn('[email-agent] pre-remove failed for', jobId, e);
+  }
   await emailAgentQueue.add(
     JOB_NAMES.emailAgent.enroll,
     payload,
     {
-      jobId: `enroll_${payload.enrollmentId}`,
+      jobId,
       ...(payload.isTest ? { priority: 1 } : {}),
+      // Give BullMQ authority to retry with backoff so a transient
+      // Anthropic blip doesn't need the sweeper to run to try
+      // again — retries are automatic within the job's own lifetime.
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 30_000 },
       removeOnComplete: { age: 60 * 60 * 24 * 3, count: 5000 },
-      removeOnFail: { age: 60 * 60 * 24 * 30 },
+      // Shorter fail retention so a failed job can be re-added on
+      // the next sweep without an explicit remove — belt & braces
+      // alongside the pre-remove above.
+      removeOnFail: { age: 60 * 60 * 6 },
     },
   );
 }
