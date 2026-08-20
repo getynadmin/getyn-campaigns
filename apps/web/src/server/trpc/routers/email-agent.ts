@@ -1214,6 +1214,7 @@ export const emailAgentRouter = createTRPCRouter({
           lastDrafterErrorAt: true,
           lastDrafterErrorMessage: true,
           drainPausedAt: true,
+          lastFollowupTickAt: true,
         },
       });
       if (!agent) throw new TRPCError({ code: 'NOT_FOUND' });
@@ -1252,17 +1253,27 @@ export const emailAgentRouter = createTRPCRouter({
       // were 0. Now: if pending > 0 AND no sends in 5 min, we're
       // paused *whatever* the reason. Show the last recorded error
       // when we have one, a generic 'stalled' otherwise.
+      // Worker-down detection: if the tick hasn't fired in 3 min
+      // (it should fire every 60s), something outside our code path
+      // is broken — Railway deploy failed, worker crash-looping,
+      // Redis unreachable. Distinct signal from 'stalled' (worker
+      // up, but no work getting through).
+      const tickStale =
+        !agent.lastFollowupTickAt ||
+        agent.lastFollowupTickAt < new Date(now.getTime() - 3 * 60_000);
       let state:
         | 'healthy'
         | 'idle'
         | 'paused_operator'
         | 'paused_error'
         | 'stalled'
+        | 'worker_down'
         | 'agent_paused';
       if (agent.status !== 'ACTIVE') state = 'agent_paused';
       else if (agent.drainPausedAt) state = 'paused_operator';
       else if (pending === 0) state = 'idle';
       else if (sentLast5m > 0) state = 'healthy';
+      else if (tickStale) state = 'worker_down';
       else if (agent.lastDrafterErrorAt) state = 'paused_error';
       else state = 'stalled';
       return {
@@ -1274,6 +1285,7 @@ export const emailAgentRouter = createTRPCRouter({
         errorAt: agent.lastDrafterErrorAt,
         drainPausedAt: agent.drainPausedAt,
         agentStatus: agent.status,
+        lastTickAt: agent.lastFollowupTickAt,
       };
     }),
 

@@ -2340,6 +2340,11 @@ model EmailAgent {
   /// tick + orphan sweep both skip agents where this is set. Cleared
   /// by the same Resume button.
   drainPausedAt         DateTime?
+  /// Bumped on every follow-up tick. Lets the status banner tell
+  /// 'worker running but stuck' apart from 'worker not running at
+  /// all' — the latter shows a stale timestamp and is a Railway /
+  /// deploy problem, not an in-code bug.
+  lastFollowupTickAt    DateTime?
   signature             String           @db.Text
   fromName              String
   fromEmail             String

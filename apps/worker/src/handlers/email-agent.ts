@@ -153,6 +153,18 @@ export async function handleEmailAgentEnroll(
 
 export async function handleEmailAgentFollowupTick(): Promise<void> {
   const now = new Date();
+  // Heartbeat — bumps a timestamp on every ACTIVE agent so the
+  // status banner can tell 'worker down' apart from 'worker up but
+  // no work claimed'. Fire-and-forget; if this write fails the
+  // banner just stays stale (no functional impact on sending).
+  prisma.emailAgent
+    .updateMany({
+      where: { status: 'ACTIVE' },
+      data: { lastFollowupTickAt: now },
+    })
+    .catch((e) =>
+      console.warn('[email-agent:followup] heartbeat write failed', e),
+    );
   const due = await prisma.emailAgentEnrollment.findMany({
     where: {
       status: EnrollmentStatus.ACTIVE,
@@ -505,12 +517,18 @@ async function processFollowUp(enrollmentId: string): Promise<void> {
     stopOnReply: boolean;
   };
 
-  // Reply-since-last-send guard.
+  // Reply-since-last-send guard — normally we stop follow-ups the
+  // moment the contact replies (the process-reply handler takes
+  // over). But an operator suggested-reply hint EXPLICITLY overrides
+  // this: the whole point of the hint is to draft a response to
+  // that reply. Without this carve-out the immediate-follow-up job
+  // would silently no-op every hint on a reply-context card.
   if (
     enrollment.lastInboundAt &&
     enrollment.lastSentAt &&
     enrollment.lastInboundAt > enrollment.lastSentAt &&
-    schedule.stopOnReply
+    schedule.stopOnReply &&
+    !enrollment.suggestedReplyHint
   ) {
     // Reply arrived — the process-reply handler owns this from here.
     // Just clear nextActionAt so the tick stops picking us up.

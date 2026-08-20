@@ -1343,7 +1343,14 @@ function StatusBanner({
   isResuming,
 }: {
   status: {
-    state: 'healthy' | 'idle' | 'paused_operator' | 'paused_error' | 'stalled' | 'agent_paused';
+    state:
+      | 'healthy'
+      | 'idle'
+      | 'paused_operator'
+      | 'paused_error'
+      | 'stalled'
+      | 'worker_down'
+      | 'agent_paused';
     pending: number;
     sentLast5m: number;
     sendsPerMinute: number;
@@ -1351,6 +1358,7 @@ function StatusBanner({
     errorAt: Date | string | null;
     drainPausedAt: Date | string | null;
     agentStatus: string;
+    lastTickAt: Date | string | null;
   };
   onResume: () => void;
   isResuming: boolean;
@@ -1371,6 +1379,31 @@ function StatusBanner({
           <span className="text-xs text-muted-foreground">
             · ~{status.sendsPerMinute}/min · {status.sentLast5m} sent in last 5 min
           </span>
+        </div>
+      </div>
+    );
+  }
+  if (status.state === 'worker_down') {
+    const ageMin = status.lastTickAt
+      ? Math.round(
+          (Date.now() - new Date(status.lastTickAt).getTime()) / 60_000,
+        )
+      : null;
+    return (
+      <div className={`${common} border-red-500/50 bg-red-50 dark:bg-red-950/30`}>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="size-4 text-red-600" />
+            <span className="font-medium text-red-900 dark:text-red-200">
+              Worker not running · {status.pending.toLocaleString()} pending
+            </span>
+          </div>
+          <p className="mt-1 line-clamp-2 pl-6 text-xs text-red-900/80 dark:text-red-200/80">
+            The follow-up tick hasn't fired
+            {ageMin !== null ? ` in ${ageMin} minute${ageMin === 1 ? '' : 's'}` : ' recently'}.
+            The Railway worker process is likely down or crash-looping.
+            Check the Railway dashboard → worker service → logs.
+          </p>
         </div>
       </div>
     );
