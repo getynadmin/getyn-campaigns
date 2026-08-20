@@ -134,8 +134,41 @@ export async function handleEmailAgentEnroll(
     console.warn('[email-agent:enroll] ANTHROPIC_API_KEY missing — cannot draft');
     return;
   }
+  // Placeholder row written BEFORE the LLM call. Two purposes:
+  //  1. If Anthropic call succeeds but the Resend send fails
+  //     (network blip, DB write error), the enrollment already
+  //     has an OUTBOUND row — the retry's top-of-handler dedup
+  //     check bails BEFORE calling Anthropic again, so we never
+  //     pay for the same draft twice.
+  //  2. If Anthropic itself throws, we mark this row FAILED with
+  //     the reason so the drawer thread makes the failure visible
+  //     instead of the enrollment sitting silently stuck.
+  // On the happy path we update this same row with the real draft
+  // + SENT status inside sendAndPersistOutbound.
+  const placeholder = await prisma.emailAgentMessage.create({
+    data: {
+      tenantId: enrollment.tenantId,
+      enrollmentId,
+      direction: EmailAgentMessageDirection.OUTBOUND,
+      subject: '(drafting…)',
+      bodyText: '',
+      bodyHtml: '',
+      status: EmailAgentMessageStatus.APPROVED_QUEUED,
+    },
+    select: { id: true },
+  });
+
   const draft = await draftInitial(client, enrollment);
   if (!draft) {
+    // Mark the placeholder as FAILED so the drawer shows the reason
+    // and the enrollment can be retried without paying for a re-draft.
+    await prisma.emailAgentMessage.update({
+      where: { id: placeholder.id },
+      data: {
+        status: EmailAgentMessageStatus.FAILED,
+        bodyText: '[draft failed — see agent lastDrafterErrorMessage]',
+      },
+    });
     Sentry.captureMessage('[email-agent:enroll] draft failed', {
       level: 'warning',
       extra: { enrollmentId },
@@ -143,9 +176,12 @@ export async function handleEmailAgentEnroll(
     return;
   }
 
-  await sendAndPersistOutbound(enrollment, draft, EmailAgentMessageStatus.APPROVED_QUEUED, {
-    step: 0,
-  });
+  await sendAndPersistOutbound(
+    enrollment,
+    draft,
+    EmailAgentMessageStatus.APPROVED_QUEUED,
+    { step: 0, existingMessageId: placeholder.id },
+  );
 
   // Schedule the first follow-up (if any).
   await scheduleNextFollowUp(enrollmentId, 0);
@@ -863,19 +899,25 @@ function pickDraftModel(kind: 'initial' | 'followup' | 'reply'): {
   cacheReadPricePerMTok: number;
   outputPricePerMTok: number;
 } {
-  if (kind === 'followup') {
+  // Reply is the only touch where quality unambiguously matters — a
+  // real human wrote the inbound and is judging our response in real
+  // time. Initial + follow-ups are templated-ish outreach where the
+  // 3-5x cheaper Haiku output prices dominate. Cost math on 3,110
+  // recent initials showed ~$9/hr on Sonnet output alone; Haiku
+  // brings that to ~$3/hr for the same volume.
+  if (kind === 'reply') {
     return {
-      model: CLASSIFIER_MODEL, // Haiku 4.5
-      inputPricePerMTok: 1.0,
-      cacheReadPricePerMTok: 0.1,
-      outputPricePerMTok: 5.0,
+      model: DRAFTING_MODEL, // Sonnet 4.6
+      inputPricePerMTok: 3.0,
+      cacheReadPricePerMTok: 0.3,
+      outputPricePerMTok: 15.0,
     };
   }
   return {
-    model: DRAFTING_MODEL, // Sonnet 4.6
-    inputPricePerMTok: 3.0,
-    cacheReadPricePerMTok: 0.3,
-    outputPricePerMTok: 15.0,
+    model: CLASSIFIER_MODEL, // Haiku 4.5
+    inputPricePerMTok: 1.0,
+    cacheReadPricePerMTok: 0.1,
+    outputPricePerMTok: 5.0,
   };
 }
 
@@ -1257,7 +1299,7 @@ async function sendAndPersistOutbound(
   ctx: EnrollmentContext,
   draft: Draft,
   status: EmailAgentMessageStatus,
-  opts: { step: number },
+  opts: { step: number; existingMessageId?: string },
 ): Promise<void> {
   if (!ctx.contact.email) return;
 
@@ -1334,22 +1376,33 @@ async function sendAndPersistOutbound(
     }
   }
 
+  // If the caller pre-created a placeholder row (handleEmailAgentEnroll
+  // does this so retries don't re-run the LLM), update it in place;
+  // otherwise create a fresh row. Semantically identical downstream.
+  const messageData = {
+    subject: draft.subject,
+    bodyHtml: finalBodyHtml,
+    bodyText: finalBodyText,
+    status: messageId ? EmailAgentMessageStatus.SENT : status,
+    messageId,
+    sentAt: messageId ? new Date() : null,
+    aiGenerationContext: draft.context as unknown as object,
+    aiGenerationCostCents: draft.costCents,
+  };
   await prisma.$transaction([
-    prisma.emailAgentMessage.create({
-      data: {
-        tenantId: ctx.tenantId,
-        enrollmentId: ctx.id,
-        direction: EmailAgentMessageDirection.OUTBOUND,
-        subject: draft.subject,
-        bodyHtml: finalBodyHtml,
-        bodyText: finalBodyText,
-        status: messageId ? EmailAgentMessageStatus.SENT : status,
-        messageId,
-        sentAt: messageId ? new Date() : null,
-        aiGenerationContext: draft.context as unknown as object,
-        aiGenerationCostCents: draft.costCents,
-      },
-    }),
+    opts.existingMessageId
+      ? prisma.emailAgentMessage.update({
+          where: { id: opts.existingMessageId },
+          data: messageData,
+        })
+      : prisma.emailAgentMessage.create({
+          data: {
+            tenantId: ctx.tenantId,
+            enrollmentId: ctx.id,
+            direction: EmailAgentMessageDirection.OUTBOUND,
+            ...messageData,
+          },
+        }),
     prisma.emailAgentEnrollment.update({
       where: { id: ctx.id },
       data: {
