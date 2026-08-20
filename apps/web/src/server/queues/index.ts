@@ -7,6 +7,7 @@ import {
   automationStepPayloadSchema,
   automationWakePayloadSchema,
   emailAgentEnrollPayloadSchema,
+  emailAgentImmediateFollowUpPayloadSchema,
   emailAgentIngestKnowledgeSourcePayloadSchema,
   emailAgentProcessReplyPayloadSchema,
   importJobPayloadSchema,
@@ -19,6 +20,7 @@ import {
   type AutomationStepPayload,
   type AutomationWakePayload,
   type EmailAgentEnrollPayload,
+  type EmailAgentImmediateFollowUpPayload,
   type EmailAgentIngestKnowledgeSourcePayload,
   type EmailAgentProcessReplyPayload,
   type ImportJobPayload,
@@ -293,6 +295,24 @@ export async function enqueueEmailAgentEnroll(
     // ceiling; regular follow-up tick jobs run at the default 0.
     // (Non-test enrolls keep default priority; they're bulk work.)
     ...(validated.isTest ? { priority: 1 } : {}),
+  });
+}
+
+/**
+ * Priority follow-up dispatched when an operator submits a hint
+ * via the Kanban "Suggest a reply" drawer. Runs the same
+ * processFollowUp path with priority: 1 so it jumps ahead of any
+ * queued follow-up tick backlog (12k+ orphans on SkillCertified).
+ * Idempotent on enrollmentId — a double-click doesn't double-send.
+ */
+export async function enqueueEmailAgentImmediateFollowUp(
+  payload: EmailAgentImmediateFollowUpPayload,
+): Promise<void> {
+  const validated = emailAgentImmediateFollowUpPayloadSchema.parse(payload);
+  const queue = getEmailAgentQueue();
+  await queue.add(JOB_NAMES.emailAgent.immediateFollowUp, validated, {
+    jobId: `immediate_${validated.enrollmentId}`,
+    priority: 1,
   });
 }
 

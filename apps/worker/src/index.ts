@@ -50,6 +50,7 @@ import {
   handleEmailAgentCoolingWake,
   handleEmailAgentEnroll,
   handleEmailAgentFollowupTick,
+  handleEmailAgentImmediateFollowUp,
   handleEmailAgentProcessReply,
 } from './handlers/email-agent';
 import { handleEmailAgentIngestKnowledgeSource } from './handlers/email-agent-ingest';
@@ -192,6 +193,8 @@ workers.push(
           return handleEmailAgentIngestKnowledgeSource(job);
         case JOB_NAMES.emailAgent.coolingWake:
           return handleEmailAgentCoolingWake();
+        case JOB_NAMES.emailAgent.immediateFollowUp:
+          return handleEmailAgentImmediateFollowUp(job);
         default:
           throw new Error(`Unknown email-agent job: ${job.name}`);
       }

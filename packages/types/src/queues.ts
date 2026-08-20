@@ -235,6 +235,20 @@ export type EmailAgentProcessReplyPayload = z.infer<
 >;
 
 /**
+ * `email-agent-immediate-follow-up` — dispatched from the Kanban
+ * "Suggest a reply" submit. Runs processFollowUp on one enrollment
+ * with priority: 1 so the operator's hint (and one-shot CC) ships
+ * ahead of any queued follow-up backlog.
+ */
+export const emailAgentImmediateFollowUpPayloadSchema = z.object({
+  enrollmentId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type EmailAgentImmediateFollowUpPayload = z.infer<
+  typeof emailAgentImmediateFollowUpPayloadSchema
+>;
+
+/**
  * `email-agent-ingest-knowledge-source` — extract + summarize one
  * EmailAgentKnowledgeSource row. Enqueued when a URL / FILE source
  * is created and when the operator hits Refresh on a URL row.
@@ -294,6 +308,11 @@ export const JOB_NAMES = {
     // Phase 8 M6 — pull URL / file content into
     // EmailAgentKnowledgeSource.extractedText + summarize with Haiku.
     ingestKnowledgeSource: 'email-agent-ingest-knowledge-source',
+    // Priority follow-up — an operator submitted a hint (with
+    // optional CC) via the Kanban "Review Response" drawer and the
+    // resulting outbound must not wait behind a 12k-orphan backlog.
+    // Runs the same processFollowUp path with priority: 1.
+    immediateFollowUp: 'email-agent-immediate-follow-up',
   },
   // Phase 4 — WhatsApp Business
   waPhoneRefresh: {

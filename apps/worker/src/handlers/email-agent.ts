@@ -217,6 +217,32 @@ export async function handleEmailAgentFollowupTick(): Promise<void> {
   }
 }
 
+/**
+ * Direct-dispatch follow-up for operator-submitted hints from the
+ * Kanban "Suggest a reply" drawer. Same processFollowUp path the
+ * tick uses, but enqueued with priority: 1 so it doesn't wait
+ * behind a 12k-orphan backlog. The row already has nextActionAt
+ * set by submitSuggestedReply, so processFollowUp's atomic-claim
+ * still holds — a concurrent tick can't double-send.
+ */
+export async function handleEmailAgentImmediateFollowUp(
+  job: Job<{ enrollmentId: string; tenantId: string }>,
+): Promise<void> {
+  try {
+    await processFollowUp(job.data.enrollmentId);
+  } catch (err) {
+    console.error(
+      `[email-agent:immediate-followup] ${job.data.enrollmentId} failed`,
+      err,
+    );
+    Sentry.captureException(err, {
+      tags: { handler: 'email-agent-immediate-followup' },
+      extra: { enrollmentId: job.data.enrollmentId },
+    });
+    throw err; // let BullMQ retry per the queue's default retry policy
+  }
+}
+
 export async function handleEmailAgentProcessReply(
   job: Job<EmailAgentProcessReplyPayload>,
 ): Promise<void> {
@@ -1225,10 +1251,22 @@ async function sendAndPersistOutbound(
       // Phase 9 — one-shot CC set by an operator on the Review
       // Response suggest-a-reply form. Split, trim, dedupe against
       // the primary recipient; cleared below alongside the hint.
+      // Multiple CC addresses supported: comma-separated in the
+      // suggested-reply form → split, trim, drop empties, dedupe
+      // case-insensitively, and drop the primary recipient. Resend's
+      // `cc` field accepts a string[].
+      const seenCc = new Set<string>();
       const ccList = (ctx.suggestedReplyCc ?? '')
         .split(',')
         .map((s) => s.trim())
-        .filter((s) => s.length > 0 && s.toLowerCase() !== ctx.contact.email!.toLowerCase());
+        .filter((s) => {
+          if (!s) return false;
+          const k = s.toLowerCase();
+          if (k === ctx.contact.email!.toLowerCase()) return false;
+          if (seenCc.has(k)) return false;
+          seenCc.add(k);
+          return true;
+        });
       const result = await resend.emails.send({
         from: `${ctx.emailAgent.fromName} <${ctx.emailAgent.fromEmail}>`,
         to: ctx.contact.email,

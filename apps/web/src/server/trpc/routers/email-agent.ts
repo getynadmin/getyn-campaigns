@@ -12,7 +12,11 @@ import {
 } from '@getyn/db';
 
 import { assertWithinLimit } from '@/server/billing/assert-limit';
-import { enqueueEmailAgentEnroll, enqueueEmailAgentIngest } from '@/server/queues';
+import {
+  enqueueEmailAgentEnroll,
+  enqueueEmailAgentImmediateFollowUp,
+  enqueueEmailAgentIngest,
+} from '@/server/queues';
 import { createTRPCRouter, enforceRole, tenantProcedure } from '../trpc';
 
 /**
@@ -1367,12 +1371,30 @@ export const emailAgentRouter = createTRPCRouter({
           suggestedReplyHint: input.hint,
           suggestedReplyCc: input.cc ?? null,
           conversationStatus: 'ACTIVE_CONVERSATION',
-          nextActionAt: new Date(), // wake immediately
+          nextActionAt: new Date(), // still set for tick fallback
         },
       });
       if (updated.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
-      // The email-agent follow-up cron ticks every minute and picks up
-      // enrollments with nextActionAt<=now, so no direct enqueue needed.
+      // Priority dispatch — the tick alone would order this NOW row
+      // behind every already-due row (12k+ on SkillCertified), so
+      // the operator's "Submit hint & resume" would sit behind the
+      // whole backlog. Enqueueing a dedicated priority: 1 job jumps
+      // it to the front. Idempotent on enrollmentId; if the tick
+      // somehow raced ahead, processFollowUp's atomic-claim would
+      // still gate a double-send.
+      try {
+        await enqueueEmailAgentImmediateFollowUp({
+          enrollmentId: input.enrollmentId,
+          tenantId,
+        });
+      } catch (err) {
+        // Log-and-continue — the tick will pick it up within 60s if
+        // the enqueue fails for any reason.
+        console.warn(
+          '[emailAgent.submitSuggestedReply] priority enqueue failed; falling back to tick',
+          err,
+        );
+      }
       return { ok: true as const };
     }),
 });
