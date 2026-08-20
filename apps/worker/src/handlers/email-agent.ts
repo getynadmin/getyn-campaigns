@@ -463,6 +463,7 @@ export async function handleEmailAgentProcessReply(
       where: { id: enrollmentId },
       data: {
         status: EnrollmentStatus.EXITED,
+        conversationStatus: 'INACTIVE',
         exitReason: 'not_interested',
         completedAt: new Date(),
         nextActionAt: null,
@@ -580,6 +581,7 @@ async function processFollowUp(enrollmentId: string): Promise<void> {
       where: { id: enrollmentId },
       data: {
         status: EnrollmentStatus.COMPLETED,
+        conversationStatus: 'INACTIVE',
         completedAt: new Date(),
         exitReason: 'max_follow_ups',
         nextActionAt: null,
@@ -1448,6 +1450,10 @@ async function exitEnrollment(enrollmentId: string, reason: string): Promise<voi
     where: { id: enrollmentId },
     data: {
       status: EnrollmentStatus.EXITED,
+      // Terminal enrollments belong in the Inactive lane — otherwise
+      // they linger in Active Conversation and inflate the counter
+      // with dead rows (bounced, unsubscribed, stop-keyword).
+      conversationStatus: 'INACTIVE',
       exitReason: reason,
       completedAt: new Date(),
       nextActionAt: null,

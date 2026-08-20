@@ -624,13 +624,23 @@ export const emailAgentRouter = createTRPCRouter({
           take: 1,
         },
       };
+      // Non-Inactive lanes only show live enrollments — anything
+      // EXITED (unsubscribed, bounced, stop-keyword) or COMPLETED
+      // (max follow-ups reached) is terminal and belongs in Inactive
+      // regardless of what conversationStatus it was left in. Without
+      // this, the Active Conversation count silently included dead
+      // rows and diverged from the operator's mental model.
+      const laneWhere = (lane: typeof LANES[number]) => ({
+        tenantId,
+        emailAgentId: input.id,
+        conversationStatus: lane,
+        ...(lane === 'INACTIVE'
+          ? {}
+          : { status: { notIn: [EnrollmentStatus.EXITED, EnrollmentStatus.COMPLETED] } }),
+      });
       const laneQueries = LANES.map((lane) =>
         prisma.emailAgentEnrollment.findMany({
-          where: {
-            tenantId,
-            emailAgentId: input.id,
-            conversationStatus: lane,
-          },
+          where: laneWhere(lane),
           select: selectShape,
           // Latest activity first — an operator hint submit, an
           // inbound reply, or a fresh send all bump lastActivityAt,
@@ -640,13 +650,7 @@ export const emailAgentRouter = createTRPCRouter({
         }),
       );
       const countQueries = LANES.map((lane) =>
-        prisma.emailAgentEnrollment.count({
-          where: {
-            tenantId,
-            emailAgentId: input.id,
-            conversationStatus: lane,
-          },
-        }),
+        prisma.emailAgentEnrollment.count({ where: laneWhere(lane) }),
       );
       const [laneRows, laneTotals, agent] = await Promise.all([
         Promise.all(laneQueries),
