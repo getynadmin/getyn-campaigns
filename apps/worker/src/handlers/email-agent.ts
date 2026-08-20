@@ -1303,8 +1303,30 @@ async function sendAndPersistOutbound(
 ): Promise<void> {
   if (!ctx.contact.email) return;
 
-  const finalBodyText = draft.bodyText + (ctx.emailAgent.signature ? `\n\n${ctx.emailAgent.signature}` : '');
-  const finalBodyHtml = textToHtml(finalBodyText);
+  // Signature dedupe — the prompt tells the model NOT to include a
+  // sign-off ('the signature will be appended by the send pipeline')
+  // but the model sometimes ignores it, so we end up with two
+  // sign-offs stacked in the delivered email. Strip anything after
+  // a common closing marker at the end of the draft body before
+  // appending the configured signature.
+  const trimmedDraftBody = stripDraftSignoff(draft.bodyText);
+  const finalBodyText =
+    trimmedDraftBody +
+    (ctx.emailAgent.signature ? `\n\n${ctx.emailAgent.signature}` : '');
+
+  // If the operator set a CC on this send, append the prior thread
+  // as an Outlook-style quoted history so the CC'd party sees the
+  // full context — not just this one reply landing in their inbox.
+  // Skipped when no CC (the primary recipient already has the
+  // history in their own mail client).
+  const ccCtx = (ctx.suggestedReplyCc ?? '').trim().length > 0;
+  const quotedHistory = ccCtx
+    ? await buildQuotedHistory(ctx.id, ctx.contact.email!)
+    : '';
+  const finalBodyTextWithHistory = quotedHistory
+    ? `${finalBodyText}\n\n${quotedHistory}`
+    : finalBodyText;
+  const finalBodyHtml = textToHtml(finalBodyTextWithHistory);
 
   // Phase 9 — short-token routing under RFC 5321's 64-char local-part
   // cap. Per-agent replyInboundDomain lets brands own the reply
@@ -1362,7 +1384,7 @@ async function sendAndPersistOutbound(
         ...(ccList.length ? { cc: ccList } : {}),
         subject: draft.subject,
         html: finalBodyHtml,
-        text: finalBodyText,
+        text: finalBodyTextWithHistory,
         replyTo: replyTo ?? undefined,
         headers: {
           'X-Getyn-EmailAgent-Id': ctx.emailAgent.id,
@@ -1446,6 +1468,82 @@ function textToHtml(text: string): string {
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Strip a trailing sign-off the drafter may have added despite the
+ * prompt telling it not to. Scans the last ~10 lines for a common
+ * closing marker (regards / thanks / sincerely / cheers / best) and,
+ * if found, keeps only the content before that line.
+ *
+ * Only removes text at the *end* of the body — a mid-body 'thanks'
+ * or 'regards' inside sentences is left alone.
+ */
+function stripDraftSignoff(body: string): string {
+  const lines = body.trimEnd().split('\n');
+  // Look at the last 10 lines for the closing marker.
+  const scanStart = Math.max(0, lines.length - 10);
+  const markerRe =
+    /^\s*(warm\s+regards|best\s+regards|kind\s+regards|regards|thanks|thank\s+you|sincerely|cheers|best|yours\s+truly)\b[,\s]*$/i;
+  for (let i = lines.length - 1; i >= scanStart; i--) {
+    if (markerRe.test(lines[i] ?? '')) {
+      // Also drop any blank line immediately preceding the marker.
+      let cut = i;
+      while (cut > 0 && lines[cut - 1]?.trim() === '') cut--;
+      return lines.slice(0, cut).join('\n').trimEnd();
+    }
+  }
+  return body;
+}
+
+/**
+ * Outlook-style quoted history. Loads prior thread messages and
+ * renders them as `> quoted` blocks so a CC'd party sees the
+ * conversation that led to this reply — instead of just the latest
+ * bare reply landing in their inbox with no context.
+ *
+ * Truncated to the last 8 messages and each body to ~2k chars so
+ * long threads don't blow the outbound email size.
+ */
+async function buildQuotedHistory(
+  enrollmentId: string,
+  primaryTo: string,
+): Promise<string> {
+  const msgs = await prisma.emailAgentMessage.findMany({
+    where: {
+      enrollmentId,
+      status: {
+        in: [
+          EmailAgentMessageStatus.SENT,
+          EmailAgentMessageStatus.DELIVERED,
+          EmailAgentMessageStatus.OPENED,
+          EmailAgentMessageStatus.CLICKED,
+          EmailAgentMessageStatus.REPLIED,
+        ],
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 8,
+    select: {
+      direction: true,
+      subject: true,
+      bodyText: true,
+      createdAt: true,
+    },
+  });
+  if (msgs.length === 0) return '';
+  const parts: string[] = ['---', '', 'Previous messages in this thread:', ''];
+  // Reverse to chronological so the quoted history reads top-down.
+  for (const m of msgs.reverse()) {
+    const who = m.direction === 'INBOUND' ? primaryTo : 'Us';
+    const when = m.createdAt.toISOString().slice(0, 16).replace('T', ' ');
+    parts.push(`On ${when} UTC, ${who} wrote:`);
+    const body = (m.bodyText ?? '').slice(0, 2000);
+    // Standard email quote — prefix every line with '> '.
+    for (const line of body.split('\n')) parts.push(`> ${line}`);
+    parts.push('');
+  }
+  return parts.join('\n');
 }
 
 /**
