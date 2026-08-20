@@ -1343,7 +1343,7 @@ function StatusBanner({
   isResuming,
 }: {
   status: {
-    state: 'healthy' | 'idle' | 'paused_operator' | 'paused_error' | 'agent_paused';
+    state: 'healthy' | 'idle' | 'paused_operator' | 'paused_error' | 'stalled' | 'agent_paused';
     pending: number;
     sentLast5m: number;
     sendsPerMinute: number;
@@ -1390,8 +1390,19 @@ function StatusBanner({
       </div>
     );
   }
-  // paused_error or paused_operator
+  // paused_error / paused_operator / stalled all render the same
+  // amber banner shape; the copy differs.
   const isError = status.state === 'paused_error';
+  const isStalled = status.state === 'stalled';
+  const title = isError
+    ? 'Sending paused — drafter error'
+    : isStalled
+      ? 'Sending stalled — no throughput in the last 5 min'
+      : 'Sending paused by operator';
+  const subtitle =
+    isStalled && !status.errorMessage
+      ? 'Queue is active but nothing has sent. The sweeper is still trying — click Resume to nudge it.'
+      : status.errorMessage;
   return (
     <div
       className={`${common} border-amber-500/50 bg-amber-50 dark:bg-amber-950/30`}
@@ -1400,16 +1411,12 @@ function StatusBanner({
         <div className="flex items-center gap-2">
           <AlertTriangle className="size-4 text-amber-600" />
           <span className="font-medium text-amber-900 dark:text-amber-200">
-            {isError
-              ? 'Sending paused — drafter error'
-              : 'Sending paused by operator'}
-            {' · '}
-            {status.pending.toLocaleString()} pending
+            {title} · {status.pending.toLocaleString()} pending
           </span>
         </div>
-        {isError && status.errorMessage && (
+        {subtitle && (
           <p className="mt-1 line-clamp-2 pl-6 text-xs text-amber-900/80 dark:text-amber-200/80">
-            {status.errorMessage}
+            {subtitle}
           </p>
         )}
       </div>

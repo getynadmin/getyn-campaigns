@@ -991,16 +991,19 @@ async function callDrafter(
       tags: { handler: 'email-agent-draft', model: routing.model, kind: args.kind },
     });
     // Persist the last drafter error on the agent so the Kanban
-    // status banner can surface *why* things stopped moving. Truncate
-    // the message so a full stack trace doesn't blow the column.
-    const msg = err instanceof Error ? err.message : String(err);
+    // status banner can surface *why* things stopped moving. Rewrite
+    // known Anthropic errors into short operator-actionable phrases
+    // (the raw JSON body is unreadable in a banner and buries the
+    // one thing an operator needs to see).
+    const raw = err instanceof Error ? err.message : String(err);
+    const msg = summarizeAnthropicError(raw);
     if (ctx.emailAgent.id) {
       prisma.emailAgent
         .update({
           where: { id: ctx.emailAgent.id },
           data: {
             lastDrafterErrorAt: new Date(),
-            lastDrafterErrorMessage: msg.slice(0, 500),
+            lastDrafterErrorMessage: msg,
           },
         })
         .catch((e) =>
@@ -1009,6 +1012,32 @@ async function callDrafter(
     }
     return null;
   }
+}
+
+/**
+ * Rewrite raw Anthropic error strings into short banner-friendly
+ * messages. Every branch returns something an operator can act on:
+ * top up credits, wait, check status, etc. Falls back to a truncated
+ * raw string so unknown errors still surface something.
+ */
+function summarizeAnthropicError(raw: string): string {
+  const t = raw.toLowerCase();
+  if (t.includes('credit balance is too low')) {
+    return 'Anthropic API credits exhausted — top up at console.anthropic.com/settings/billing, then Resume.';
+  }
+  if (t.includes('rate_limit') || t.includes('rate limit')) {
+    return 'Anthropic rate limit hit — the sweeper will retry automatically as the window resets.';
+  }
+  if (t.includes('overloaded') || t.includes('529')) {
+    return "Anthropic is overloaded — retrying automatically.";
+  }
+  if (t.includes('authentication') || t.includes('invalid x-api-key')) {
+    return 'Anthropic API key rejected — check ANTHROPIC_API_KEY in the deploy.';
+  }
+  if (t.includes('permission')) {
+    return 'Anthropic API key lacks permission for this model — check console access.';
+  }
+  return raw.slice(0, 300);
 }
 
 // -----------------------------------------------------------------

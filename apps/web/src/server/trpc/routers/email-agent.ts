@@ -1246,23 +1246,25 @@ export const emailAgentRouter = createTRPCRouter({
           },
         }),
       ]);
-      // State decision — order matters. Explicit operator pause
-      // outranks a drafter error; drafter error outranks natural
-      // idleness.
-      const errorRecent =
-        agent.lastDrafterErrorAt &&
-        agent.lastDrafterErrorAt > new Date(now.getTime() - 30 * 60_000);
+      // State decision — trust throughput over error-age windows. The
+      // old logic hid a real outage once its error was >30 min old:
+      // banner turned green even though pending was 10k+ and sends
+      // were 0. Now: if pending > 0 AND no sends in 5 min, we're
+      // paused *whatever* the reason. Show the last recorded error
+      // when we have one, a generic 'stalled' otherwise.
       let state:
         | 'healthy'
         | 'idle'
         | 'paused_operator'
         | 'paused_error'
+        | 'stalled'
         | 'agent_paused';
       if (agent.status !== 'ACTIVE') state = 'agent_paused';
       else if (agent.drainPausedAt) state = 'paused_operator';
-      else if (errorRecent) state = 'paused_error';
       else if (pending === 0) state = 'idle';
-      else state = 'healthy';
+      else if (sentLast5m > 0) state = 'healthy';
+      else if (agent.lastDrafterErrorAt) state = 'paused_error';
+      else state = 'stalled';
       return {
         state,
         pending,
