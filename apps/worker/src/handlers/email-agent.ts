@@ -72,7 +72,13 @@ const MAX_TOKENS_CLASSIFY = 60;
 // Follow-up tick batch cap. Small — LLM calls are the bottleneck,
 // so we drain gradually. If backlog grows, split into per-enrollment
 // jobs like the drip engine.
-const FOLLOWUP_BATCH_SIZE = 25;
+// Follow-up + orphan-sweep batch size per tick. Bumped from 25 →
+// 100 so the automatic drain keeps pace with a 12k+ orphan backlog
+// (100/min × 60 = 6000/hour vs the old 1500/hour). The downstream
+// send layer still enforces the agent's `sending_throttle_per_second`
+// against Resend, so we can't send faster than Resend allows — this
+// just widens the *enqueue* rate so the send layer stays saturated.
+const FOLLOWUP_BATCH_SIZE = 100;
 
 /**
  * Lazy Anthropic client — pulls key from DB or env with 60s cache.
@@ -151,7 +157,7 @@ export async function handleEmailAgentFollowupTick(): Promise<void> {
     where: {
       status: EnrollmentStatus.ACTIVE,
       nextActionAt: { lte: now },
-      emailAgent: { status: 'ACTIVE' },
+      emailAgent: { status: 'ACTIVE', drainPausedAt: null },
     },
     select: { id: true },
     orderBy: [{ nextActionAt: 'asc' }, { id: 'asc' }],
@@ -186,7 +192,7 @@ export async function handleEmailAgentFollowupTick(): Promise<void> {
       lastSentAt: null,
       nextActionAt: null,
       enrolledAt: { lt: new Date(now.getTime() - ORPHAN_GRACE_MS) },
-      emailAgent: { status: 'ACTIVE' },
+      emailAgent: { status: 'ACTIVE', drainPausedAt: null },
     },
     select: { id: true, tenantId: true },
     orderBy: [{ enrolledAt: 'asc' }],
@@ -926,6 +932,21 @@ async function callDrafter(
     }
     const subject = parsed.subject.trim();
     const bodyText = parsed.body.trim();
+    // Successful draft — clear any prior drafter-error state on the
+    // agent so the status banner flips back to healthy.
+    if (ctx.emailAgent.id) {
+      prisma.emailAgent
+        .updateMany({
+          where: {
+            id: ctx.emailAgent.id,
+            lastDrafterErrorAt: { not: null },
+          },
+          data: { lastDrafterErrorAt: null, lastDrafterErrorMessage: null },
+        })
+        .catch((e) =>
+          console.warn('[email-agent] failed clearing lastDrafterError', e),
+        );
+    }
     return {
       subject,
       bodyText,
@@ -943,6 +964,23 @@ async function callDrafter(
     Sentry.captureException(err, {
       tags: { handler: 'email-agent-draft', model: routing.model, kind: args.kind },
     });
+    // Persist the last drafter error on the agent so the Kanban
+    // status banner can surface *why* things stopped moving. Truncate
+    // the message so a full stack trace doesn't blow the column.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (ctx.emailAgent.id) {
+      prisma.emailAgent
+        .update({
+          where: { id: ctx.emailAgent.id },
+          data: {
+            lastDrafterErrorAt: new Date(),
+            lastDrafterErrorMessage: msg.slice(0, 500),
+          },
+        })
+        .catch((e) =>
+          console.warn('[email-agent] failed recording lastDrafterError', e),
+        );
+    }
     return null;
   }
 }

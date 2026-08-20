@@ -17,6 +17,10 @@ import {
   Tag as TagIcon,
   Users,
   Slash,
+  AlertTriangle,
+  CheckCircle2,
+  PauseCircle,
+  Play,
   Snowflake,
   Sparkles,
   Trash2,
@@ -140,17 +144,18 @@ export function EmailAgentKanban({
     { id: agentId, q: debouncedSearch },
     { enabled: debouncedSearch.length > 0 },
   );
-  const orphan = api.emailAgent.orphanCount.useQuery(
+  // Real-time drain status — pending count + throughput + why-not
+  // when the automatic sweeper is paused. Replaces the old orphan
+  // banner + Re-enqueue button (the sweeper handles enqueue itself
+  // now, so a manual button was misleading).
+  const status = api.emailAgent.runtimeStatus.useQuery(
     { id: agentId },
-    { refetchInterval: 30_000 },
+    { refetchInterval: 10_000 },
   );
-  const reEnqueue = api.emailAgent.reEnqueueOrphans.useMutation({
-    onSuccess: (r) => {
-      toast.success(
-        `Re-enqueued ${r.enqueued.toLocaleString()} · ${r.remaining.toLocaleString()} still pending.`,
-      );
-      void utils.emailAgent.orphanCount.invalidate({ id: agentId });
-      void utils.emailAgent.board.invalidate({ id: agentId });
+  const resume = api.emailAgent.resumeDrafting.useMutation({
+    onSuccess: () => {
+      toast.success('Resumed. Sweeper will retry on the next tick (60s).');
+      void utils.emailAgent.runtimeStatus.invalidate({ id: agentId });
     },
     onError: (e) => toast.error(e.message),
   });
@@ -263,34 +268,18 @@ export function EmailAgentKanban({
         onOpenChange={setBulkOpen}
       />
 
-      {/* Orphan banner — enrollments whose initial send failed
-          silently sit invisible to the follow-up tick. Sweeper picks
-          them up on its own cadence, but this button lets the
-          operator kick a big backlog through immediately (e.g. after
-          restoring Anthropic credits or fixing an SDK regression). */}
-      {(orphan.data?.count ?? 0) > 0 && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-50/50 px-3 py-2 text-sm dark:bg-amber-950/20">
-          <div>
-            <span className="font-medium text-amber-900 dark:text-amber-200">
-              {orphan.data!.count.toLocaleString()} enrollments never received
-              their initial email
-            </span>
-            <span className="ml-2 text-xs text-muted-foreground">
-              (initial-send job failed silently — usually an Anthropic
-              credit outage or transient error; safe to re-enqueue now)
-            </span>
-          </div>
-          <Button
-            size="sm"
-            onClick={() => reEnqueue.mutate({ id: agentId, maxBatch: 1000 })}
-            disabled={reEnqueue.isPending}
-            className="bg-amber-600 text-white hover:bg-amber-700"
-          >
-            {reEnqueue.isPending
-              ? 'Re-enqueueing…'
-              : `Re-enqueue ${Math.min(1000, orphan.data!.count).toLocaleString()}`}
-          </Button>
-        </div>
+      {/* Runtime status banner — replaces the old orphan banner.
+          Shows live pending count + send rate, or explains WHY nothing
+          is sending (Anthropic error, operator pause, agent paused).
+          Refetches every 10s so the operator sees the sweeper draining
+          without reloading. Resume button clears the error/pause and
+          the sweeper retries on the next 60s tick. */}
+      {status.data && (
+        <StatusBanner
+          status={status.data}
+          onResume={() => resume.mutate({ id: agentId })}
+          isResuming={resume.isPending}
+        />
       )}
 
       {/* Search + filters — client-side over already-loaded rows so
@@ -1328,5 +1317,111 @@ export function ActionsMenu({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+// ---------------------------------------------------------------------
+
+/**
+ * Live drain-status banner. Shows one of five states based on the
+ * runtimeStatus tRPC result:
+ *
+ *   healthy         — pending > 0 AND sweeper actively sending; green
+ *   idle            — pending = 0; grey (or hidden — see below)
+ *   paused_error    — drafter last errored recently; amber + Resume
+ *   paused_operator — drainPausedAt set by an operator; amber + Resume
+ *   agent_paused    — the agent itself is PAUSED / DRAFT / ARCHIVED;
+ *                     grey (Resume here would be misleading — the fix
+ *                     is to Activate the agent, not clear an error).
+ *
+ * Refetches every 10s so the operator sees the count drop in
+ * near-real time and doesn't need to reload the page.
+ */
+function StatusBanner({
+  status,
+  onResume,
+  isResuming,
+}: {
+  status: {
+    state: 'healthy' | 'idle' | 'paused_operator' | 'paused_error' | 'agent_paused';
+    pending: number;
+    sentLast5m: number;
+    sendsPerMinute: number;
+    errorMessage: string | null;
+    errorAt: Date | string | null;
+    drainPausedAt: Date | string | null;
+    agentStatus: string;
+  };
+  onResume: () => void;
+  isResuming: boolean;
+}): JSX.Element | null {
+  if (status.state === 'idle') return null; // nothing to say
+  const common =
+    'mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm';
+  if (status.state === 'healthy') {
+    return (
+      <div
+        className={`${common} border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-950/20`}
+      >
+        <div className="flex items-center gap-2">
+          <CheckCircle2 className="size-4 text-emerald-600" />
+          <span className="font-medium text-emerald-900 dark:text-emerald-200">
+            Agent running · {status.pending.toLocaleString()} pending
+          </span>
+          <span className="text-xs text-muted-foreground">
+            · ~{status.sendsPerMinute}/min · {status.sentLast5m} sent in last 5 min
+          </span>
+        </div>
+      </div>
+    );
+  }
+  if (status.state === 'agent_paused') {
+    return (
+      <div className={`${common} border-zinc-400/40 bg-zinc-50 dark:bg-zinc-900/40`}>
+        <div className="flex items-center gap-2">
+          <PauseCircle className="size-4 text-zinc-500" />
+          <span className="font-medium">
+            Agent is {status.agentStatus.toLowerCase()} · {status.pending.toLocaleString()} pending
+          </span>
+          <span className="text-xs text-muted-foreground">
+            Activate the agent to resume sending.
+          </span>
+        </div>
+      </div>
+    );
+  }
+  // paused_error or paused_operator
+  const isError = status.state === 'paused_error';
+  return (
+    <div
+      className={`${common} border-amber-500/50 bg-amber-50 dark:bg-amber-950/30`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="size-4 text-amber-600" />
+          <span className="font-medium text-amber-900 dark:text-amber-200">
+            {isError
+              ? 'Sending paused — drafter error'
+              : 'Sending paused by operator'}
+            {' · '}
+            {status.pending.toLocaleString()} pending
+          </span>
+        </div>
+        {isError && status.errorMessage && (
+          <p className="mt-1 line-clamp-2 pl-6 text-xs text-amber-900/80 dark:text-amber-200/80">
+            {status.errorMessage}
+          </p>
+        )}
+      </div>
+      <Button
+        size="sm"
+        onClick={onResume}
+        disabled={isResuming}
+        className="bg-amber-600 text-white hover:bg-amber-700"
+      >
+        <Play className="mr-1 size-3.5" />
+        {isResuming ? 'Resuming…' : 'Resume'}
+      </Button>
+    </div>
   );
 }

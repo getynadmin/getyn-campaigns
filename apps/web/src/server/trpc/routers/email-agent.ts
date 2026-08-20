@@ -1190,6 +1190,109 @@ export const emailAgentRouter = createTRPCRouter({
       return { enqueued, remaining };
     }),
 
+  /**
+   * Real-time runtime status for the Kanban board banner. One
+   * roundtrip covers every signal the operator needs: how much is
+   * pending, how much shipped in the last five minutes, and whether
+   * the drafter is currently paused (Anthropic outage, drainPausedAt
+   * set by an operator, agent itself not ACTIVE). Refetched every
+   * 10s from the UI so the banner reflects reality.
+   */
+  runtimeStatus: tenantProcedure
+    .input(idSchema)
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const agent = await prisma.emailAgent.findFirst({
+        where: { id: input.id, tenantId },
+        select: {
+          id: true,
+          status: true,
+          lastDrafterErrorAt: true,
+          lastDrafterErrorMessage: true,
+          drainPausedAt: true,
+        },
+      });
+      if (!agent) throw new TRPCError({ code: 'NOT_FOUND' });
+      const now = new Date();
+      const fiveMinAgo = new Date(now.getTime() - 5 * 60_000);
+      const [pending, sentLast5m] = await Promise.all([
+        prisma.emailAgentEnrollment.count({
+          where: {
+            tenantId,
+            emailAgentId: input.id,
+            status: EnrollmentStatus.ACTIVE,
+            OR: [
+              // Waiting on the follow-up tick.
+              { nextActionAt: { lte: now } },
+              // Orphaned initial (job silently failed).
+              {
+                currentStep: 0,
+                lastSentAt: null,
+                nextActionAt: null,
+              },
+            ],
+          },
+        }),
+        prisma.emailAgentMessage.count({
+          where: {
+            tenantId,
+            enrollment: { emailAgentId: input.id },
+            direction: 'OUTBOUND',
+            sentAt: { gte: fiveMinAgo },
+          },
+        }),
+      ]);
+      // State decision — order matters. Explicit operator pause
+      // outranks a drafter error; drafter error outranks natural
+      // idleness.
+      const errorRecent =
+        agent.lastDrafterErrorAt &&
+        agent.lastDrafterErrorAt > new Date(now.getTime() - 30 * 60_000);
+      let state:
+        | 'healthy'
+        | 'idle'
+        | 'paused_operator'
+        | 'paused_error'
+        | 'agent_paused';
+      if (agent.status !== 'ACTIVE') state = 'agent_paused';
+      else if (agent.drainPausedAt) state = 'paused_operator';
+      else if (errorRecent) state = 'paused_error';
+      else if (pending === 0) state = 'idle';
+      else state = 'healthy';
+      return {
+        state,
+        pending,
+        sentLast5m,
+        sendsPerMinute: Math.round(sentLast5m / 5),
+        errorMessage: agent.lastDrafterErrorMessage,
+        errorAt: agent.lastDrafterErrorAt,
+        drainPausedAt: agent.drainPausedAt,
+        agentStatus: agent.status,
+      };
+    }),
+
+  /**
+   * Clear the drafter-error state and the operator drain-pause so the
+   * follow-up tick / orphan sweep picks the agent back up on its next
+   * run. Idempotent — safe to call when already healthy.
+   */
+  resumeDrafting: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(idSchema)
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const result = await prisma.emailAgent.updateMany({
+        where: { id: input.id, tenantId },
+        data: {
+          lastDrafterErrorAt: null,
+          lastDrafterErrorMessage: null,
+          drainPausedAt: null,
+        },
+      });
+      if (result.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
+      return { ok: true as const };
+    }),
+
   setTags: tenantProcedure
     .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
     .input(

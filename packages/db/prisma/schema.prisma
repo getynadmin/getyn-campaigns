@@ -2330,6 +2330,16 @@ model EmailAgent {
   /// this segment when `autoEnrollNewContacts=true`.
   targetSegmentId       String?
   autoEnrollNewContacts Boolean          @default(false)
+  /// Last drafter failure — populated by the worker when a Sonnet /
+  /// Haiku call errors (out of credits, rate-limited, network drop).
+  /// Cleared on the next successful draft, or manually via the
+  /// "Resume" button on the Kanban status banner.
+  lastDrafterErrorAt    DateTime?
+  lastDrafterErrorMessage String?         @db.Text
+  /// Operator-initiated pause of the auto-drain sweeper. Follow-up
+  /// tick + orphan sweep both skip agents where this is set. Cleared
+  /// by the same Resume button.
+  drainPausedAt         DateTime?
   signature             String           @db.Text
   fromName              String
   fromEmail             String
