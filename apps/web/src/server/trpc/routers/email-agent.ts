@@ -1365,16 +1365,37 @@ export const emailAgentRouter = createTRPCRouter({
       // card back to ACTIVE_CONVERSATION. The follow-up tick picks
       // up the hint on the next pass, weaves it into the Sonnet
       // prompt, and clears both hint + CC after send.
+      // Reset the enrollment out of PAUSED_AWAITING_APPROVAL back to
+      // ACTIVE so processFollowUp's atomic-claim (`where status=ACTIVE`)
+      // succeeds. Without this, the auto-drafted reply that put the
+      // enrollment into PAUSED_AWAITING_APPROVAL blocks the operator's
+      // hint: the priority job's claim silently fails and nothing sends.
       const updated = await prisma.emailAgentEnrollment.updateMany({
         where: { id: input.enrollmentId, tenantId },
         data: {
           suggestedReplyHint: input.hint,
           suggestedReplyCc: input.cc ?? null,
           conversationStatus: 'ACTIVE_CONVERSATION',
-          nextActionAt: new Date(), // still set for tick fallback
+          status: EnrollmentStatus.ACTIVE,
+          nextActionAt: new Date(),
         },
       });
       if (updated.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
+
+      // Supersede any pending auto-drafted reply — the operator's hint
+      // is the authoritative version, and leaving the old DRAFT sitting
+      // in the Approval Inbox would confuse anyone reviewing it.
+      // Marks as REJECTED (the closest existing terminal state) rather
+      // than deleting so the thread history stays intact for audit.
+      await prisma.emailAgentMessage.updateMany({
+        where: {
+          tenantId,
+          enrollmentId: input.enrollmentId,
+          direction: 'OUTBOUND',
+          status: 'DRAFT_AWAITING_APPROVAL',
+        },
+        data: { status: 'REJECTED' },
+      });
       // Priority dispatch — the tick alone would order this NOW row
       // behind every already-due row (12k+ on SkillCertified), so
       // the operator's "Submit hint & resume" would sit behind the
