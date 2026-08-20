@@ -632,7 +632,10 @@ export const emailAgentRouter = createTRPCRouter({
             conversationStatus: lane,
           },
           select: selectShape,
-          orderBy: { enrolledAt: 'desc' },
+          // Latest activity first — an operator hint submit, an
+          // inbound reply, or a fresh send all bump lastActivityAt,
+          // so the freshest card floats to the top of each lane.
+          orderBy: { lastActivityAt: 'desc' },
           take: PER_LANE,
         }),
       );
@@ -748,7 +751,7 @@ export const emailAgentRouter = createTRPCRouter({
             take: 1,
           },
         },
-        orderBy: { enrolledAt: 'desc' },
+        orderBy: { lastActivityAt: 'desc' },
         take: 200,
       });
       const ids = rows.map((r) => r.id);

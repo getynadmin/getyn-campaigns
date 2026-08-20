@@ -2431,6 +2431,11 @@ model EmailAgentEnrollment {
   lastSentAt         DateTime?
   lastInboundAt      DateTime?
   enrolledAt         DateTime                     @default(now())
+  /// Bumped automatically on every write to this row (Prisma
+  /// @updatedAt). Kanban board orders lanes by this DESC so the
+  /// newest activity — an operator hint submit, an incoming reply,
+  /// a fresh send — floats to the top of Active Conversation.
+  lastActivityAt     DateTime                     @default(now()) @updatedAt
   completedAt        DateTime?
   exitReason         String?
 
