@@ -636,7 +636,14 @@ export const emailAgentRouter = createTRPCRouter({
         conversationStatus: lane,
         ...(lane === 'INACTIVE'
           ? {}
-          : { status: { notIn: [EnrollmentStatus.EXITED, EnrollmentStatus.COMPLETED] } }),
+          : {
+              status: { notIn: [EnrollmentStatus.EXITED, EnrollmentStatus.COMPLETED] },
+              // Enrollments whose contact has no email can never send.
+              // Hide them from Active/Review/Cooling — the exit handler
+              // moves them to Inactive on the next sweep. Filtering
+              // here keeps the count honest even before the sweep runs.
+              contact: { email: { not: null } },
+            }),
       });
       const laneQueries = LANES.map((lane) =>
         prisma.emailAgentEnrollment.findMany({
@@ -1227,7 +1234,7 @@ export const emailAgentRouter = createTRPCRouter({
       if (!agent) throw new TRPCError({ code: 'NOT_FOUND' });
       const now = new Date();
       const fiveMinAgo = new Date(now.getTime() - 5 * 60_000);
-      const [pending, sentLast5m] = await Promise.all([
+      const [pending, sentLast5m, sentTotal] = await Promise.all([
         prisma.emailAgentEnrollment.count({
           where: {
             tenantId,
@@ -1251,6 +1258,17 @@ export const emailAgentRouter = createTRPCRouter({
             enrollment: { emailAgentId: input.id },
             direction: 'OUTBOUND',
             sentAt: { gte: fiveMinAgo },
+          },
+        }),
+        // Lifetime send count for this agent — the operator wants to
+        // see total shipped alongside pending, not just the throughput
+        // rate. Cheap: covered by (tenantId, direction, sentAt) index.
+        prisma.emailAgentMessage.count({
+          where: {
+            tenantId,
+            enrollment: { emailAgentId: input.id },
+            direction: 'OUTBOUND',
+            sentAt: { not: null },
           },
         }),
       ]);
@@ -1288,6 +1306,7 @@ export const emailAgentRouter = createTRPCRouter({
         pending,
         sentLast5m,
         sendsPerMinute: Math.round(sentLast5m / 5),
+        sentTotal,
         errorMessage: agent.lastDrafterErrorMessage,
         errorAt: agent.lastDrafterErrorAt,
         drainPausedAt: agent.drainPausedAt,

@@ -406,12 +406,15 @@ export function EmailAgentKanban({
               <header className="flex items-center gap-2 border-b px-3 py-2">
                 <lane.Icon className="size-4" />
                 <span className="text-sm font-semibold">{lane.label}</span>
-                <span className="ml-auto rounded-full bg-background px-2 py-0.5 text-[11px] font-medium">
-                  {loading
-                    ? '…'
-                    : rows.length === laneTotal
-                      ? rows.length
-                      : `${rows.length}/${laneTotal.toLocaleString()}`}
+                <span
+                  className="ml-auto rounded-full bg-background px-2 py-0.5 text-[11px] font-medium"
+                  title={
+                    !loading && rows.length !== laneTotal
+                      ? `Showing top ${rows.length} of ${laneTotal.toLocaleString()} cards in this lane. Use search to jump to a specific card.`
+                      : undefined
+                  }
+                >
+                  {loading ? '…' : laneTotal.toLocaleString()}
                 </span>
               </header>
               {/* Fixed viewport ~10 cards; the column scrolls internally
@@ -1354,6 +1357,7 @@ function StatusBanner({
     pending: number;
     sentLast5m: number;
     sendsPerMinute: number;
+    sentTotal: number;
     errorMessage: string | null;
     errorAt: Date | string | null;
     drainPausedAt: Date | string | null;
@@ -1374,10 +1378,11 @@ function StatusBanner({
         <div className="flex items-center gap-2">
           <CheckCircle2 className="size-4 text-emerald-600" />
           <span className="font-medium text-emerald-900 dark:text-emerald-200">
-            Agent running · {status.pending.toLocaleString()} pending
+            Agent running · {status.pending.toLocaleString()} pending ·{' '}
+            {status.sentTotal.toLocaleString()} sent total
           </span>
           <span className="text-xs text-muted-foreground">
-            · ~{status.sendsPerMinute}/min · {status.sentLast5m} sent in last 5 min
+            · ~{status.sendsPerMinute}/min · {status.sentLast5m} in last 5 min
           </span>
         </div>
       </div>
