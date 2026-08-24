@@ -595,15 +595,60 @@ async function processFollowUp(enrollmentId: string): Promise<void> {
 
   const history = await loadThreadHistory(enrollmentId);
   const nextStep = enrollment.currentStep + 1;
+
+  // Placeholder OUTBOUND row written BEFORE the LLM call — same
+  // guardrail pattern as handleEmailAgentEnroll. Three wins:
+  //  1. If Anthropic succeeds but Resend/DB fails, this row survives.
+  //     A retry (BullMQ or next tick) sees the enrollment already has
+  //     recent OUTBOUND activity and can bail without paying for a
+  //     second Sonnet/Haiku draft.
+  //  2. On draft failure, we mark this row FAILED so the drawer
+  //     thread makes the failure visible — the operator no longer
+  //     sees an enrollment stuck in Active with no explanation.
+  //  3. Fixes the badriyaj@mosd.gov.om class of bug where the priority
+  //     immediate-follow-up job claimed the row, hit a silent LLM
+  //     error, and left the enrollment with nextActionAt=null / hint
+  //     intact / no outbound row — invisible failure mode.
+  const placeholder = await prisma.emailAgentMessage.create({
+    data: {
+      tenantId: enrollment.tenantId,
+      enrollmentId,
+      direction: EmailAgentMessageDirection.OUTBOUND,
+      subject: '(drafting…)',
+      bodyText: '',
+      bodyHtml: '',
+      status: EmailAgentMessageStatus.APPROVED_QUEUED,
+    },
+    select: { id: true },
+  });
+
   const draft = await draftFollowUp(client, enrollment, {
     stepNumber: nextStep,
     history,
   });
-  if (!draft) return;
+  if (!draft) {
+    await prisma.emailAgentMessage.update({
+      where: { id: placeholder.id },
+      data: {
+        status: EmailAgentMessageStatus.FAILED,
+        bodyText: '[draft failed — see agent lastDrafterErrorMessage]',
+      },
+    });
+    // Re-arm so the tick tries again (drafter error clears itself on
+    // the next successful call, so a retry may just work).
+    await prisma.emailAgentEnrollment.update({
+      where: { id: enrollmentId },
+      data: { nextActionAt: new Date(Date.now() + 5 * 60_000) },
+    });
+    return;
+  }
 
-  await sendAndPersistOutbound(enrollment, draft, EmailAgentMessageStatus.APPROVED_QUEUED, {
-    step: nextStep,
-  });
+  await sendAndPersistOutbound(
+    enrollment,
+    draft,
+    EmailAgentMessageStatus.APPROVED_QUEUED,
+    { step: nextStep, existingMessageId: placeholder.id },
+  );
   await scheduleNextFollowUp(enrollmentId, nextStep);
 }
 
