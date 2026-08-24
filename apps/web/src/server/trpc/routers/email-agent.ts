@@ -720,22 +720,55 @@ export const emailAgentRouter = createTRPCRouter({
     .input(
       z.object({
         id: z.string().min(1),
-        q: z.string().trim().min(1).max(200),
+        // Text query is now optional — the tag chips also trigger a
+        // server search, and it's valid to filter by tags alone with
+        // no text. At least one of q or tags must be non-empty; the
+        // client refuses the fetch when both are empty.
+        q: z.string().trim().max(200).optional(),
+        // Multi-select tag filter, OR semantics: match if the row
+        // has ANY of the given tags. Case-insensitive; the GIN
+        // index on tags handles the `hasSome` well at scale.
+        tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
       const tenantId = ctx.tenantContext.tenant.id;
+      const q = input.q?.trim() ?? '';
+      const tags = input.tags ?? [];
+      if (!q && tags.length === 0) {
+        return {
+          lanes: {
+            ACTIVE_CONVERSATION: [],
+            REVIEW_RESPONSE: [],
+            COOLING_PERIOD: [],
+            INACTIVE: [],
+          },
+          matchTotal: 0,
+        };
+      }
       const rows = await prisma.emailAgentEnrollment.findMany({
         where: {
           tenantId,
           emailAgentId: input.id,
-          contact: {
-            OR: [
-              { email: { contains: input.q, mode: 'insensitive' } },
-              { firstName: { contains: input.q, mode: 'insensitive' } },
-              { lastName: { contains: input.q, mode: 'insensitive' } },
-            ],
-          },
+          ...(q
+            ? {
+                contact: {
+                  OR: [
+                    { email: { contains: q, mode: 'insensitive' } },
+                    { firstName: { contains: q, mode: 'insensitive' } },
+                    { lastName: { contains: q, mode: 'insensitive' } },
+                  ],
+                },
+              }
+            : {}),
+          // hasSome — OR semantics across tags. Prisma lowercases
+          // neither side, so we normalise the incoming list to match
+          // however the operator originally saved them (Kanban tag
+          // editor stores as-entered). Not perfect for arbitrary
+          // casing but every preset is fixed-case, so it works for
+          // the common path; free-form custom tags need to match the
+          // original casing exactly.
+          ...(tags.length > 0 ? { tags: { hasSome: tags } } : {}),
         },
         select: {
           id: true,

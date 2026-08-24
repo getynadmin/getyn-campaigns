@@ -140,9 +140,20 @@ export function EmailAgentKanban({
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 250);
     return () => clearTimeout(t);
   }, [search]);
+  // Tag filter hoisted above the query so the query can depend on it —
+  // tags now trigger a server-side search too, otherwise the client
+  // only sees the top-50-per-lane slice and cards deeper down never
+  // match (real bug: 'Interested' tag missing rows that were legit
+  // tagged interested but sat below the loaded slice).
+  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
+  const tagFilterArr = Array.from(tagFilter);
   const searchQuery = api.emailAgent.boardSearch.useQuery(
-    { id: agentId, q: debouncedSearch },
-    { enabled: debouncedSearch.length > 0 },
+    {
+      id: agentId,
+      q: debouncedSearch || undefined,
+      tags: tagFilterArr.length > 0 ? tagFilterArr : undefined,
+    },
+    { enabled: debouncedSearch.length > 0 || tagFilterArr.length > 0 },
   );
   // Real-time drain status — pending count + throughput + why-not
   // when the automatic sweeper is paused. Replaces the old orphan
@@ -177,11 +188,6 @@ export function EmailAgentKanban({
   const [filter, setFilter] = useState<
     'all' | 'with_replies' | 'awaiting_reply' | 'active_24h' | 'active_7d'
   >('all');
-  // Tag filter — multi-select, OR semantics (a card matches if it
-  // has at least one of the selected tags). Empty set = no tag
-  // filter applied.
-  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
-
   // Every tag that currently appears anywhere on the board — used to
   // render the filter chips so custom tags show up alongside presets.
   const allTagsOnBoard = (() => {
@@ -206,17 +212,8 @@ export function EmailAgentKanban({
       );
       if (last < cutoff) return false;
     }
-    if (tagFilter.size > 0) {
-      const rowTagsLower = (r.tags ?? []).map((t) => t.toLowerCase());
-      let hit = false;
-      for (const t of tagFilter) {
-        if (rowTagsLower.includes(t.toLowerCase())) {
-          hit = true;
-          break;
-        }
-      }
-      if (!hit) return false;
-    }
+    // Tag filter is server-side now (see searchQuery above) so the
+    // rows we've already received are guaranteed tag-matched.
     return true;
   };
 
@@ -384,7 +381,8 @@ export function EmailAgentKanban({
         {LANES.map((lane) => {
           // Data source: server search results when a query is
           // active; the paginated board otherwise.
-          const searchActive = debouncedSearch.length > 0;
+          const searchActive =
+            debouncedSearch.length > 0 || tagFilterArr.length > 0;
           const source = searchActive
             ? (searchQuery.data?.lanes[lane.key] ?? [])
             : (data?.lanes[lane.key] ?? []);
