@@ -101,18 +101,38 @@ export async function handleEmailAgentEnroll(
   const enrollment = await loadEnrollment(enrollmentId);
   if (!enrollment) return;
 
-  // Idempotence: if we already sent the initial email, skip.
-  const existing = await prisma.emailAgentMessage.findFirst({
+  // Idempotence: only ACTUALLY sent rows block retry. A placeholder
+  // that was written before the LLM call but whose LLM/send never
+  // completed (Anthropic crash, Resend failure, worker OOM) is a
+  // ghost — we would leave enrollments stuck forever if we let those
+  // ghost rows count as "already sent". sentAt is only populated
+  // once Resend returned a messageId, so it's the reliable signal.
+  //
+  // We ALSO garbage-collect any stale placeholder/failed-send rows
+  // for this enrollment so the fresh attempt doesn't stack a new
+  // row on top of noise — the drawer thread stays clean.
+  const alreadySent = await prisma.emailAgentMessage.findFirst({
     where: {
       enrollmentId,
       direction: EmailAgentMessageDirection.OUTBOUND,
+      sentAt: { not: null },
     },
     select: { id: true },
   });
-  if (existing) {
-    console.info(`[email-agent:enroll] ${enrollmentId} already has outbound; skipping`);
+  if (alreadySent) {
+    console.info(`[email-agent:enroll] ${enrollmentId} already sent; skipping`);
     return;
   }
+  // Sweep any pre-existing ghost placeholders (LLM never finished /
+  // Resend broke last time). Deleting rather than FAILED-marking so
+  // the drawer thread doesn't accumulate noise.
+  await prisma.emailAgentMessage.deleteMany({
+    where: {
+      enrollmentId,
+      direction: EmailAgentMessageDirection.OUTBOUND,
+      sentAt: null,
+    },
+  });
 
   if (enrollment.status !== EnrollmentStatus.ACTIVE) return;
   // Test-agent enrollments bypass the ACTIVE-only gate so operators
