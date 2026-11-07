@@ -23,6 +23,9 @@ export default async function CheckoutPage({
     volume?: string;
     cycle?: string;
     error?: string;
+    extraAi?: string;
+    extraWa?: string;
+    extraSms?: string;
   };
 }): Promise<JSX.Element> {
   const ctx = await createTRPCContext({ headers: new Headers() });
@@ -45,6 +48,14 @@ export default async function CheckoutPage({
   const cycle = (searchParams.cycle === 'annual' ? 'annual' : 'monthly') as
     | 'monthly'
     | 'annual';
+  const clampBundle = (raw: string | undefined, max: number): number => {
+    const n = Number.parseInt(raw ?? '', 10);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return Math.min(n, max);
+  };
+  const extraAi = clampBundle(searchParams.extraAi, 50);
+  const extraWa = clampBundle(searchParams.extraWa, 100);
+  const extraSms = clampBundle(searchParams.extraSms, 100);
 
   return (
     <>
@@ -56,6 +67,9 @@ export default async function CheckoutPage({
           config: pricing.config,
           volume,
           cycle,
+          extraAi,
+          extraWa,
+          extraSms,
           errorFromReturn: searchParams.error ?? null,
           logoUrl,
         }}

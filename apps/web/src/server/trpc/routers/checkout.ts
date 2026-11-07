@@ -75,6 +75,13 @@ export const checkoutRouter = createTRPCRouter({
         planSlug: z.string().min(1).max(60),
         volume: z.number().int().min(1).max(100_000_000),
         billingCycle: z.enum(['monthly', 'annual']),
+        // Extras selected on /pricing — each is a count of 100-unit
+        // bundles added on top of the base plan. Priced at
+        // plan.extra*PricePer100 × count × (12 if annual). Materialised
+        // as TenantLimitOverride rows after PAID + tenant provisioning.
+        extraAiBundles: z.number().int().min(0).max(50).default(0),
+        extraWhatsappBundles: z.number().int().min(0).max(100).default(0),
+        extraSmsBundles: z.number().int().min(0).max(100).default(0),
         customer: z.object({
           email: z.string().trim().email(),
           firstName: z.string().trim().max(80),
@@ -97,6 +104,9 @@ export const checkoutRouter = createTRPCRouter({
           name: true,
           metadata: true,
           currency: true,
+          extraAiCreditsPricePer100: true,
+          extraWhatsappPricePer100: true,
+          extraSmsPricePer100: true,
         },
       });
       if (!plan) {
@@ -113,8 +123,18 @@ export const checkoutRouter = createTRPCRouter({
         });
       }
       const quote = calculatePrice(input.volume, cfg);
-      const amountCents =
+      // Base plan price + per-bundle extras. Annual = 12× (no discount
+      // layered on extras — they bill at the same per-100 unit price
+      // whether monthly or annual, scaled to the chosen cycle).
+      const extrasMonthly =
+        input.extraAiBundles * plan.extraAiCreditsPricePer100 +
+        input.extraWhatsappBundles * plan.extraWhatsappPricePer100 +
+        input.extraSmsBundles * plan.extraSmsPricePer100;
+      const extrasForCycle =
+        input.billingCycle === 'monthly' ? extrasMonthly : extrasMonthly * 12;
+      const baseForCycle =
         input.billingCycle === 'monthly' ? quote.monthlyCents : quote.yearlyCents;
+      const amountCents = baseForCycle + extrasForCycle;
 
       // 2) Persist the order in DRAFT.
       const merchantReference = `co_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
@@ -132,6 +152,9 @@ export const checkoutRouter = createTRPCRouter({
           customerEmail: input.customer.email.toLowerCase(),
           customerFirstName: input.customer.firstName,
           customerLastName: input.customer.lastName || null,
+          extraAiBundles: input.extraAiBundles,
+          extraWhatsappBundles: input.extraWhatsappBundles,
+          extraSmsBundles: input.extraSmsBundles,
         },
         select: { id: true, merchantReference: true },
       });
@@ -172,6 +195,9 @@ export const checkoutRouter = createTRPCRouter({
           planSlug: plan.slug,
           volume: String(quote.volume),
           billingCycle: input.billingCycle,
+          extraAiBundles: String(input.extraAiBundles),
+          extraWhatsappBundles: String(input.extraWhatsappBundles),
+          extraSmsBundles: String(input.extraSmsBundles),
         },
       });
 

@@ -27,6 +27,9 @@ export interface CheckoutInitial {
   config: PricingConfig;
   volume: number;
   cycle: 'monthly' | 'annual';
+  extraAi: number;
+  extraWa: number;
+  extraSms: number;
   errorFromReturn: string | null;
   logoUrl: string | null;
 }
@@ -108,6 +111,9 @@ export function CheckoutClient({ initial }: { initial: CheckoutInitial }): JSX.E
       planSlug: initial.planSlug,
       volume: initial.volume,
       billingCycle: initial.cycle,
+      extraAiBundles: initial.extraAi,
+      extraWhatsappBundles: initial.extraWa,
+      extraSmsBundles: initial.extraSms,
       customer: {
         email: email.trim().toLowerCase(),
         firstName: firstName.trim(),

@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { TRIAL_DAYS, ONE_DAY_MS } from '@/lib/constants';
 import { getSupabaseAdmin } from '@/server/auth/supabase-admin';
+import { claimPendingCheckoutForTenant } from '@/server/billing/claim-pending-checkout';
 import { makeUniqueSlug } from '@/server/slug';
 import { createTRPCRouter, publicProcedure } from '../trpc';
 
@@ -94,6 +95,14 @@ export const signupRouter = createTRPCRouter({
           });
           return { user, tenant };
         });
+        // If this email paid on /pricing with extras before signing up,
+        // link the order to the new tenant and materialise the extras
+        // as TenantLimitOverride rows. No-op if no matching order.
+        await claimPendingCheckoutForTenant({
+          email: input.email,
+          tenantId: result.tenant.id,
+          userId: result.user.id,
+        }).catch(() => null);
         return { tenantSlug: result.tenant.slug };
       } catch (err) {
         // Best-effort rollback of the Supabase user so retries succeed.

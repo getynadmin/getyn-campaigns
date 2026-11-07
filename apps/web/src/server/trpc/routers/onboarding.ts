@@ -3,6 +3,7 @@ import { prisma, Role } from '@getyn/db';
 import { z } from 'zod';
 
 import { TRIAL_DAYS, ONE_DAY_MS } from '@/lib/constants';
+import { claimPendingCheckoutForTenant } from '@/server/billing/claim-pending-checkout';
 import { makeUniqueSlug } from '@/server/slug';
 import { createTRPCRouter, publicProcedure } from '../trpc';
 
@@ -97,8 +98,13 @@ export const onboardingRouter = createTRPCRouter({
         await tx.membership.create({
           data: { userId: user.id, tenantId: tenant.id, role: Role.OWNER },
         });
-        return tenant;
+        return { tenant, userId: user.id };
       });
-      return { tenantSlug: result.slug };
+      await claimPendingCheckoutForTenant({
+        email,
+        tenantId: result.tenant.id,
+        userId: result.userId,
+      }).catch(() => null);
+      return { tenantSlug: result.tenant.slug };
     }),
 });
