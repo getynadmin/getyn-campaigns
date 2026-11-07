@@ -47,6 +47,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
+import { TemplatePreviewDialog } from './template-preview-dialog';
+
 const CATEGORY_LABEL: Record<EmailTemplateCategoryValue, string> = {
   NEWSLETTER: 'Newsletter',
   ANNOUNCEMENT: 'Announcement',
@@ -96,6 +98,7 @@ export function TemplatesLibraryClient({
   const [rawSearch, setRawSearch] = useState('');
   const search = useDebounced(rawSearch, 300);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const [aiBrief, setAiBrief] = useState('');
 
   const generate = api.ai.generateEmailTemplate.useMutation({
@@ -298,7 +301,8 @@ export function TemplatesLibraryClient({
             return (
               <Card
                 key={tpl.id}
-                className="group flex flex-col overflow-hidden transition-shadow hover:shadow-md"
+                onClick={() => setPreviewId(tpl.id)}
+                className="group flex cursor-pointer flex-col overflow-hidden transition-shadow hover:shadow-md"
               >
                 <div
                   className={cn(
@@ -336,6 +340,7 @@ export function TemplatesLibraryClient({
                           <Button
                             variant="ghost"
                             size="sm"
+                            onClick={(e) => e.stopPropagation()}
                             className="-mr-2 -mt-1 size-7 p-0 opacity-60 group-hover:opacity-100"
                           >
                             <MoreHorizontal className="size-4" />
@@ -403,7 +408,10 @@ export function TemplatesLibraryClient({
                     </p>
                   ) : null}
                 </CardContent>
-                <div className="border-t bg-muted/20 px-4 py-2">
+                <div
+                  className="border-t bg-muted/20 px-4 py-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {isSystem ? (
                     <Button
                       variant="ghost"
@@ -431,6 +439,21 @@ export function TemplatesLibraryClient({
           })
         )}
       </div>
+
+      <TemplatePreviewDialog
+        tenantSlug={tenantSlug}
+        template={
+          (data?.items ?? []).find((t) => t.id === previewId) ?? null
+        }
+        open={previewId !== null}
+        onOpenChange={(o) => (o ? null : setPreviewId(null))}
+        canCreate={canCreate}
+        onUseTemplate={(id) => {
+          setPreviewId(null);
+          duplicate.mutate({ id });
+        }}
+        useTemplatePending={duplicate.isPending}
+      />
 
       <Dialog
         open={confirmDeleteId !== null}
