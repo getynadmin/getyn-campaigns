@@ -145,13 +145,13 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
   // three come from the plan row.
   const includedEmails = quote.volume;
   const includedWhatsapp =
-    lookupIncluded(initial.features, 'whatsappMonthly', DEFAULT_INCLUDED.whatsappMonthly) +
+    lookupIncluded(initial.features, 'WA_MESSAGES_PER_MONTH', DEFAULT_INCLUDED.whatsappMonthly) +
     extraWa * 100;
   const includedSms =
-    lookupIncluded(initial.features, 'smsMonthly', DEFAULT_INCLUDED.smsMonthly) +
+    lookupIncluded(initial.features, 'SMS_SEGMENTS_PER_MONTH', DEFAULT_INCLUDED.smsMonthly) +
     extraSms * 100;
   const includedAiCredits =
-    lookupIncluded(initial.features, 'aiCreditsMonthly', DEFAULT_INCLUDED.aiCreditsMonthly) +
+    lookupIncluded(initial.features, 'AI_CREDITS_PER_MONTH', DEFAULT_INCLUDED.aiCreditsMonthly) +
     extraAi * 100;
 
   // ── Force light theme on /pricing regardless of tenant dark-mode preference.
