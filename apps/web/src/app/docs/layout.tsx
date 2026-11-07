@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 
 import { DocsFooter } from '@/components/docs/docs-footer';
 import { DocsHeader } from '@/components/docs/docs-header';
+import { HelpAssistant } from '@/components/help/help-assistant';
 
 export const metadata: Metadata = {
   title: { default: 'Getyn Campaigns Docs', template: '%s · Getyn Campaigns Docs' },
@@ -19,6 +20,7 @@ export default function DocsLayout({
       <DocsHeader />
       <main className="flex-1">{children}</main>
       <DocsFooter />
+      <HelpAssistant />
     </div>
   );
 }

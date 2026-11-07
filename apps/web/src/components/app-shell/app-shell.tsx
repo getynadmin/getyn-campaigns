@@ -1,3 +1,5 @@
+import { HelpAssistant } from '@/components/help/help-assistant';
+
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 import { TrialBar } from './trial-bar';
@@ -36,6 +38,7 @@ export function AppShell({
         <Topbar currentSlug={currentSlug} tenants={tenants} user={user} />
         <main className="flex-1 overflow-y-auto">{children}</main>
       </div>
+      <HelpAssistant />
     </div>
   );
 }

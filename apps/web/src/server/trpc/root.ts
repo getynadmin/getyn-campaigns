@@ -2,6 +2,7 @@ import { agentRouter } from './routers/agent';
 import { automationRouter } from './routers/automation';
 import { agentAttachmentsRouter } from './routers/agent-attachments';
 import { emailVerifierRouter } from './routers/email-verifier';
+import { helpRouter } from './routers/help';
 import { aiRouter } from './routers/ai';
 import { authRouter } from './routers/auth';
 import { campaignsRouter } from './routers/campaigns';
@@ -68,6 +69,7 @@ export const appRouter = createTRPCRouter({
   whatsappAgent: whatsappAgentRouter,
   // Phase 4 M7
   ai: aiRouter,
+  help: helpRouter,
   // Phase 5 M2 — per-device session management
   userSessions: userSessionsRouter,
   // Phase 5.5 M5 — tenant subscription view + upgrade requests
