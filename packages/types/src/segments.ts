@@ -303,3 +303,16 @@ export const segmentPreviewSchema = z.object({
   sampleSize: z.number().int().min(0).max(25).default(10),
 });
 export type SegmentPreviewInput = z.infer<typeof segmentPreviewSchema>;
+
+// ---------------------------------------------------------------------------
+// Segment Agent — NL → rules
+// ---------------------------------------------------------------------------
+
+export const aiDraftSegmentSchema = z.object({
+  brief: z
+    .string()
+    .trim()
+    .min(5, 'Describe who you want to target in at least a few words.')
+    .max(1000),
+});
+export type AiDraftSegmentInput = z.infer<typeof aiDraftSegmentSchema>;

@@ -2,11 +2,12 @@ import { TRPCError } from '@trpc/server';
 
 import {
   AiNotConfiguredError,
+  draftSegmentRules,
   draftWhatsAppTemplate,
   isAiConfigured,
 } from '@getyn/ai';
 import { PlanMetric, Role, prisma, withTenant } from '@getyn/db';
-import { aiDraftTemplateSchema } from '@getyn/types';
+import { aiDraftSegmentSchema, aiDraftTemplateSchema } from '@getyn/types';
 
 import { assertTenantActive } from '@/server/billing/assert-active';
 import { assertWithinLimit } from '@/server/billing/assert-limit';
@@ -147,6 +148,119 @@ export const aiRouter = createTRPCRouter({
 
       return {
         components: result.components,
+        rationale: result.rationale,
+        issues: result.issues,
+        attempts: result.attempts,
+        cost: result.cost,
+      };
+    }),
+
+  /**
+   * Segment Agent — natural-language brief → SegmentRules tree.
+   * Same gates as draftWhatsAppTemplate: EDITOR+, active tenant,
+   * monthly AI credit, and hourly per-tenant rate limit.
+   */
+  draftSegment: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(aiDraftSegmentSchema)
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const userId = ctx.user.id;
+      await assertTenantActive(tenantId);
+      await assertWithinLimit(tenantId, PlanMetric.AI_CREDITS_PER_MONTH, 1);
+
+      const since = new Date(Date.now() - 60 * 60 * 1000);
+      const recent = await withTenant(tenantId, (tx) =>
+        tx.aiGeneration.count({
+          where: {
+            tenantId,
+            feature: 'segment_draft',
+            createdAt: { gte: since },
+          },
+        }),
+      );
+      if (recent >= HOURLY_LIMIT_PER_TENANT) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Hourly AI limit reached (${HOURLY_LIMIT_PER_TENANT}/hour). Try again in a bit.`,
+        });
+      }
+
+      const [tenant, tags, customFields] = await Promise.all([
+        prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { name: true },
+        }),
+        withTenant(tenantId, (tx) =>
+          tx.tag.findMany({
+            where: { tenantId },
+            select: { id: true, name: true },
+            orderBy: { name: 'asc' },
+            take: 200,
+          }),
+        ),
+        withTenant(tenantId, (tx) =>
+          tx.customField.findMany({
+            where: { tenantId },
+            select: { id: true, key: true, label: true, type: true },
+            orderBy: { label: 'asc' },
+            take: 100,
+          }),
+        ),
+      ]);
+
+      const anthropic = await getAnthropicCredentials();
+
+      let result;
+      try {
+        result = await draftSegmentRules(
+          {
+            brief: input.brief,
+            tenantName: tenant?.name,
+            tags,
+            customFields,
+          },
+          anthropic.apiKey ? { apiKey: anthropic.apiKey } : {},
+        );
+      } catch (err) {
+        if (err instanceof AiNotConfiguredError) {
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message:
+              'AI features are not configured on the server (missing ANTHROPIC_API_KEY).',
+          });
+        }
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message:
+            err instanceof Error ? `AI generation failed: ${err.message}` : 'AI generation failed.',
+          cause: err,
+        });
+      }
+
+      try {
+        await withTenant(tenantId, (tx) =>
+          tx.aiGeneration.create({
+            data: {
+              tenantId,
+              userId,
+              feature: 'segment_draft',
+              prompt: input.brief,
+              response: result.raw,
+              tokensUsed: result.cost.totalTokens,
+              cost: result.cost.costUsd,
+            },
+          }),
+        );
+      } catch (auditErr) {
+        console.warn(
+          '[ai.draftSegment] audit insert failed:',
+          auditErr instanceof Error ? auditErr.message : auditErr,
+        );
+      }
+
+      return {
+        rules: result.rules,
         rationale: result.rationale,
         issues: result.issues,
         attempts: result.attempts,

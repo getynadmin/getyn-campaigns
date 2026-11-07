@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { ArrowLeft, Loader2, Save, Users } from 'lucide-react';
+import { ArrowLeft, Loader2, Save, Sparkles, Users } from 'lucide-react';
 
 import type { SegmentRules } from '@getyn/types';
 
@@ -66,6 +66,23 @@ export function SegmentEditor({
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialDescription);
   const [rules, setRules] = useState<SegmentRules>(initialRules);
+  const [aiBrief, setAiBrief] = useState('');
+  const [aiRationale, setAiRationale] = useState<string | null>(null);
+
+  const draftSegment = api.ai.draftSegment.useMutation({
+    onSuccess: (res) => {
+      if (res.rules) {
+        setRules(res.rules);
+        setAiRationale(res.rationale || null);
+        toast.success('Segment rules generated.');
+      } else {
+        toast.error(
+          res.issues[0]?.message ?? 'Could not generate rules. Try rephrasing.',
+        );
+      }
+    },
+    onError: (err) => toast.error(err.message || 'Could not generate rules.'),
+  });
 
   const customFields = api.customFields.list.useQuery();
   const tags = api.tags.list.useQuery();
@@ -197,6 +214,53 @@ export function SegmentEditor({
                   className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 />
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Sparkles className="size-4 text-violet-500" />
+                Describe who to target
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <textarea
+                value={aiBrief}
+                onChange={(e) => setAiBrief(e.target.value)}
+                placeholder='e.g. "Subscribers tagged Interested who were created in the last 30 days"'
+                rows={2}
+                maxLength={1000}
+                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  Claude will fill in the rules below. Review before saving.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={
+                    draftSegment.isPending || aiBrief.trim().length < 5
+                  }
+                  onClick={() =>
+                    draftSegment.mutate({ brief: aiBrief.trim() })
+                  }
+                >
+                  {draftSegment.isPending ? (
+                    <Loader2 className="mr-1 size-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="mr-1 size-4" />
+                  )}
+                  Generate rules
+                </Button>
+              </div>
+              {aiRationale ? (
+                <p className="rounded-md border border-violet-500/30 bg-violet-50/40 px-3 py-2 text-xs text-violet-900 dark:bg-violet-950/30 dark:text-violet-200">
+                  {aiRationale}
+                </p>
+              ) : null}
             </CardContent>
           </Card>
 
