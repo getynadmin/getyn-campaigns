@@ -31,6 +31,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/trpc';
 
+import { UpgradeModal } from './upgrade-modal';
+
 const METRIC_LABEL: Record<PlanMetric, string> = {
   CONTACTS: 'Contacts',
   EMAILS_PER_MONTH: 'Emails / month',
@@ -73,6 +75,7 @@ export function SubscriptionClient(): JSX.Element {
   const utils = api.useUtils();
   const { data, isLoading } = api.subscription.get.useQuery();
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [modernUpgradeOpen, setModernUpgradeOpen] = useState(false);
   const [targetPlanId, setTargetPlanId] = useState<string>('');
   const [upgradeReason, setUpgradeReason] = useState('');
 
@@ -156,14 +159,12 @@ export function SubscriptionClient(): JSX.Element {
               </div>
             )}
           </div>
-          {data.allowUpgradeRequests &&
-            upgradeTargets.length > 0 &&
-            !data.pendingRequest && (
-              <Button onClick={() => setUpgradeOpen(true)}>
-                <ArrowUpCircle className="mr-2 size-4" />
-                Request upgrade
-              </Button>
-            )}
+          {!data.pendingRequest && (
+            <Button onClick={() => setModernUpgradeOpen(true)}>
+              <ArrowUpCircle className="mr-2 size-4" />
+              Upgrade
+            </Button>
+          )}
         </div>
 
         {data.pendingRequest && (
@@ -360,6 +361,11 @@ export function SubscriptionClient(): JSX.Element {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <UpgradeModal
+        open={modernUpgradeOpen}
+        onOpenChange={setModernUpgradeOpen}
+      />
     </div>
   );
 }

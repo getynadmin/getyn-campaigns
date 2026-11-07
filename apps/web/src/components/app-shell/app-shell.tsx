@@ -1,5 +1,6 @@
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
+import { TrialBar } from './trial-bar';
 
 type Tenant = { id: string; name: string; slug: string };
 
@@ -31,6 +32,7 @@ export function AppShell({
         user={user}
       />
       <div className="flex min-w-0 flex-1 flex-col">
+        <TrialBar />
         <Topbar currentSlug={currentSlug} tenants={tenants} user={user} />
         <main className="flex-1 overflow-y-auto">{children}</main>
       </div>
