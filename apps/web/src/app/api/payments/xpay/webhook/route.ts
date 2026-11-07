@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 
 import { CheckoutOrderStatus, prisma } from '@getyn/db';
 
+import { provisionOrderExtras } from '@/server/billing/provision-order-extras';
 import {
   getXpayCredentials,
   getXpaySubscription,
@@ -68,7 +69,10 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ ok: true, ignored: 'no_order' });
   }
   if (order.status === CheckoutOrderStatus.PAID) {
-    return NextResponse.json({ ok: true, already: 'PAID' });
+    // Retry extras in case the previous call landed PAID but failed
+    // to provision (e.g. tenantId was null at that time).
+    const provisioned = await provisionOrderExtras(order.id);
+    return NextResponse.json({ ok: true, already: 'PAID', extras: provisioned });
   }
 
   // Re-verify with XPay — never trust the webhook body alone.
@@ -91,7 +95,15 @@ export async function POST(request: Request): Promise<Response> {
         failureReason: null,
       },
     });
-    return NextResponse.json({ ok: true, updated: 'PAID' });
+    // Idempotent — re-entry is a no-op once extrasAppliedAt is set.
+    // Orders without tenantId (first-signup checkout) skip here and
+    // get applied once onboarding links the tenant.
+    const provisioned = await provisionOrderExtras(order.id);
+    return NextResponse.json({
+      ok: true,
+      updated: 'PAID',
+      extras: provisioned,
+    });
   }
 
   const shouldFail = status === 'FAILED' || status === 'CANCELED';

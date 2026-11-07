@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { CheckoutOrderStatus, prisma } from '@getyn/db';
 
 import { appBaseUrl } from '@/server/auth/auth0';
+import { provisionOrderExtras } from '@/server/billing/provision-order-extras';
 import { getXpaySubscription } from '@/server/integrations/xpay';
 
 /**
@@ -39,6 +40,8 @@ export async function GET(request: Request): Promise<Response> {
 
   // Already terminal — just bounce to the right place.
   if (order.status === CheckoutOrderStatus.PAID) {
+    // Retry extras in case it landed PAID before tenant was linked.
+    await provisionOrderExtras(order.id);
     return NextResponse.redirect(
       new URL(`/checkout/confirmation?ref=${ref}`, appBaseUrl()),
     );
@@ -69,6 +72,8 @@ export async function GET(request: Request): Promise<Response> {
         failureReason: null,
       },
     });
+    // Best-effort — idempotent, re-tried by webhook if it fails.
+    await provisionOrderExtras(order.id);
     return NextResponse.redirect(
       new URL(`/checkout/confirmation?ref=${ref}`, appBaseUrl()),
     );

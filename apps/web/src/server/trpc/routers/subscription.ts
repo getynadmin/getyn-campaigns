@@ -395,6 +395,10 @@ export const subscriptionRouter = createTRPCRouter({
           customerLastName: null,
           tenantId,
           userId: ctx.user.id,
+          extraAiBundles: input.extraAiBundles,
+          extraWhatsappBundles: input.extraWhatsappBundles,
+          extraSmsBundles: input.extraSmsBundles,
+          upgradeMethod: 'xpay_upgrade',
         },
       });
       const callbackUrl = new URL(

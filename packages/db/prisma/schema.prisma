@@ -1529,6 +1529,16 @@ model CheckoutOrder {
   // Tenant provisioned after PAID — populated by the confirmation
   // handler on first "Go to dashboard" click.
   tenantId            String?
+  // Extras captured at checkout: each 100-unit bundle layered on top
+  // of the plan's base limits. Price is plan.extra*PricePer100 × count,
+  // folded into amountCents. On PAID we materialise these as
+  // TenantLimitOverride rows (idempotent via extrasAppliedAt).
+  extraAiBundles       Int      @default(0)
+  extraWhatsappBundles Int      @default(0)
+  extraSmsBundles      Int      @default(0)
+  // 'xpay_upgrade' for self-serve upgrades, null for first-signup orders.
+  upgradeMethod        String?
+  extrasAppliedAt      DateTime?
   paidAt              DateTime?
   failedAt            DateTime?
   failureReason       String?             @db.Text
