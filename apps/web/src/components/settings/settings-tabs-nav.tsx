@@ -13,7 +13,6 @@ const tabs = [
   { key: 'sending-domains', label: 'Sending domains' },
   { key: 'subscription', label: 'Subscription' },
   { key: 'billing', label: 'Billing' },
-  { key: 'channels', label: 'Channels' },
   { key: 'themes', label: 'Themes' },
 ] as const;
 

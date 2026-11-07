@@ -25,6 +25,7 @@ import {
   Users,
   Workflow,
   Bot,
+  Radio,
 } from 'lucide-react';
 
 import { api } from '@/lib/trpc';
@@ -162,7 +163,10 @@ function buildSections(slug: string): SidebarSection[] {
     {
       key: 'workspace',
       label: 'Workspace',
-      items: [{ href: t('/settings'), label: 'Settings', icon: Settings }],
+      items: [
+        { href: t('/channels'), label: 'Channels', icon: Radio },
+        { href: t('/settings'), label: 'Settings', icon: Settings },
+      ],
     },
   ];
 }
