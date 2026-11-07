@@ -8,7 +8,6 @@ import {
   ArrowRight,
   Copy,
   FileText,
-  Loader2,
   MoreHorizontal,
   Pencil,
   Search,
@@ -47,6 +46,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
+import { AiButton } from '@/components/ui/ai-button';
+
+import { AiGenerateTemplateDialog } from './ai-generate-template-dialog';
 import { TemplatePreviewDialog } from './template-preview-dialog';
 import { TemplateThumbnail } from './template-thumbnail';
 
@@ -93,7 +95,7 @@ export function TemplatesLibraryClient({
   const router = useRouter();
   const utils = api.useUtils();
 
-  const [mode, setMode] = useState<'library' | 'generate'>('library');
+  const [aiDialogOpen, setAiDialogOpen] = useState(false);
   const [scope, setScope] = useState<'ALL' | 'SYSTEM' | 'TENANT'>('ALL');
   const [category, setCategory] = useState<
     EmailTemplateCategoryValue | 'ALL'
@@ -102,16 +104,6 @@ export function TemplatesLibraryClient({
   const search = useDebounced(rawSearch, 300);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
-  const [aiBrief, setAiBrief] = useState('');
-
-  const generate = api.ai.generateEmailTemplate.useMutation({
-    onSuccess: (res) => {
-      toast.success('Template created. Opening editor…');
-      void utils.emailTemplate.list.invalidate();
-      router.push(`/t/${tenantSlug}/templates/${res.template.id}/design`);
-    },
-    onError: (err) => toast.error(err.message ?? 'Could not generate.'),
-  });
 
   const { data, isLoading } = api.emailTemplate.list.useQuery({
     scope,
@@ -139,85 +131,7 @@ export function TemplatesLibraryClient({
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 rounded-md border p-0.5 text-sm">
-        <button
-          type="button"
-          onClick={() => setMode('library')}
-          className={
-            mode === 'library'
-              ? 'rounded bg-foreground px-3 py-1.5 font-medium text-background'
-              : 'rounded px-3 py-1.5 text-muted-foreground hover:text-foreground'
-          }
-        >
-          Library
-        </button>
-        {canCreate ? (
-          <button
-            type="button"
-            onClick={() => setMode('generate')}
-            className={
-              mode === 'generate'
-                ? 'rounded bg-foreground px-3 py-1.5 font-medium text-background'
-                : 'rounded px-3 py-1.5 text-muted-foreground hover:text-foreground'
-            }
-          >
-            <Wand2 className="mr-1 inline size-3.5 -translate-y-px" />
-            Generate with AI
-          </button>
-        ) : null}
-      </div>
-
-      {mode === 'generate' ? (
-        <Card>
-          <CardContent className="space-y-3 py-6">
-            <div>
-              <h3 className="text-sm font-semibold">
-                Describe the email you want
-              </h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Claude writes the subject, copy and HTML design. It saves
-                to <span className="font-medium">My templates</span> with
-                an AI badge — you can edit after.
-              </p>
-            </div>
-            <textarea
-              value={aiBrief}
-              onChange={(e) => setAiBrief(e.target.value)}
-              rows={4}
-              maxLength={1500}
-              placeholder='e.g. "Welcome email for new Getyn signups — warm tone, a hero heading, a single CTA to the dashboard."'
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => setMode('library')}
-                disabled={generate.isPending}
-              >
-                Cancel
-              </Button>
-              <Button
-                disabled={generate.isPending || aiBrief.trim().length < 10}
-                onClick={() => generate.mutate({ brief: aiBrief.trim() })}
-              >
-                {generate.isPending ? (
-                  <Loader2 className="mr-1 size-4 animate-spin" />
-                ) : (
-                  <Wand2 className="mr-1 size-4" />
-                )}
-                Generate template
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      <div
-        className={cn(
-          'flex flex-wrap items-center gap-2',
-          mode === 'generate' && 'hidden',
-        )}
-      >
+      <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1 rounded-md border p-0.5 text-xs">
           {(['ALL', 'TENANT', 'SYSTEM'] as const).map((s) => (
             <button
@@ -268,23 +182,18 @@ export function TemplatesLibraryClient({
             <SelectItem value="OTHER">Other</SelectItem>
           </SelectContent>
         </Select>
+        {canCreate ? (
+          <AiButton onClick={() => setAiDialogOpen(true)}>
+            Generate with AI
+          </AiButton>
+        ) : null}
       </div>
 
-      <div
-        className={cn(
-          'text-xs text-muted-foreground',
-          mode === 'generate' && 'hidden',
-        )}
-      >
+      <div className="text-xs text-muted-foreground">
         {data ? `${data.total} template${data.total === 1 ? '' : 's'}` : '—'}
       </div>
 
-      <div
-        className={cn(
-          'grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5',
-          mode === 'generate' && 'hidden',
-        )}
-      >
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {isLoading ? (
           Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-48 rounded-lg" />
@@ -419,6 +328,12 @@ export function TemplatesLibraryClient({
           })
         )}
       </div>
+
+      <AiGenerateTemplateDialog
+        tenantSlug={tenantSlug}
+        open={aiDialogOpen}
+        onOpenChange={setAiDialogOpen}
+      />
 
       <TemplatePreviewDialog
         tenantSlug={tenantSlug}

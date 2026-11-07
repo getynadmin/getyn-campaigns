@@ -12,7 +12,6 @@ import {
   MoreHorizontal,
   Plus,
   Search,
-  Sparkles,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -36,6 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AiButton } from '@/components/ui/ai-button';
 import { api } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
@@ -111,14 +111,9 @@ export function CampaignsListClient({
           </SelectContent>
         </Select>
         {canCreate ? (
-          <Button
-            variant="secondary"
-            onClick={() => setComposeOpen(true)}
-            className="border border-violet-500/40 bg-violet-50/50 text-violet-900 hover:bg-violet-100 dark:bg-violet-950/30 dark:text-violet-200"
-          >
-            <Sparkles className="mr-2 size-4" />
+          <AiButton onClick={() => setComposeOpen(true)}>
             Compose with AI
-          </Button>
+          </AiButton>
         ) : null}
         {canCreate ? (
           <DropdownMenu>

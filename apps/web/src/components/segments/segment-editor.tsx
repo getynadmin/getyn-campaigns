@@ -8,6 +8,7 @@ import { ArrowLeft, Loader2, Save, Sparkles, Users } from 'lucide-react';
 
 import type { SegmentRules } from '@getyn/types';
 
+import { AiButton } from '@/components/ui/ai-button';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -237,10 +238,8 @@ export function SegmentEditor({
                 <p className="text-xs text-muted-foreground">
                   Claude will fill in the rules below. Review before saving.
                 </p>
-                <Button
-                  type="button"
+                <AiButton
                   size="sm"
-                  variant="secondary"
                   disabled={
                     draftSegment.isPending || aiBrief.trim().length < 5
                   }
@@ -250,11 +249,9 @@ export function SegmentEditor({
                 >
                   {draftSegment.isPending ? (
                     <Loader2 className="mr-1 size-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="mr-1 size-4" />
-                  )}
+                  ) : null}
                   Generate rules
-                </Button>
+                </AiButton>
               </div>
               {aiRationale ? (
                 <p className="rounded-md border border-violet-500/30 bg-violet-50/40 px-3 py-2 text-xs text-violet-900 dark:bg-violet-950/30 dark:text-violet-200">
