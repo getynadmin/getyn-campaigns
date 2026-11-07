@@ -26,6 +26,11 @@ export interface PricingInitial {
   features: Array<{ metric: string; included: number }>;
   config: PricingConfig;
   freeTrialEnabled: boolean;
+  extras?: {
+    aiPricePer100Cents: number;
+    whatsappPricePer100Cents: number;
+    smsPricePer100Cents: number;
+  };
 }
 
 type BillingCycle = 'monthly' | 'annual';
@@ -76,9 +81,34 @@ const INCLUDED_FEATURES = [
 
 export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Element {
   const cfg = initial.config;
+  const extras = initial.extras ?? {
+    aiPricePer100Cents: 2500,
+    whatsappPricePer100Cents: 500,
+    smsPricePer100Cents: 200,
+  };
   const [cycle, setCycle] = useState<BillingCycle>('monthly');
   const [volume, setVolume] = useState<number>(cfg.minMessages);
-  const quote = useMemo(() => calc(volume, cfg), [volume, cfg]);
+  // Extras counts in units of 100 (AI capped at 50 = 5000 extra).
+  const [extraAi, setExtraAi] = useState(0);
+  const [extraWa, setExtraWa] = useState(0);
+  const [extraSms, setExtraSms] = useState(0);
+  const baseQuote = useMemo(() => calc(volume, cfg), [volume, cfg]);
+  const extrasMonthly =
+    extraAi * extras.aiPricePer100Cents +
+    extraWa * extras.whatsappPricePer100Cents +
+    extraSms * extras.smsPricePer100Cents;
+  const extrasYearly = Math.round(
+    extrasMonthly * 12 * (1 - cfg.annualDiscountPercent / 100),
+  );
+  const totalMonthly = baseQuote.monthly + extrasMonthly;
+  const totalYearly = baseQuote.yearly + extrasYearly;
+  const totalYearlyPerMonth = Math.round(totalYearly / 12);
+  const quote = {
+    ...baseQuote,
+    monthly: totalMonthly,
+    yearly: totalYearly,
+    yearlyPerMonth: totalYearlyPerMonth,
+  };
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-12 lg:py-20">
@@ -161,6 +191,37 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
           </div>
         </div>
 
+        {/* Extras sliders — AI credits / WhatsApp / SMS */}
+        <div className="mt-6 grid gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-3">
+          <ExtrasSlider
+            label="AI credits"
+            unit="credits"
+            value={extraAi}
+            onChange={setExtraAi}
+            max={50}
+            pricePer100Cents={extras.aiPricePer100Cents}
+            currency={cfg.currency}
+          />
+          <ExtrasSlider
+            label="WhatsApp msgs"
+            unit="msgs"
+            value={extraWa}
+            onChange={setExtraWa}
+            max={100}
+            pricePer100Cents={extras.whatsappPricePer100Cents}
+            currency={cfg.currency}
+          />
+          <ExtrasSlider
+            label="SMS segments"
+            unit="segments"
+            value={extraSms}
+            onChange={setExtraSms}
+            max={100}
+            pricePer100Cents={extras.smsPricePer100Cents}
+            currency={cfg.currency}
+          />
+        </div>
+
         {/* Price + CTA + features */}
         <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,340px)_1fr]">
           <div className="rounded-xl border bg-background p-6">
@@ -192,7 +253,7 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
                 className="w-full bg-emerald-600 text-white hover:bg-emerald-700"
               >
                 <Link
-                  href={`/checkout?plan=${initial.planSlug ?? 'campaigns-pro'}&volume=${quote.volume}&cycle=${cycle}`}
+                  href={`/checkout?plan=${initial.planSlug ?? 'campaigns-pro'}&volume=${quote.volume}&cycle=${cycle}&extraAi=${extraAi}&extraWa=${extraWa}&extraSms=${extraSms}`}
                 >
                   Subscribe now →
                 </Link>
@@ -205,7 +266,7 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
                     className="w-full border-emerald-600 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
                   >
                     <Link
-                      href={`/signup?plan=${initial.planSlug ?? 'campaigns-pro'}&trial=1`}
+                      href={`/signup?plan=${initial.planSlug ?? 'campaigns-pro'}&trial=1&extraAi=${extraAi}&extraWa=${extraWa}&extraSms=${extraSms}`}
                     >
                       Start free trial
                     </Link>
@@ -323,6 +384,52 @@ export function PricingClient({ initial }: { initial: PricingInitial }): JSX.Ele
             </span>
           </a>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ExtrasSlider({
+  label,
+  unit,
+  value,
+  onChange,
+  max,
+  pricePer100Cents,
+  currency,
+}: {
+  label: string;
+  unit: string;
+  value: number;
+  onChange: (n: number) => void;
+  max: number;
+  pricePer100Cents: number;
+  currency: string;
+}): JSX.Element {
+  const extra = value * 100;
+  const extraCost = value * pricePer100Cents;
+  return (
+    <div className="space-y-1.5 rounded-md bg-background p-3">
+      <div className="flex items-baseline justify-between">
+        <span className="text-xs font-medium">{label}</span>
+        <span className="text-[11px] tabular-nums text-muted-foreground">
+          +{extra.toLocaleString()} {unit}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={max}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-emerald-600"
+      />
+      <div className="flex items-baseline justify-between text-[10px] text-muted-foreground">
+        <span>${(pricePer100Cents / 100).toFixed(2)} / 100</span>
+        <span className="font-mono text-emerald-700 dark:text-emerald-400">
+          {extraCost === 0 ? '—' : `+${fmtMoney(extraCost, currency)}/mo`}
+        </span>
       </div>
     </div>
   );

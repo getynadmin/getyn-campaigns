@@ -28,6 +28,9 @@ export const pricingRouter = createTRPCRouter({
       description: string | null;
       metadata: unknown;
       features: Array<{ metric: string; included: number }>;
+      extraAiCreditsPricePer100: number;
+      extraWhatsappPricePer100: number;
+      extraSmsPricePer100: number;
     }> = [];
     try {
       plans = await prisma.plan.findMany({
@@ -39,6 +42,9 @@ export const pricingRouter = createTRPCRouter({
           description: true,
           metadata: true,
           features: { select: { metric: true, included: true } },
+          extraAiCreditsPricePer100: true,
+          extraWhatsappPricePer100: true,
+          extraSmsPricePer100: true,
         },
         orderBy: [{ isDefault: 'desc' }, { priceMonthlyCents: 'asc' }],
       });
@@ -58,6 +64,11 @@ export const pricingRouter = createTRPCRouter({
           features: p.features,
           config: cfg,
           freeTrialEnabled: meta?.freeTrialEnabled !== false,
+          extras: {
+            aiPricePer100Cents: p.extraAiCreditsPricePer100,
+            whatsappPricePer100Cents: p.extraWhatsappPricePer100,
+            smsPricePer100Cents: p.extraSmsPricePer100,
+          },
         };
       }
     }
@@ -71,6 +82,11 @@ export const pricingRouter = createTRPCRouter({
       features: [] as Array<{ metric: string; included: number }>,
       config: DEFAULT_DYNAMIC_PRICING,
       freeTrialEnabled: true,
+      extras: {
+        aiPricePer100Cents: 2500,
+        whatsappPricePer100Cents: 500,
+        smsPricePer100Cents: 200,
+      },
     };
   }),
 });
