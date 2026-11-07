@@ -44,7 +44,7 @@ const METRIC_LABEL: Record<PlanMetric, string> = {
   CONTACTS: 'Contacts',
   EMAILS_PER_MONTH: 'Emails / month',
   WA_MESSAGES_PER_MONTH: 'WhatsApp msgs / month',
-  SMS_SEGMENTS_PER_MONTH: 'SMS segments / month',
+  SMS_SEGMENTS_PER_MONTH: 'SMS messages / month',
   AI_CREDITS_PER_MONTH: 'AI credits / month',
   CUSTOM_SENDING_DOMAINS: 'Custom sending domains',
   USER_SEATS: 'User seats',

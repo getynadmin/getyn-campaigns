@@ -195,7 +195,7 @@ export function UpgradeModal({
           ) : null}
           {showSms ? (
             <SliderRow
-              label="SMS segments / month"
+              label="SMS messages / month"
               unit="segments"
               included={includedSms}
               bundles={sms}

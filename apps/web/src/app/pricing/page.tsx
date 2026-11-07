@@ -33,10 +33,10 @@ export default async function PricingPage(): Promise<JSX.Element> {
     branding.defaultSidebarLogoLightUrl ?? branding.loginPageLogoUrl ?? null;
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background">
+    <div className="flex min-h-dvh flex-col bg-white text-neutral-900">
       <MetaPixel pixelId={pixels.metaPixelId} />
       <DocsHeader logoUrl={headerLogo} />
-      <main className="flex-1">
+      <main className="flex-1 bg-white">
         <PricingClient initial={initial} />
       </main>
       <DocsFooter logoUrl={footerLogo} />
