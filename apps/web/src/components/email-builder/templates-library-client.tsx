@@ -8,11 +8,13 @@ import {
   ArrowRight,
   Copy,
   FileText,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Search,
   Sparkles,
   Trash2,
+  Wand2,
 } from 'lucide-react';
 
 import type { EmailTemplateCategoryValue } from '@getyn/types';
@@ -86,6 +88,7 @@ export function TemplatesLibraryClient({
   const router = useRouter();
   const utils = api.useUtils();
 
+  const [mode, setMode] = useState<'library' | 'generate'>('library');
   const [scope, setScope] = useState<'ALL' | 'SYSTEM' | 'TENANT'>('ALL');
   const [category, setCategory] = useState<
     EmailTemplateCategoryValue | 'ALL'
@@ -93,6 +96,16 @@ export function TemplatesLibraryClient({
   const [rawSearch, setRawSearch] = useState('');
   const search = useDebounced(rawSearch, 300);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [aiBrief, setAiBrief] = useState('');
+
+  const generate = api.ai.generateEmailTemplate.useMutation({
+    onSuccess: (res) => {
+      toast.success('Template created. Opening editor…');
+      void utils.emailTemplate.list.invalidate();
+      router.push(`/t/${tenantSlug}/templates/${res.template.id}/design`);
+    },
+    onError: (err) => toast.error(err.message ?? 'Could not generate.'),
+  });
 
   const { data, isLoading } = api.emailTemplate.list.useQuery({
     scope,
@@ -120,7 +133,85 @@ export function TemplatesLibraryClient({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex gap-1 rounded-md border p-0.5 text-sm">
+        <button
+          type="button"
+          onClick={() => setMode('library')}
+          className={
+            mode === 'library'
+              ? 'rounded bg-foreground px-3 py-1.5 font-medium text-background'
+              : 'rounded px-3 py-1.5 text-muted-foreground hover:text-foreground'
+          }
+        >
+          Library
+        </button>
+        {canCreate ? (
+          <button
+            type="button"
+            onClick={() => setMode('generate')}
+            className={
+              mode === 'generate'
+                ? 'rounded bg-foreground px-3 py-1.5 font-medium text-background'
+                : 'rounded px-3 py-1.5 text-muted-foreground hover:text-foreground'
+            }
+          >
+            <Wand2 className="mr-1 inline size-3.5 -translate-y-px" />
+            Generate with AI
+          </button>
+        ) : null}
+      </div>
+
+      {mode === 'generate' ? (
+        <Card>
+          <CardContent className="space-y-3 py-6">
+            <div>
+              <h3 className="text-sm font-semibold">
+                Describe the email you want
+              </h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Claude writes the subject, copy and HTML design. It saves
+                to <span className="font-medium">My templates</span> with
+                an AI badge — you can edit after.
+              </p>
+            </div>
+            <textarea
+              value={aiBrief}
+              onChange={(e) => setAiBrief(e.target.value)}
+              rows={4}
+              maxLength={1500}
+              placeholder='e.g. "Welcome email for new Getyn signups — warm tone, a hero heading, a single CTA to the dashboard."'
+              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant="ghost"
+                onClick={() => setMode('library')}
+                disabled={generate.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={generate.isPending || aiBrief.trim().length < 10}
+                onClick={() => generate.mutate({ brief: aiBrief.trim() })}
+              >
+                {generate.isPending ? (
+                  <Loader2 className="mr-1 size-4 animate-spin" />
+                ) : (
+                  <Wand2 className="mr-1 size-4" />
+                )}
+                Generate template
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-2',
+          mode === 'generate' && 'hidden',
+        )}
+      >
         <div className="flex gap-1 rounded-md border p-0.5 text-xs">
           {(['ALL', 'TENANT', 'SYSTEM'] as const).map((s) => (
             <button
@@ -172,11 +263,21 @@ export function TemplatesLibraryClient({
         </Select>
       </div>
 
-      <div className="text-xs text-muted-foreground">
+      <div
+        className={cn(
+          'text-xs text-muted-foreground',
+          mode === 'generate' && 'hidden',
+        )}
+      >
         {data ? `${data.total} template${data.total === 1 ? '' : 's'}` : '—'}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div
+        className={cn(
+          'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3',
+          mode === 'generate' && 'hidden',
+        )}
+      >
         {isLoading ? (
           Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-48 rounded-lg" />
@@ -199,7 +300,12 @@ export function TemplatesLibraryClient({
                 key={tpl.id}
                 className="group flex flex-col overflow-hidden transition-shadow hover:shadow-md"
               >
-                <div className="aspect-[1.6/1] border-b bg-gradient-to-br from-muted/40 to-muted/10 p-6">
+                <div
+                  className={cn(
+                    'aspect-[1.6/1] border-b p-6',
+                    CATEGORY_TONE[cat],
+                  )}
+                >
                   {tpl.thumbnailUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img
@@ -208,8 +314,16 @@ export function TemplatesLibraryClient({
                       className="h-full w-full rounded object-cover"
                     />
                   ) : (
-                    <div className="flex h-full items-center justify-center">
-                      <FileText className="size-8 text-muted-foreground/50" />
+                    <div className="flex h-full flex-col justify-between">
+                      <FileText className="size-5 opacity-60" />
+                      <div>
+                        <p className="line-clamp-2 text-sm font-semibold leading-tight">
+                          {tpl.name}
+                        </p>
+                        <p className="mt-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
+                          {CATEGORY_LABEL[cat]}
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -272,6 +386,12 @@ export function TemplatesLibraryClient({
                       <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
                         <Sparkles className="size-3" />
                         System
+                      </span>
+                    ) : null}
+                    {tpl.isAiGenerated ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-900 dark:bg-violet-950 dark:text-violet-200">
+                        <Wand2 className="size-3" />
+                        AI generated
                       </span>
                     ) : null}
                   </div>

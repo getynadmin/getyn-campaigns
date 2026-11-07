@@ -724,6 +724,7 @@ model EmailTemplate {
   category        EmailTemplateCategory @default(OTHER)
   thumbnailUrl    String?
   designJson      Json
+  isAiGenerated   Boolean               @default(false)
   createdByUserId String?
   createdAt       DateTime              @default(now())
   updatedAt       DateTime              @updatedAt

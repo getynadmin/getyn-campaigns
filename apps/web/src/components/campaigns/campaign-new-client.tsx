@@ -36,8 +36,14 @@ export function CampaignNewClient({
   const router = useRouter();
   const [name, setName] = useState('');
   const [segmentId, setSegmentId] = useState<string>('');
+  const [templateId, setTemplateId] = useState<string>('');
 
   const segmentsQ = api.segments.list.useQuery({ limit: 50 });
+  const templatesQ = api.emailTemplate.list.useQuery({ limit: 50, scope: 'ALL' });
+  const templateGet = api.emailTemplate.get.useQuery(
+    { id: templateId },
+    { enabled: !!templateId },
+  );
 
   const create = api.campaign.create.useMutation({
     onSuccess: (row) => {
@@ -72,9 +78,13 @@ export function CampaignNewClient({
             abTest: null,
             trackingEnabled: true,
           },
-          // Empty Unlayer design — the editor handles a blank starting
-          // canvas without complaint.
-          designJson: {},
+          // If the user picked a template, clone its design into this
+          // campaign. Otherwise start blank — the editor is fine with {}.
+          designJson:
+            templateId && templateGet.data
+              ? (templateGet.data.designJson as Record<string, unknown>)
+              : {},
+          ...(templateId ? { templateId } : {}),
         });
       }}
       className="space-y-5"
@@ -124,6 +134,32 @@ export function CampaignNewClient({
             </SelectContent>
           </Select>
         )}
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="template">Start from template (optional)</Label>
+        <Select
+          value={templateId || 'blank'}
+          onValueChange={(v) => setTemplateId(v === 'blank' ? '' : v)}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Blank design" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="blank">Blank design</SelectItem>
+            {(templatesQ.data?.items ?? []).map((t) => (
+              <SelectItem key={t.id} value={t.id}>
+                {t.name}
+                {t.isAiGenerated ? ' · AI' : ''}
+                {t.tenantId === null ? ' · System' : ''}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Picking a template copies its design into this campaign — you
+          can still edit it in the designer.
+        </p>
       </div>
 
       <div className="flex gap-2">

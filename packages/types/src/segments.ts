@@ -329,3 +329,18 @@ export const aiComposeCampaignSchema = z.object({
     .max(1500),
 });
 export type AiComposeCampaignInput = z.infer<typeof aiComposeCampaignSchema>;
+
+// ---------------------------------------------------------------------------
+// Email Template Generator — brief → saved template
+// ---------------------------------------------------------------------------
+
+export const aiGenerateEmailTemplateSchema = z.object({
+  brief: z
+    .string()
+    .trim()
+    .min(10, 'Describe the template in at least a sentence.')
+    .max(1500),
+});
+export type AiGenerateEmailTemplateInput = z.infer<
+  typeof aiGenerateEmailTemplateSchema
+>;

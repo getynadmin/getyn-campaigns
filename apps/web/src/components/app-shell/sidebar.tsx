@@ -130,11 +130,6 @@ function buildSections(slug: string): SidebarSection[] {
           icon: Bot,
           badge: 'agentPending',
         },
-        {
-          href: t('/agent'),
-          label: 'Design Agent',
-          icon: Sparkles,
-        },
       ],
     },
     {

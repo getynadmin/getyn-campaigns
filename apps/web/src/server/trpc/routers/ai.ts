@@ -3,15 +3,18 @@ import { TRPCError } from '@trpc/server';
 import {
   AiNotConfiguredError,
   composeCampaign,
+  draftEmailTemplate,
   draftSegmentRules,
   draftWhatsAppTemplate,
   isAiConfigured,
+  wrapHtmlInUnlayerDesign,
 } from '@getyn/ai';
 import { PlanMetric, Role, prisma, withTenant } from '@getyn/db';
 import {
   aiComposeCampaignSchema,
   aiDraftSegmentSchema,
   aiDraftTemplateSchema,
+  aiGenerateEmailTemplateSchema,
 } from '@getyn/types';
 
 import { assertTenantActive } from '@/server/billing/assert-active';
@@ -380,6 +383,125 @@ export const aiRouter = createTRPCRouter({
       return {
         proposal: result.proposal,
         issues: result.issues,
+        cost: result.cost,
+      };
+    }),
+
+  /**
+   * Generate email template — brief → saved EmailTemplate row with
+   * isAiGenerated=true. Returns the row so the UI can redirect into
+   * the design editor.
+   */
+  generateEmailTemplate: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(aiGenerateEmailTemplateSchema)
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const userId = ctx.user.id;
+      await assertTenantActive(tenantId);
+      await assertWithinLimit(tenantId, PlanMetric.AI_CREDITS_PER_MONTH, 1);
+
+      const since = new Date(Date.now() - 60 * 60 * 1000);
+      const recent = await withTenant(tenantId, (tx) =>
+        tx.aiGeneration.count({
+          where: {
+            tenantId,
+            feature: 'email_template_draft',
+            createdAt: { gte: since },
+          },
+        }),
+      );
+      if (recent >= HOURLY_LIMIT_PER_TENANT) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Hourly AI limit reached (${HOURLY_LIMIT_PER_TENANT}/hour). Try again in a bit.`,
+        });
+      }
+
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { name: true },
+      });
+      const anthropic = await getAnthropicCredentials();
+
+      let result;
+      try {
+        result = await draftEmailTemplate(
+          { brief: input.brief, tenantName: tenant?.name },
+          anthropic.apiKey ? { apiKey: anthropic.apiKey } : {},
+        );
+      } catch (err) {
+        if (err instanceof AiNotConfiguredError) {
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message:
+              'AI features are not configured on the server (missing ANTHROPIC_API_KEY).',
+          });
+        }
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message:
+            err instanceof Error
+              ? `AI generation failed: ${err.message}`
+              : 'AI generation failed.',
+          cause: err,
+        });
+      }
+
+      if (!result.proposal) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            result.issues[0]?.message ??
+            'AI did not return a valid template. Try rephrasing.',
+        });
+      }
+
+      const design = wrapHtmlInUnlayerDesign(result.proposal.bodyHtml);
+      const row = await withTenant(tenantId, (tx) =>
+        tx.emailTemplate.create({
+          data: {
+            tenantId,
+            createdByUserId: userId,
+            name: result.proposal!.name,
+            description: result.proposal!.description || null,
+            category: result.proposal!.category,
+            designJson: design as object,
+            isAiGenerated: true,
+          },
+        }),
+      );
+
+      try {
+        await withTenant(tenantId, (tx) =>
+          tx.aiGeneration.create({
+            data: {
+              tenantId,
+              userId,
+              feature: 'email_template_draft',
+              prompt: input.brief,
+              response: result.raw,
+              tokensUsed: result.cost.totalTokens,
+              cost: result.cost.costUsd,
+            },
+          }),
+        );
+      } catch (auditErr) {
+        console.warn(
+          '[ai.generateEmailTemplate] audit insert failed:',
+          auditErr instanceof Error ? auditErr.message : auditErr,
+        );
+      }
+
+      return {
+        template: {
+          id: row.id,
+          name: row.name,
+          description: row.description,
+          category: row.category,
+        },
+        subject: result.proposal.subject,
+        previewText: result.proposal.previewText,
         cost: result.cost,
       };
     }),
