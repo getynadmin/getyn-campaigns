@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
 const tabs = [
+  { key: 'profile', label: 'My profile' },
   { key: 'workspace', label: 'Workspace' },
   { key: 'brand', label: 'Brand' },
   { key: 'team', label: 'Team' },
@@ -17,9 +18,9 @@ const tabs = [
 ] as const;
 
 /**
- * Settings tab strip. Each tab is a real route (not a `<Tabs>` primitive)
- * so deep links like `/t/acme/settings/team` work and server components
- * can keep doing their own data fetching.
+ * Settings tab strip. Each tab is a real route so deep links work and
+ * server components keep their own data fetching. "My profile" is now
+ * the first tab + the default landing (/settings → /settings/profile).
  */
 export function SettingsTabsNav({
   tenantSlug,
@@ -30,13 +31,10 @@ export function SettingsTabsNav({
   const base = `/t/${tenantSlug}/settings`;
 
   return (
-    <div className="flex gap-1 border-b">
+    <div className="flex flex-wrap gap-1 border-b">
       {tabs.map((tab) => {
-        const href = tab.key === 'workspace' ? base : `${base}/${tab.key}`;
-        const active =
-          tab.key === 'workspace'
-            ? pathname === base
-            : pathname.startsWith(href);
+        const href = `${base}/${tab.key}`;
+        const active = pathname.startsWith(href);
         return (
           <Link
             key={tab.key}

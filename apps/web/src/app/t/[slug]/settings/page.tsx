@@ -1,55 +1,13 @@
-import { notFound } from 'next/navigation';
-import { Role } from '@getyn/db';
+import { redirect } from 'next/navigation';
 
-import { WorkspaceSettingsForm } from '@/components/settings/workspace-settings-form';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { prisma } from '@getyn/db';
-import { getCurrentUser } from '@/server/auth/session';
-
-export const metadata = { title: 'Workspace settings' };
-
-export default async function WorkspaceSettingsPage({
+/**
+ * Settings landing — now defaults to the user's My Profile tab (the
+ * first tab in the strip).
+ */
+export default function SettingsLanding({
   params,
 }: {
   params: { slug: string };
-}): Promise<JSX.Element> {
-  const user = await getCurrentUser();
-  if (!user) notFound();
-  const tenant = await prisma.tenant.findUnique({
-    where: { slug: params.slug },
-  });
-  if (!tenant) notFound();
-  const membership = await prisma.membership.findUnique({
-    where: { userId_tenantId: { userId: user.id, tenantId: tenant.id } },
-  });
-  if (!membership) notFound();
-
-  const canEdit = membership.role === Role.OWNER || membership.role === Role.ADMIN;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Workspace</CardTitle>
-        <CardDescription>
-          Change how your workspace shows up across the product.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <WorkspaceSettingsForm
-          defaults={{
-            name: tenant.name,
-            slug: tenant.slug,
-            postalAddress: tenant.postalAddress ?? '',
-          }}
-          canEdit={canEdit}
-        />
-      </CardContent>
-    </Card>
-  );
+}): never {
+  redirect(`/t/${params.slug}/settings/profile`);
 }

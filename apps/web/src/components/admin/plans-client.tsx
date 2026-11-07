@@ -9,6 +9,7 @@ import {
   Pencil,
   Plus,
   Star,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -76,6 +77,10 @@ type FormState = {
   features: Record<PlanMetric, { included: string; overageCentsPer1k: string }>;
   pricingEnabled: boolean;
   freeTrialEnabled: boolean;
+  // Dollar strings. Converted to cents at save.
+  extraAiCreditsPricePer100: string;
+  extraWhatsappPricePer100: string;
+  extraSmsPricePer100: string;
   pricing: {
     basePriceCents: string;
     baseIncludedMessages: string;
@@ -168,6 +173,9 @@ const EMPTY_FORM = (): FormState => ({
   features: EMPTY_FEATURES(),
   pricingEnabled: false,
   freeTrialEnabled: true,
+  extraAiCreditsPricePer100: '25',
+  extraWhatsappPricePer100: '5',
+  extraSmsPricePer100: '2',
   pricing: { ...EMPTY_PRICING },
 });
 
@@ -218,6 +226,13 @@ export function AdminPlansClient(): JSX.Element {
     },
     onError: (err) => toast.error(err.message),
   });
+  const deletePlan = adminApi.plan.delete.useMutation({
+    onSuccess: () => {
+      toast.success('Plan deleted.');
+      invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
   const setDefault = adminApi.plan.setDefault.useMutation({
     onSuccess: () => {
       toast.success('Default updated.');
@@ -258,6 +273,13 @@ export function AdminPlansClient(): JSX.Element {
       freeTrialEnabled:
         (plan.metadata as { freeTrialEnabled?: boolean } | null)
           ?.freeTrialEnabled !== false,
+      extraAiCreditsPricePer100: String(
+        (plan.extraAiCreditsPricePer100 ?? 2500) / 100,
+      ),
+      extraWhatsappPricePer100: String(
+        (plan.extraWhatsappPricePer100 ?? 500) / 100,
+      ),
+      extraSmsPricePer100: String((plan.extraSmsPricePer100 ?? 200) / 100),
       pricing: (() => {
         const p = readPlanPricing(plan.metadata);
         if (!p) return { ...EMPTY_PRICING };
@@ -306,6 +328,15 @@ export function AdminPlansClient(): JSX.Element {
       currency: form.currency.trim().toUpperCase() || 'USD',
       features,
       freeTrialEnabled: form.freeTrialEnabled,
+      extraAiCreditsPricePer100: Math.round(
+        (Number.parseFloat(form.extraAiCreditsPricePer100) || 0) * 100,
+      ),
+      extraWhatsappPricePer100: Math.round(
+        (Number.parseFloat(form.extraWhatsappPricePer100) || 0) * 100,
+      ),
+      extraSmsPricePer100: Math.round(
+        (Number.parseFloat(form.extraSmsPricePer100) || 0) * 100,
+      ),
       pricing: form.pricingEnabled
         ? {
             model: 'dynamic' as const,
@@ -433,6 +464,34 @@ export function AdminPlansClient(): JSX.Element {
                       <Archive className="size-3.5" />
                     )}
                   </Button>
+                  {!p.isDefault && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-rose-600 hover:text-rose-700 dark:text-rose-400"
+                      onClick={() => {
+                        if (
+                          p._count.subscriptions > 0
+                        ) {
+                          toast.error(
+                            `${p._count.subscriptions} tenant(s) still on this plan — reassign first.`,
+                          );
+                          return;
+                        }
+                        if (
+                          window.confirm(
+                            `Permanently delete "${p.name}"? This cannot be undone.`,
+                          )
+                        ) {
+                          deletePlan.mutate({ id: p.id });
+                        }
+                      }}
+                      disabled={deletePlan.isPending}
+                      title="Delete plan"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  )}
                 </div>
               </div>
             </li>
@@ -661,6 +720,59 @@ export function AdminPlansClient(): JSX.Element {
                   </span>
                 </span>
               </label>
+            </div>
+            <div className="col-span-2 space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+              <div>
+                <p className="text-sm font-medium">Extra bundle pricing ($ per 100 units)</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  Used by the upgrade modal + /pricing sliders when the
+                  tenant wants more than the included allowance.
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase">AI credits / 100</Label>
+                  <Input
+                    inputMode="numeric"
+                    value={form.extraAiCreditsPricePer100}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        extraAiCreditsPricePer100: e.target.value,
+                      }))
+                    }
+                    placeholder="25"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase">WhatsApp / 100</Label>
+                  <Input
+                    inputMode="numeric"
+                    value={form.extraWhatsappPricePer100}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        extraWhatsappPricePer100: e.target.value,
+                      }))
+                    }
+                    placeholder="5"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase">SMS / 100</Label>
+                  <Input
+                    inputMode="numeric"
+                    value={form.extraSmsPricePer100}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        extraSmsPricePer100: e.target.value,
+                      }))
+                    }
+                    placeholder="2"
+                  />
+                </div>
+              </div>
             </div>
             <div className="col-span-2 space-y-1">
               <Label className="text-xs">Description</Label>
