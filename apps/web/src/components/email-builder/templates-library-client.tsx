@@ -308,7 +308,7 @@ export function TemplatesLibraryClient({
                 onClick={() => setPreviewId(tpl.id)}
                 className="group flex cursor-pointer flex-col overflow-hidden transition-shadow hover:shadow-md"
               >
-                <div className="aspect-[1.3/1] border-b bg-[#f4f4f7]">
+                <div className="aspect-[3/4] border-b bg-white">
                   <TemplateThumbnail design={tpl.designJson} />
                 </div>
                 <CardHeader className="pb-2">

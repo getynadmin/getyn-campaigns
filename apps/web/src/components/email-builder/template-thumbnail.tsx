@@ -42,14 +42,17 @@ export function TemplateThumbnail({
     return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=600"><style>html,body{margin:0;background:#f4f4f7;}</style></head><body>${substituted}</body></html>`;
   }, [design, previewMergeTags]);
 
+  // Width-fit: iframe rendered at email's native 600px wide and
+  // scaled so it exactly fills the card width. The container clips
+  // vertically to whatever the card asks for.
   return (
-    <div className="pointer-events-none relative h-full w-full overflow-hidden bg-[#f4f4f7]">
+    <div className="pointer-events-none relative h-full w-full overflow-hidden bg-white">
       <iframe
         title="Template preview"
         srcDoc={srcDoc}
         aria-hidden="true"
         className="absolute left-0 top-0 h-[1600px] w-[600px] origin-top-left border-0"
-        style={{ transform: 'scale(0.48)' }}
+        style={{ transform: 'scale(0.5)' }}
         sandbox=""
         loading="lazy"
       />
