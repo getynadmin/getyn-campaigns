@@ -55,7 +55,7 @@ export function AiGenerateTemplateDialog({
             Generate with AI
           </DialogTitle>
           <DialogDescription>
-            Describe the email — Claude writes the subject, copy and HTML
+            Describe the email — Getyn AI writes the subject, copy and HTML
             design, then saves it to{' '}
             <span className="font-medium">My templates</span> with an AI
             badge.

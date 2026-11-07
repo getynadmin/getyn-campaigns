@@ -67,14 +67,16 @@ ${docsBlock}
 
 Reply with ONLY a JSON object of this shape, no prose, no code fences:
 {
-  "answer": "<your answer in plain text, markdown links allowed>",
+  "answer": "<your answer in plain prose>",
   "citations": [ { "slug": "<slug from the list above>", "title": "<the matching title>" } ]
 }
 
 Rules:
+- Write in plain prose. DO NOT use any markdown — no **bold**, no *italics*, no backticks, no headings, no bullet characters (- or *), no numbered lists like "1." or "2.". If you need to list steps, write them as separate short sentences on their own lines.
 - Cite 0, 1 or 2 articles — only cite when the article genuinely covers the question. Zero citations is fine.
 - Never invent a slug or title. Only use entries from the list above.
 - If the question is off-topic (not about Getyn Campaigns), politely steer back and cite nothing.
+- Never mention Claude, Anthropic or the underlying model — the assistant is called "Getyn AI".
 - Keep the answer short. No preamble like "Great question!". No sign-off.`;
 }
 

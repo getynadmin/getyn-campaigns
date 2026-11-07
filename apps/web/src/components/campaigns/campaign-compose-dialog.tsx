@@ -144,7 +144,7 @@ export function CampaignComposeDialog({
             Compose with AI
           </DialogTitle>
           <DialogDescription>
-            Describe what you want to send. Claude picks a segment, drafts
+            Describe what you want to send. Getyn AI picks a segment, drafts
             the subject + body, and seeds a draft you can finish in the
             designer.
           </DialogDescription>

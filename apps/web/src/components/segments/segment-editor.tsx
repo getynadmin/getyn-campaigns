@@ -236,7 +236,7 @@ export function SegmentEditor({
               />
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
-                  Claude will fill in the rules below. Review before saving.
+                  Getyn AI will fill in the rules below. Review before saving.
                 </p>
                 <AiButton
                   size="sm"

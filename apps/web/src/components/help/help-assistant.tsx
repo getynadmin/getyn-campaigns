@@ -13,6 +13,23 @@ import {
 import { api } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
+/**
+ * Strip the markdown tokens the model occasionally emits even though
+ * the system prompt forbids them — belt-and-suspenders so no raw
+ * `**bold**` or leading `- ` ever reaches the user.
+ */
+function stripMarkdown(s: string): string {
+  return s
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/(^|\s)\*(?!\s)(.+?)\*(?=\s|$)/g, '$1$2')
+    .replace(/(^|\s)_(?!\s)(.+?)_(?=\s|$)/g, '$1$2')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/^\s*\d+\.\s+/gm, '');
+}
+
 type Message = {
   id: string;
   role: 'user' | 'assistant';
@@ -145,7 +162,7 @@ export function HelpAssistant(): JSX.Element {
                       : 'bg-muted text-foreground',
                   )}
                 >
-                  <div>{m.content}</div>
+                  <div>{stripMarkdown(m.content)}</div>
                   {m.citations && m.citations.length > 0 ? (
                     <div className="mt-2 flex flex-col gap-1 border-t border-border/40 pt-2 text-xs">
                       {m.citations.map((c) => (
@@ -200,7 +217,7 @@ export function HelpAssistant(): JSX.Element {
               </button>
             </div>
             <p className="mt-2 text-[10px] text-muted-foreground">
-              Powered by Claude. Doesn&apos;t count against your AI credits.
+              Powered by Getyn AI. Doesn&apos;t count against your AI credits.
             </p>
           </div>
         </div>
