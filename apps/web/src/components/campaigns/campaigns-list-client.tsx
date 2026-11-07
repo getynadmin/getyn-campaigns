@@ -12,6 +12,7 @@ import {
   MoreHorizontal,
   Plus,
   Search,
+  Sparkles,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -38,6 +39,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
+import { CampaignComposeDialog } from './campaign-compose-dialog';
+
 const STATUS_TONE: Record<CampaignStatusValue, string> = {
   DRAFT: 'bg-muted text-muted-foreground',
   SCHEDULED: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
@@ -57,6 +60,7 @@ export function CampaignsListClient({
 }): JSX.Element {
   const [status, setStatus] = useState<CampaignStatusValue | 'ALL'>('ALL');
   const [rawSearch, setRawSearch] = useState('');
+  const [composeOpen, setComposeOpen] = useState(false);
   const router = useRouter();
   const utils = api.useUtils();
 
@@ -106,6 +110,16 @@ export function CampaignsListClient({
             <SelectItem value="CANCELED">Canceled</SelectItem>
           </SelectContent>
         </Select>
+        {canCreate ? (
+          <Button
+            variant="secondary"
+            onClick={() => setComposeOpen(true)}
+            className="border border-violet-500/40 bg-violet-50/50 text-violet-900 hover:bg-violet-100 dark:bg-violet-950/30 dark:text-violet-200"
+          >
+            <Sparkles className="mr-2 size-4" />
+            Compose with AI
+          </Button>
+        ) : null}
         {canCreate ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -258,6 +272,11 @@ export function CampaignsListClient({
           </ul>
         </div>
       )}
+      <CampaignComposeDialog
+        tenantSlug={tenantSlug}
+        open={composeOpen}
+        onOpenChange={setComposeOpen}
+      />
     </div>
   );
 }

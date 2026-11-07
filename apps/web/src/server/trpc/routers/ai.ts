@@ -2,12 +2,17 @@ import { TRPCError } from '@trpc/server';
 
 import {
   AiNotConfiguredError,
+  composeCampaign,
   draftSegmentRules,
   draftWhatsAppTemplate,
   isAiConfigured,
 } from '@getyn/ai';
 import { PlanMetric, Role, prisma, withTenant } from '@getyn/db';
-import { aiDraftSegmentSchema, aiDraftTemplateSchema } from '@getyn/types';
+import {
+  aiComposeCampaignSchema,
+  aiDraftSegmentSchema,
+  aiDraftTemplateSchema,
+} from '@getyn/types';
 
 import { assertTenantActive } from '@/server/billing/assert-active';
 import { assertWithinLimit } from '@/server/billing/assert-limit';
@@ -264,6 +269,117 @@ export const aiRouter = createTRPCRouter({
         rationale: result.rationale,
         issues: result.issues,
         attempts: result.attempts,
+        cost: result.cost,
+      };
+    }),
+
+  /**
+   * Campaign Composer — goal → draft campaign proposal
+   * (segment choice + name + subject + preview + fromName + body).
+   */
+  composeCampaign: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(aiComposeCampaignSchema)
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const userId = ctx.user.id;
+      await assertTenantActive(tenantId);
+      await assertWithinLimit(tenantId, PlanMetric.AI_CREDITS_PER_MONTH, 1);
+
+      const since = new Date(Date.now() - 60 * 60 * 1000);
+      const recent = await withTenant(tenantId, (tx) =>
+        tx.aiGeneration.count({
+          where: {
+            tenantId,
+            feature: 'campaign_compose',
+            createdAt: { gte: since },
+          },
+        }),
+      );
+      if (recent >= HOURLY_LIMIT_PER_TENANT) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Hourly AI limit reached (${HOURLY_LIMIT_PER_TENANT}/hour). Try again in a bit.`,
+        });
+      }
+
+      const [tenant, segments] = await Promise.all([
+        prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { name: true },
+        }),
+        withTenant(tenantId, (tx) =>
+          tx.segment.findMany({
+            where: { tenantId },
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              cachedCount: true,
+            },
+            orderBy: { updatedAt: 'desc' },
+            take: 30,
+          }),
+        ),
+      ]);
+
+      const anthropic = await getAnthropicCredentials();
+
+      let result;
+      try {
+        result = await composeCampaign(
+          {
+            goal: input.goal,
+            tenantName: tenant?.name,
+            segments: segments.map((s) => ({
+              id: s.id,
+              name: s.name,
+              description: s.description,
+              memberCount: s.cachedCount ?? undefined,
+            })),
+          },
+          anthropic.apiKey ? { apiKey: anthropic.apiKey } : {},
+        );
+      } catch (err) {
+        if (err instanceof AiNotConfiguredError) {
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message:
+              'AI features are not configured on the server (missing ANTHROPIC_API_KEY).',
+          });
+        }
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message:
+            err instanceof Error ? `AI generation failed: ${err.message}` : 'AI generation failed.',
+          cause: err,
+        });
+      }
+
+      try {
+        await withTenant(tenantId, (tx) =>
+          tx.aiGeneration.create({
+            data: {
+              tenantId,
+              userId,
+              feature: 'campaign_compose',
+              prompt: input.goal,
+              response: result.raw,
+              tokensUsed: result.cost.totalTokens,
+              cost: result.cost.costUsd,
+            },
+          }),
+        );
+      } catch (auditErr) {
+        console.warn(
+          '[ai.composeCampaign] audit insert failed:',
+          auditErr instanceof Error ? auditErr.message : auditErr,
+        );
+      }
+
+      return {
+        proposal: result.proposal,
+        issues: result.issues,
         cost: result.cost,
       };
     }),

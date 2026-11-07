@@ -316,3 +316,16 @@ export const aiDraftSegmentSchema = z.object({
     .max(1000),
 });
 export type AiDraftSegmentInput = z.infer<typeof aiDraftSegmentSchema>;
+
+// ---------------------------------------------------------------------------
+// Campaign Composer — NL goal → campaign proposal
+// ---------------------------------------------------------------------------
+
+export const aiComposeCampaignSchema = z.object({
+  goal: z
+    .string()
+    .trim()
+    .min(10, 'Describe the campaign goal in at least a sentence.')
+    .max(1500),
+});
+export type AiComposeCampaignInput = z.infer<typeof aiComposeCampaignSchema>;

@@ -23,6 +23,7 @@
 export * from './client';
 export * from './template-draft';
 export * from './segment-draft';
+export * from './campaign-compose';
 export * from './agent-runtime';
 export * from './attachment-summary';
 export * from './dalle';
