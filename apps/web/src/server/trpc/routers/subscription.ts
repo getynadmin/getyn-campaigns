@@ -116,6 +116,11 @@ export const subscriptionRouter = createTRPCRouter({
             priceMonthlyCents: subscription.plan.priceMonthlyCents,
             priceYearlyCents: subscription.plan.priceYearlyCents,
             currency: subscription.plan.currency,
+            extraAiCreditsPricePer100:
+              subscription.plan.extraAiCreditsPricePer100,
+            extraWhatsappPricePer100:
+              subscription.plan.extraWhatsappPricePer100,
+            extraSmsPricePer100: subscription.plan.extraSmsPricePer100,
             status: subscription.status,
             assignedAt: subscription.assignedAt,
             currentPeriodStart: subscription.currentPeriodStart,
@@ -133,6 +138,9 @@ export const subscriptionRouter = createTRPCRouter({
         priceMonthlyCents: p.priceMonthlyCents,
         priceYearlyCents: p.priceYearlyCents,
         currency: p.currency,
+        extraAiCreditsPricePer100: p.extraAiCreditsPricePer100,
+        extraWhatsappPricePer100: p.extraWhatsappPricePer100,
+        extraSmsPricePer100: p.extraSmsPricePer100,
         isCurrent: p.id === currentPlanId,
         features: p.features.map((f) => ({
           metric: f.metric,

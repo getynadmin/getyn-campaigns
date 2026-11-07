@@ -2,7 +2,9 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
 import {
+  BillingStatus,
   CampaignStatus,
+  LegacyPlanTier,
   PlanMetric,
   Role,
   SubscriptionStatus,
@@ -392,6 +394,49 @@ export const adminTenantsRouter = createAdminRouter({
           : await tx.subscription.create({
               data: { tenantId: input.tenantId, ...data },
             });
+
+        // Mirror onto the legacy Tenant columns so the admin detail
+        // page (still reads legacyPlanTier + billingStatus) stays in
+        // sync with the real Subscription row. Without this mirror,
+        // the admin UI shows "TRIAL / TRIALING" forever even after a
+        // plan assignment flips the Subscription row to ACTIVE.
+        const planSlug =
+          (
+            await tx.plan.findUnique({
+              where: { id: input.planId },
+              select: { slug: true },
+            })
+          )?.slug ?? '';
+        const legacyTier: LegacyPlanTier = /pro/i.test(planSlug)
+          ? LegacyPlanTier.PRO
+          : /growth/i.test(planSlug)
+            ? LegacyPlanTier.GROWTH
+            : /start/i.test(planSlug)
+              ? LegacyPlanTier.STARTER
+              : LegacyPlanTier.PRO;
+        const legacyStatus: BillingStatus =
+          input.status === SubscriptionStatus.TRIALING
+            ? BillingStatus.TRIALING
+            : input.status === SubscriptionStatus.PAST_DUE
+              ? BillingStatus.PAST_DUE
+              : input.status === SubscriptionStatus.CANCELED ||
+                  input.status === SubscriptionStatus.SUSPENDED
+                ? BillingStatus.CANCELED
+                : BillingStatus.ACTIVE;
+        await tx.tenant.update({
+          where: { id: input.tenantId },
+          data: {
+            legacyPlanTier: legacyTier,
+            billingStatus: legacyStatus,
+            // Clear trialEndsAt on paid assignment so the trial bar
+            // doesn't keep nagging after admin flipped to a paid plan.
+            trialEndsAt:
+              input.status === SubscriptionStatus.TRIALING
+                ? undefined
+                : null,
+          },
+        });
+
         return {
           result: updated,
           audit: {

@@ -1341,6 +1341,12 @@ model Plan {
   priceMonthlyCents    Int?
   priceYearlyCents     Int?
   currency             String   @default("USD")
+  // Phase 9.2 — per-bundle extras pricing (cents per 100 units).
+  // Drives the upgrade modal + pricing page sliders when the plan's
+  // base limits are not unlimited.
+  extraAiCreditsPricePer100 Int @default(2500)
+  extraWhatsappPricePer100  Int @default(500)
+  extraSmsPricePer100       Int @default(200)
   isArchived           Boolean  @default(false)
   // Enforced "at most one default" via partial unique index in the
   // migration: CREATE UNIQUE INDEX ON "Plan"("isDefault") WHERE

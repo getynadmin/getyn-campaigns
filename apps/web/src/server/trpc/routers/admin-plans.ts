@@ -61,6 +61,11 @@ const planUpsertSchema = z.object({
    * plan. Stored on Plan.metadata.freeTrialEnabled (default true).
    */
   freeTrialEnabled: z.boolean().default(true),
+  // Phase 9.2 — extras bundle pricing (cents per 100 units). Drives
+  // the upgrade modal + /pricing sliders.
+  extraAiCreditsPricePer100: z.number().int().min(0).max(1_000_000).default(2500),
+  extraWhatsappPricePer100: z.number().int().min(0).max(1_000_000).default(500),
+  extraSmsPricePer100: z.number().int().min(0).max(1_000_000).default(200),
 });
 
 const idSchema = z.object({ id: z.string().min(1).max(64) });
@@ -118,6 +123,9 @@ export const adminPlansRouter = createAdminRouter({
             priceMonthlyCents: input.priceMonthlyCents,
             priceYearlyCents: input.priceYearlyCents,
             currency: input.currency,
+            extraAiCreditsPricePer100: input.extraAiCreditsPricePer100,
+            extraWhatsappPricePer100: input.extraWhatsappPricePer100,
+            extraSmsPricePer100: input.extraSmsPricePer100,
             metadata: input.pricing
               ? ({ pricing: input.pricing, freeTrialEnabled: input.freeTrialEnabled } as Prisma.InputJsonValue)
               : ({ freeTrialEnabled: input.freeTrialEnabled } as Prisma.InputJsonValue),
@@ -210,6 +218,9 @@ export const adminPlansRouter = createAdminRouter({
             priceMonthlyCents: input.priceMonthlyCents,
             priceYearlyCents: input.priceYearlyCents,
             currency: input.currency,
+            extraAiCreditsPricePer100: input.extraAiCreditsPricePer100,
+            extraWhatsappPricePer100: input.extraWhatsappPricePer100,
+            extraSmsPricePer100: input.extraSmsPricePer100,
             metadata: input.pricing
               ? ({ pricing: input.pricing, freeTrialEnabled: input.freeTrialEnabled } as Prisma.InputJsonValue)
               : ({ freeTrialEnabled: input.freeTrialEnabled } as Prisma.InputJsonValue),
@@ -267,6 +278,53 @@ export const adminPlansRouter = createAdminRouter({
             targetEntityId: input.id,
             beforeSnapshot: before,
             afterSnapshot: updated,
+          },
+        };
+      });
+    }),
+
+  /**
+   * Hard-delete a plan. Refuses if any tenant currently subscribes
+   * to it (returns the count so the UI can surface which tenants).
+   * Default plan cannot be deleted — flip default first.
+   */
+  delete: supportAdminProcedure
+    .input(idSchema)
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async (tx) => {
+        const plan = await tx.plan.findUnique({
+          where: { id: input.id },
+          select: {
+            id: true,
+            slug: true,
+            name: true,
+            isDefault: true,
+            _count: { select: { subscriptions: true } },
+          },
+        });
+        if (!plan) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Plan not found.' });
+        }
+        if (plan.isDefault) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Cannot delete the default plan. Set another default first.',
+          });
+        }
+        if (plan._count.subscriptions > 0) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `${plan._count.subscriptions} tenant(s) are on this plan. Reassign them first, then delete.`,
+          });
+        }
+        await tx.planFeature.deleteMany({ where: { planId: input.id } });
+        await tx.plan.delete({ where: { id: input.id } });
+        return {
+          result: { ok: true as const },
+          audit: {
+            action: 'admin.plan.deleted',
+            targetEntityId: input.id,
+            beforeSnapshot: { slug: plan.slug, name: plan.name },
           },
         };
       });
