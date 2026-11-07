@@ -41,6 +41,7 @@ export const emailTemplateCategorySchema = z.enum([
   'TRANSACTIONAL',
   'EVENT',
   'WELCOME',
+  'LAYOUT',
   'OTHER',
 ]);
 export type EmailTemplateCategoryValue = z.infer<

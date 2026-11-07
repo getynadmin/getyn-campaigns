@@ -144,6 +144,7 @@ enum EmailTemplateCategory {
   TRANSACTIONAL
   EVENT
   WELCOME
+  LAYOUT
   OTHER
 }
 

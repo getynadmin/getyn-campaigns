@@ -48,6 +48,7 @@ import { api } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
 import { TemplatePreviewDialog } from './template-preview-dialog';
+import { TemplateThumbnail } from './template-thumbnail';
 
 const CATEGORY_LABEL: Record<EmailTemplateCategoryValue, string> = {
   NEWSLETTER: 'Newsletter',
@@ -56,6 +57,7 @@ const CATEGORY_LABEL: Record<EmailTemplateCategoryValue, string> = {
   TRANSACTIONAL: 'Transactional',
   EVENT: 'Event',
   WELCOME: 'Welcome',
+  LAYOUT: 'Layout',
   OTHER: 'Other',
 };
 
@@ -66,6 +68,7 @@ const CATEGORY_TONE: Record<EmailTemplateCategoryValue, string> = {
   ANNOUNCEMENT: 'bg-violet-100 text-violet-900 dark:bg-violet-950 dark:text-violet-200',
   TRANSACTIONAL: 'bg-slate-100 text-slate-900 dark:bg-slate-900 dark:text-slate-200',
   EVENT: 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200',
+  LAYOUT: 'bg-indigo-100 text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200',
   OTHER: 'bg-muted text-muted-foreground',
 };
 
@@ -261,6 +264,7 @@ export function TemplatesLibraryClient({
             <SelectItem value="ANNOUNCEMENT">Announcement</SelectItem>
             <SelectItem value="EVENT">Event</SelectItem>
             <SelectItem value="TRANSACTIONAL">Transactional</SelectItem>
+            <SelectItem value="LAYOUT">Layout</SelectItem>
             <SelectItem value="OTHER">Other</SelectItem>
           </SelectContent>
         </Select>
@@ -304,32 +308,8 @@ export function TemplatesLibraryClient({
                 onClick={() => setPreviewId(tpl.id)}
                 className="group flex cursor-pointer flex-col overflow-hidden transition-shadow hover:shadow-md"
               >
-                <div
-                  className={cn(
-                    'aspect-[1.6/1] border-b p-6',
-                    CATEGORY_TONE[cat],
-                  )}
-                >
-                  {tpl.thumbnailUrl ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      src={tpl.thumbnailUrl}
-                      alt={tpl.name}
-                      className="h-full w-full rounded object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full flex-col justify-between">
-                      <FileText className="size-5 opacity-60" />
-                      <div>
-                        <p className="line-clamp-2 text-sm font-semibold leading-tight">
-                          {tpl.name}
-                        </p>
-                        <p className="mt-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
-                          {CATEGORY_LABEL[cat]}
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                <div className="aspect-[1.3/1] border-b bg-[#f4f4f7]">
+                  <TemplateThumbnail design={tpl.designJson} />
                 </div>
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between gap-2">
