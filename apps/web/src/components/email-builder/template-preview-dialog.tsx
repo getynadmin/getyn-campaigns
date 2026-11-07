@@ -75,7 +75,7 @@ export function TemplatePreviewDialog({
         <div className="h-[520px] overflow-hidden rounded-md border bg-white">
           <iframe
             title={template.name}
-            srcDoc={`<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=600\"></head><body style=\"margin:0;background:#f4f4f7;\">${substituted}</body></html>`}
+            srcDoc={`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=600"></head><body style="margin:0;background:#f4f4f7;">${substituted}</body></html>`}
             className="h-full w-full"
             sandbox=""
           />
