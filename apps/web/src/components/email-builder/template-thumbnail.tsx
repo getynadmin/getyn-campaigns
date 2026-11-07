@@ -42,17 +42,23 @@ export function TemplateThumbnail({
     return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=600"><style>html,body{margin:0;background:#f4f4f7;}</style></head><body>${substituted}</body></html>`;
   }, [design, previewMergeTags]);
 
-  // Width-fit: iframe rendered at email's native 600px wide and
-  // scaled so it exactly fills the card width. The container clips
-  // vertically to whatever the card asks for.
+  // The iframe is rendered at the email's native 600px wide and we
+  // transform-scale it to roughly fit a ~220px compact card
+  // (600 * 0.38 ≈ 228). We nudge the iframe up to crop out the
+  // email's outer grey padding so the white panel fills the card.
   return (
     <div className="pointer-events-none relative h-full w-full overflow-hidden bg-white">
       <iframe
         title="Template preview"
         srcDoc={srcDoc}
         aria-hidden="true"
-        className="absolute left-0 top-0 h-[1600px] w-[600px] origin-top-left border-0"
-        style={{ transform: 'scale(0.5)' }}
+        className="absolute h-[1600px] w-[600px] border-0"
+        style={{
+          transform: 'scale(0.38)',
+          transformOrigin: 'top left',
+          top: '-14px',
+          left: 0,
+        }}
         sandbox=""
         loading="lazy"
       />

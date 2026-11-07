@@ -281,7 +281,7 @@ export function TemplatesLibraryClient({
 
       <div
         className={cn(
-          'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3',
+          'grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5',
           mode === 'generate' && 'hidden',
         )}
       >
@@ -308,12 +308,12 @@ export function TemplatesLibraryClient({
                 onClick={() => setPreviewId(tpl.id)}
                 className="group flex cursor-pointer flex-col overflow-hidden transition-shadow hover:shadow-md"
               >
-                <div className="aspect-[3/4] border-b bg-white">
+                <div className="aspect-[4/5] border-b bg-white">
                   <TemplateThumbnail design={tpl.designJson} />
                 </div>
-                <CardHeader className="pb-2">
+                <CardHeader className="p-3 pb-1">
                   <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="text-base">{tpl.name}</CardTitle>
+                    <CardTitle className="line-clamp-1 text-sm">{tpl.name}</CardTitle>
                     {canCreate || (canDelete && !isSystem) ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -381,15 +381,15 @@ export function TemplatesLibraryClient({
                     ) : null}
                   </div>
                 </CardHeader>
-                <CardContent className="flex-1 pb-3">
+                <CardContent className="flex-1 p-3 pt-0">
                   {tpl.description ? (
-                    <p className="line-clamp-2 text-xs text-muted-foreground">
+                    <p className="line-clamp-1 text-[11px] text-muted-foreground">
                       {tpl.description}
                     </p>
                   ) : null}
                 </CardContent>
                 <div
-                  className="border-t bg-muted/20 px-4 py-2"
+                  className="border-t bg-muted/20 px-3 py-1.5"
                   onClick={(e) => e.stopPropagation()}
                 >
                   {isSystem ? (
