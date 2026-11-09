@@ -41,6 +41,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
+import { SetupWithAiDialog } from '@/components/automation/setup-with-ai-dialog';
+import { AiButton } from '@/components/ui/ai-button';
+
 /**
  * Phase 8 M4 — 5-step Email Agent wizard.
  *
@@ -203,6 +206,8 @@ export function EmailAgentWizard({
     setHydrated(true);
   }, [isEdit, hydrated, agentQuery.data]);
 
+  const [aiOpen, setAiOpen] = useState(false);
+
   const upsert = api.emailAgent.upsert.useMutation({
     onSuccess: (data) => {
       void utils.emailAgent.list.invalidate();
@@ -297,7 +302,7 @@ export function EmailAgentWizard({
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-6">
+    <div className="mx-auto max-w-4xl space-y-6 p-6">
       <header className="flex items-start justify-between gap-3">
         <div>
           <Button asChild variant="ghost" size="sm" className="-ml-2">
@@ -311,39 +316,61 @@ export function EmailAgentWizard({
             <StatusBadge status={currentStatus} />
           </h1>
         </div>
-        {isEdit && (
-          <div className="flex items-center gap-2">
-            {currentStatus === 'ACTIVE' ? (
+        <div className="flex items-center gap-2">
+          <AiButton size="sm" variant="outline" onClick={() => setAiOpen(true)}>
+            Set up with AI
+          </AiButton>
+          {isEdit && (
+            <>
+              {currentStatus === 'ACTIVE' ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => pause.mutate({ id: agentId! })}
+                  disabled={pause.isPending}
+                >
+                  <Pause className="mr-1 size-4" /> Pause
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  onClick={() => activate.mutate({ id: agentId! })}
+                  disabled={activate.isPending}
+                >
+                  <Play className="mr-1 size-4" /> Activate
+                </Button>
+              )}
               <Button
                 size="sm"
-                variant="outline"
-                onClick={() => pause.mutate({ id: agentId! })}
-                disabled={pause.isPending}
+                variant="ghost"
+                onClick={() => {
+                  if (confirm('Delete this agent?'))
+                    remove.mutate({ id: agentId! });
+                }}
+                className="text-rose-700"
               >
-                <Pause className="mr-1 size-4" /> Pause
+                <Trash2 className="mr-1 size-4" /> Delete
               </Button>
-            ) : (
-              <Button
-                size="sm"
-                onClick={() => activate.mutate({ id: agentId! })}
-                disabled={activate.isPending}
-              >
-                <Play className="mr-1 size-4" /> Activate
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                if (confirm('Delete this agent?')) remove.mutate({ id: agentId! });
-              }}
-              className="text-rose-700"
-            >
-              <Trash2 className="mr-1 size-4" /> Delete
-            </Button>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </header>
+
+      <SetupWithAiDialog
+        open={aiOpen}
+        onOpenChange={setAiOpen}
+        channel="email"
+        onDrafted={({ persona, goal }) =>
+          setState((s) => ({
+            ...s,
+            goal,
+            // The email agent's "systemInstructions" is the voice /
+            // tone / behaviour field — natural home for the drafted
+            // persona.
+            systemInstructions: persona,
+          }))
+        }
+      />
 
       {/* Stepper */}
       <ol className="grid grid-cols-5 gap-1 rounded-md border bg-card p-1">

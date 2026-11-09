@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import {
   AiNotConfiguredError,
   composeCampaign,
+  draftAgentSetup,
   draftEmailTemplate,
   draftSegmentRules,
   draftWhatsAppTemplate,
@@ -15,6 +16,7 @@ import {
   aiDraftSegmentSchema,
   aiDraftTemplateSchema,
   aiGenerateEmailTemplateSchema,
+  aiSetupAgentSchema,
 } from '@getyn/types';
 
 import { assertTenantActive } from '@/server/billing/assert-active';
@@ -502,6 +504,94 @@ export const aiRouter = createTRPCRouter({
         },
         subject: result.proposal.subject,
         previewText: result.proposal.previewText,
+        cost: result.cost,
+      };
+    }),
+
+  // Drafts persona + goal for the Email / WhatsApp Agent wizard from a
+  // short operator brief. Costs 1 AI credit; same hourly bucket as the
+  // other `ai.*` procedures.
+  setupAgent: tenantProcedure
+    .use(enforceRole(Role.OWNER, Role.ADMIN, Role.EDITOR))
+    .input(aiSetupAgentSchema)
+    .mutation(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const userId = ctx.user.id;
+      await assertTenantActive(tenantId);
+      await assertWithinLimit(tenantId, PlanMetric.AI_CREDITS_PER_MONTH, 1);
+
+      const since = new Date(Date.now() - 60 * 60 * 1000);
+      const recent = await withTenant(tenantId, (tx) =>
+        tx.aiGeneration.count({
+          where: {
+            tenantId,
+            feature: 'agent_setup',
+            createdAt: { gte: since },
+          },
+        }),
+      );
+      if (recent >= HOURLY_LIMIT_PER_TENANT) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Hourly AI limit reached (${HOURLY_LIMIT_PER_TENANT}/hour). Try again in a bit.`,
+        });
+      }
+
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { name: true },
+      });
+
+      const anthropic = await getAnthropicCredentials();
+
+      let result;
+      try {
+        result = await draftAgentSetup(
+          {
+            channel: input.channel,
+            brief: input.brief,
+            tenantName: tenant?.name ?? undefined,
+          },
+          anthropic.apiKey ? { apiKey: anthropic.apiKey } : {},
+        );
+      } catch (err) {
+        if (err instanceof AiNotConfiguredError) {
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message:
+              'AI features are not configured on the server (missing ANTHROPIC_API_KEY).',
+          });
+        }
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: err instanceof Error ? err.message : 'Draft failed.',
+        });
+      }
+
+      try {
+        await withTenant(tenantId, (tx) =>
+          tx.aiGeneration.create({
+            data: {
+              tenantId,
+              userId,
+              feature: 'agent_setup',
+              prompt: input.brief,
+              response: result.raw,
+              tokensUsed: result.cost.totalTokens,
+              cost: result.cost.costUsd,
+            },
+          }),
+        );
+      } catch (auditErr) {
+        console.warn(
+          '[ai.setupAgent] audit insert failed:',
+          auditErr instanceof Error ? auditErr.message : auditErr,
+        );
+      }
+
+      return {
+        persona: result.persona,
+        goal: result.goal,
         cost: result.cost,
       };
     }),

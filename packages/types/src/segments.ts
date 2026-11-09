@@ -331,6 +331,20 @@ export const aiComposeCampaignSchema = z.object({
 export type AiComposeCampaignInput = z.infer<typeof aiComposeCampaignSchema>;
 
 // ---------------------------------------------------------------------------
+// Agent Setup — brief → persona + goal for WA/Email agent wizard
+// ---------------------------------------------------------------------------
+
+export const aiSetupAgentSchema = z.object({
+  channel: z.enum(['email', 'whatsapp']),
+  brief: z
+    .string()
+    .trim()
+    .min(10, 'Describe what the agent should do in at least a sentence.')
+    .max(1500),
+});
+export type AiSetupAgentInput = z.infer<typeof aiSetupAgentSchema>;
+
+// ---------------------------------------------------------------------------
 // Email Template Generator — brief → saved template
 // ---------------------------------------------------------------------------
 

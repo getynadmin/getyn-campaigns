@@ -19,6 +19,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
+import { SetupWithAiDialog } from '@/components/automation/setup-with-ai-dialog';
+import { AiButton } from '@/components/ui/ai-button';
+
 const STEPS = [
   { key: 'goal', label: 'Persona + Goal' },
   { key: 'knowledge', label: 'Knowledge URLs' },
@@ -132,6 +135,8 @@ export function WhatsappAgentWizard({
     setHydrated(true);
   }, [isEdit, hydrated, agentQuery.data]);
 
+  const [aiOpen, setAiOpen] = useState(false);
+
   const upsert = api.whatsappAgent.upsert.useMutation({
     onSuccess: (data) => {
       void utils.whatsappAgent.list.invalidate();
@@ -183,7 +188,7 @@ export function WhatsappAgentWizard({
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6">
+    <div className="mx-auto max-w-4xl space-y-6 p-6">
       <header className="flex items-start justify-between gap-3">
         <div>
           <Button asChild variant="ghost" size="sm" className="-ml-2">
@@ -195,25 +200,39 @@ export function WhatsappAgentWizard({
             <StatusBadge status={currentStatus} />
           </h1>
         </div>
-        {isEdit && (
-          <div className="flex items-center gap-2">
-            {currentStatus === 'ACTIVE' ? (
-              <Button size="sm" variant="outline" onClick={() => pause.mutate({ id: agentId! })} disabled={pause.isPending}>
-                <Pause className="mr-1 size-4" /> Pause
+        <div className="flex items-center gap-2">
+          <AiButton size="sm" variant="outline" onClick={() => setAiOpen(true)}>
+            Set up with AI
+          </AiButton>
+          {isEdit && (
+            <>
+              {currentStatus === 'ACTIVE' ? (
+                <Button size="sm" variant="outline" onClick={() => pause.mutate({ id: agentId! })} disabled={pause.isPending}>
+                  <Pause className="mr-1 size-4" /> Pause
+                </Button>
+              ) : (
+                <Button size="sm" onClick={() => activate.mutate({ id: agentId! })} disabled={activate.isPending}>
+                  <Play className="mr-1 size-4" /> Activate
+                </Button>
+              )}
+              <Button size="sm" variant="ghost"
+                onClick={() => { if (confirm('Delete this agent?')) remove.mutate({ id: agentId! }); }}
+                className="text-rose-700">
+                <Trash2 className="mr-1 size-4" /> Delete
               </Button>
-            ) : (
-              <Button size="sm" onClick={() => activate.mutate({ id: agentId! })} disabled={activate.isPending}>
-                <Play className="mr-1 size-4" /> Activate
-              </Button>
-            )}
-            <Button size="sm" variant="ghost"
-              onClick={() => { if (confirm('Delete this agent?')) remove.mutate({ id: agentId! }); }}
-              className="text-rose-700">
-              <Trash2 className="mr-1 size-4" /> Delete
-            </Button>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </header>
+
+      <SetupWithAiDialog
+        open={aiOpen}
+        onOpenChange={setAiOpen}
+        channel="whatsapp"
+        onDrafted={({ persona, goal }) =>
+          setState((s) => ({ ...s, persona, goal }))
+        }
+      />
 
       {/* Step strip — five equal columns on md+, stacks on mobile.
           Active step gets the brand yellow chip with a subtle ring so

@@ -28,6 +28,7 @@ export * from './email-template-draft';
 export * from './system-template-designs';
 export * from './agent-runtime';
 export * from './attachment-summary';
+export * from './setup-agent';
 export * from './dalle';
 export * from './visual-style-extractor';
 export * from './help-assistant';
