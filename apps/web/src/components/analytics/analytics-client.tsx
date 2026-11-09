@@ -6,6 +6,7 @@ import {
   Bot,
   Mail,
   MessageSquare,
+  Phone,
   ShieldCheck,
   Users,
   Workflow,
@@ -28,6 +29,7 @@ type Tab =
   | 'overview'
   | 'email'
   | 'whatsapp'
+  | 'sms'
   | 'automations'
   | 'agents'
   | 'audience'
@@ -37,6 +39,7 @@ const TABS: Array<{ key: Tab; label: string; icon: LucideIcon }> = [
   { key: 'overview', label: 'Overview', icon: BarChart3 },
   { key: 'email', label: 'Email campaigns', icon: Mail },
   { key: 'whatsapp', label: 'WhatsApp campaigns', icon: MessageSquare },
+  { key: 'sms', label: 'SMS campaigns', icon: Phone },
   { key: 'automations', label: 'Drip / Flows', icon: Workflow },
   { key: 'agents', label: 'Agents', icon: Bot },
   { key: 'audience', label: 'Audience', icon: Users },
@@ -79,6 +82,7 @@ export function AnalyticsClient(): JSX.Element {
       {tab === 'overview' ? <OverviewTab range={range} /> : null}
       {tab === 'email' ? <EmailTab range={range} /> : null}
       {tab === 'whatsapp' ? <WhatsappTab range={range} /> : null}
+      {tab === 'sms' ? <SmsTab range={range} /> : null}
       {tab === 'automations' ? <AutomationsTab range={range} /> : null}
       {tab === 'agents' ? <AgentsTab range={range} /> : null}
       {tab === 'audience' ? <AudienceTab range={range} /> : null}
@@ -195,6 +199,51 @@ function EmailTab({ range }: { range: { days: number } }): JSX.Element {
               <td className="px-3 py-2 text-right">{fmt(c.clicked)}</td>
               <td className="px-3 py-2 text-right">{fmt(c.bounced)}</td>
               <td className="px-3 py-2 text-right">{fmt(c.unsubscribed)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SmsTab({ range }: { range: { days: number } }): JSX.Element {
+  const q = api.analytics.smsCampaigns.useQuery(range);
+  if (q.isLoading || !q.data) return <LoadingGrid rows={3} />;
+  if (q.data.length === 0) {
+    return (
+      <Empty
+        title="No SMS campaigns in this range."
+        note="Create an SMS campaign from the Campaigns page — stats land here as sends dispatch."
+      />
+    );
+  }
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <table className="w-full text-sm">
+        <thead className="text-left text-xs text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2">Campaign</th>
+            <th className="px-3 py-2">Status</th>
+            <th className="px-3 py-2 text-right">Queued</th>
+            <th className="px-3 py-2 text-right">Sent</th>
+            <th className="px-3 py-2 text-right">Delivered</th>
+            <th className="px-3 py-2 text-right">Undelivered</th>
+            <th className="px-3 py-2 text-right">Failed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {q.data.map((c) => (
+            <tr key={c.id} className="border-t">
+              <td className="px-3 py-2 font-medium">{c.name}</td>
+              <td className="px-3 py-2 text-xs text-muted-foreground">
+                {c.status}
+              </td>
+              <td className="px-3 py-2 text-right">{fmt(c.queued)}</td>
+              <td className="px-3 py-2 text-right">{fmt(c.sent)}</td>
+              <td className="px-3 py-2 text-right">{fmt(c.delivered)}</td>
+              <td className="px-3 py-2 text-right">{fmt(c.undelivered)}</td>
+              <td className="px-3 py-2 text-right">{fmt(c.failed)}</td>
             </tr>
           ))}
         </tbody>

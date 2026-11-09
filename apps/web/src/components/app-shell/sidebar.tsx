@@ -16,7 +16,6 @@ import {
   type LucideIcon,
   Mail,
   MessageSquare,
-  Phone,
   Search,
   Settings,
   ShieldOff,
@@ -92,7 +91,6 @@ function buildSections(slug: string): SidebarSection[] {
           icon: MessageSquare,
           badge: 'inboxUnread',
         },
-        { href: t('/sms'), label: 'SMS', icon: Phone, soon: true },
       ],
     },
     // Phase 8 — Automation (Drip Campaigns + Email Agent). Sits

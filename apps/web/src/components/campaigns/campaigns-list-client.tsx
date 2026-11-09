@@ -10,13 +10,14 @@ import {
   Mail,
   MessageSquare,
   MoreHorizontal,
+  Phone,
   Plus,
   Search,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
-import type { CampaignStatusValue } from '@getyn/types';
+import type { CampaignStatusValue, CampaignTypeValue } from '@getyn/types';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -59,6 +60,7 @@ export function CampaignsListClient({
   canCreate: boolean;
 }): JSX.Element {
   const [status, setStatus] = useState<CampaignStatusValue | 'ALL'>('ALL');
+  const [kind, setKind] = useState<CampaignTypeValue | 'ALL'>('ALL');
   const [rawSearch, setRawSearch] = useState('');
   const [composeOpen, setComposeOpen] = useState(false);
   const router = useRouter();
@@ -66,6 +68,7 @@ export function CampaignsListClient({
 
   const { data, isLoading } = api.campaign.list.useQuery({
     status: status === 'ALL' ? undefined : status,
+    type: kind === 'ALL' ? undefined : kind,
     search: rawSearch || undefined,
     limit: 50,
   });
@@ -93,6 +96,20 @@ export function CampaignsListClient({
             className="pl-9"
           />
         </div>
+        <Select
+          value={kind}
+          onValueChange={(v) => setKind(v as CampaignTypeValue | 'ALL')}
+        >
+          <SelectTrigger className="w-[140px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All channels</SelectItem>
+            <SelectItem value="EMAIL">Email</SelectItem>
+            <SelectItem value="WHATSAPP">WhatsApp</SelectItem>
+            <SelectItem value="SMS">SMS</SelectItem>
+          </SelectContent>
+        </Select>
         <Select
           value={status}
           onValueChange={(v) => setStatus(v as CampaignStatusValue | 'ALL')}
@@ -153,6 +170,20 @@ export function CampaignsListClient({
                   </div>
                 </Link>
               </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link
+                  href={`/t/${tenantSlug}/campaigns/sms/new`}
+                  className="flex items-start gap-2"
+                >
+                  <Phone className="mt-0.5 size-4" />
+                  <div className="flex flex-col">
+                    <span>SMS campaign</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      Twilio-backed broadcast to a segment
+                    </span>
+                  </div>
+                </Link>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
@@ -200,6 +231,7 @@ export function CampaignsListClient({
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
+                        <ChannelChip type={row.type as CampaignTypeValue} />
                         <p className="truncate font-medium">{row.name}</p>
                         {abEnabled ? (
                           <span className="inline-block rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-violet-900 dark:bg-violet-950 dark:text-violet-200">
@@ -273,5 +305,45 @@ export function CampaignsListClient({
         onOpenChange={setComposeOpen}
       />
     </div>
+  );
+}
+
+const CHANNEL_META: Record<
+  CampaignTypeValue,
+  { label: string; icon: typeof Mail; tone: string }
+> = {
+  EMAIL: {
+    label: 'Email',
+    icon: Mail,
+    tone:
+      'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
+  },
+  WHATSAPP: {
+    label: 'WhatsApp',
+    icon: MessageSquare,
+    tone:
+      'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200',
+  },
+  SMS: {
+    label: 'SMS',
+    icon: Phone,
+    tone:
+      'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  },
+};
+
+function ChannelChip({ type }: { type: CampaignTypeValue }): JSX.Element {
+  const meta = CHANNEL_META[type] ?? CHANNEL_META.EMAIL;
+  const Icon = meta.icon;
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+        meta.tone,
+      )}
+    >
+      <Icon className="size-3" />
+      {meta.label}
+    </span>
   );
 }

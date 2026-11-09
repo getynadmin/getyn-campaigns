@@ -375,6 +375,87 @@ export const analyticsRouter = createTRPCRouter({
     }),
 
   // ───────────────────────────────────────────────────────────────
+  // SMS campaigns — per-campaign delivery funnel.
+  // ───────────────────────────────────────────────────────────────
+  smsCampaigns: tenantProcedure
+    .input(dateRangeSchema)
+    .query(async ({ ctx, input }) => {
+      const tenantId = ctx.tenantContext.tenant.id;
+      const { from, to } = resolveRange(input);
+
+      return withTenant(tenantId, async (tx) => {
+        const campaigns = await tx.campaign.findMany({
+          where: {
+            tenantId,
+            type: 'SMS',
+            createdAt: { gte: from, lte: to },
+          },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            createdAt: true,
+            sentAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 100,
+        });
+        const ids = campaigns.map((c) => c.id);
+        const sends = ids.length
+          ? await tx.smsCampaignSend.groupBy({
+              by: ['campaignId', 'status'],
+              where: { tenantId, campaignId: { in: ids } },
+              _count: { _all: true },
+            })
+          : [];
+        const perCampaign = new Map<
+          string,
+          {
+            queued: number;
+            sent: number;
+            delivered: number;
+            failed: number;
+            undelivered: number;
+          }
+        >();
+        for (const c of campaigns) {
+          perCampaign.set(c.id, {
+            queued: 0,
+            sent: 0,
+            delivered: 0,
+            failed: 0,
+            undelivered: 0,
+          });
+        }
+        for (const row of sends) {
+          const bucket = perCampaign.get(row.campaignId);
+          if (!bucket) continue;
+          const n = row._count._all;
+          const s = row.status;
+          if (s === 'QUEUED') bucket.queued += n;
+          else if (s === 'SENT') bucket.sent += n;
+          else if (s === 'DELIVERED') bucket.delivered += n;
+          else if (s === 'FAILED') bucket.failed += n;
+          else if (s === 'UNDELIVERED') bucket.undelivered += n;
+        }
+        return campaigns.map((c) => ({
+          id: c.id,
+          name: c.name,
+          status: c.status,
+          createdAt: c.createdAt,
+          sentAt: c.sentAt,
+          ...(perCampaign.get(c.id) ?? {
+            queued: 0,
+            sent: 0,
+            delivered: 0,
+            failed: 0,
+            undelivered: 0,
+          }),
+        }));
+      });
+    }),
+
+  // ───────────────────────────────────────────────────────────────
   // Drip / Flows — per-automation enrollments + step completion.
   // ───────────────────────────────────────────────────────────────
   automations: tenantProcedure
