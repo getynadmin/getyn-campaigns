@@ -1167,6 +1167,105 @@ const metaPixelRouter = createAdminRouter({
     }),
 });
 
+// =====================================================================
+// Twilio SMS engine — one provider for now; add Telnyx/MSG91 later.
+// =====================================================================
+
+const twilioUpdateSchema = z.object({
+  accountSid: z.string().trim().min(1).max(255),
+  fromNumber: z.string().trim().min(1).max(64),
+  authToken: z.string().trim().max(255).default(''),
+  enabled: z.boolean(),
+});
+
+const twilioRouter = createAdminRouter({
+  get: staffProcedure.query(async () => {
+    const row = await adminLoadIntegration<
+      { accountSid?: string; fromNumber?: string },
+      { authToken?: string }
+    >('twilio');
+    return {
+      provider: 'twilio' as const,
+      enabled: row?.enabled ?? false,
+      config: {
+        accountSid: row?.config.accountSid ?? '',
+        fromNumber: row?.config.fromNumber ?? '',
+      },
+      hasSecrets: row?.hasSecrets ?? false,
+      lastTestedAt: row?.lastTestedAt ?? null,
+      lastTestStatus: row?.lastTestStatus ?? ('UNTESTED' as const),
+      lastTestError: row?.lastTestError ?? null,
+    };
+  }),
+  update: supportAdminProcedure
+    .input(twilioUpdateSchema)
+    .mutation(async ({ ctx, input }) => {
+      return withAdminContext(ctx.staff, async (tx) => {
+        const existing = await adminLoadIntegration<
+          Record<string, unknown>,
+          Record<string, unknown>
+        >('twilio', tx);
+        const config = {
+          accountSid: input.accountSid,
+          fromNumber: input.fromNumber,
+        };
+        const incomingToken = input.authToken.trim();
+        const secretsPayload: Record<string, unknown> | null =
+          incomingToken === '' ? null : { authToken: incomingToken };
+        if (input.enabled && secretsPayload === null && !existing?.hasSecrets) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message:
+              'Enter the Auth Token before enabling — no credentials are on file yet.',
+          });
+        }
+        await saveIntegration(
+          {
+            provider: 'twilio',
+            config: config as Record<string, unknown>,
+            secrets: secretsPayload,
+            enabled: input.enabled,
+            staffUserId: ctx.staff.staffUserId,
+          },
+          tx,
+        );
+        return {
+          result: { ok: true as const },
+          audit: {
+            action: 'admin.integration.twilio.updated',
+            beforeSnapshot: existing
+              ? { enabled: existing.enabled, config: existing.config }
+              : null,
+            afterSnapshot: { enabled: input.enabled, config },
+          },
+        };
+      });
+    }),
+  sendTest: supportAdminProcedure
+    .input(z.object({ to: z.string().trim().min(5).max(32) }))
+    .mutation(async ({ input }) => {
+      const { sendTwilioSms } = await import(
+        '@/server/integrations/twilio'
+      );
+      const result = await sendTwilioSms({
+        to: input.to,
+        body: 'Getyn Campaigns — Twilio test SMS. If you got this, the integration is wired correctly.',
+      });
+      await recordTestResult({
+        provider: 'twilio',
+        ok: result.ok,
+        error: result.ok ? undefined : result.error,
+      });
+      if (!result.ok) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error,
+        });
+      }
+      return { ok: true as const, sid: result.sid };
+    }),
+});
+
 export const adminIntegrationsRouter = createAdminRouter({
   whatsApp: whatsAppRouter,
   smtp: smtpRouter,
@@ -1177,4 +1276,5 @@ export const adminIntegrationsRouter = createAdminRouter({
   dalle: dalleRouter,
   xpay: xpayRouter,
   metaPixel: metaPixelRouter,
+  twilio: twilioRouter,
 });
