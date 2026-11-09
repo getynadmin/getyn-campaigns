@@ -257,21 +257,33 @@ export function Sidebar({
           title={appName}
         >
           {logoUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img
-              src={logoUrl}
-              alt={appName}
-              className={cn('h-7 w-auto object-contain', collapsed && 'max-w-8')}
-            />
+            <div className="flex flex-col items-start leading-none">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={logoUrl}
+                alt={appName}
+                className={cn('h-9 w-auto object-contain', collapsed && 'max-w-10')}
+              />
+              {!collapsed && (
+                <span className="mt-0.5 pl-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-orange-500 dark:text-orange-400">
+                  Campaigns
+                </span>
+              )}
+            </div>
           ) : (
             <>
-              <span className="grid size-7 place-items-center rounded-md bg-gradient-to-br from-violet-500 to-fuchsia-500 text-sm font-bold text-white">
+              <span className="grid size-9 place-items-center rounded-md bg-gradient-to-br from-violet-500 to-fuchsia-500 text-base font-bold text-white">
                 {firstLetter}
               </span>
               {!collapsed && (
-                <span className="font-display text-sm font-semibold tracking-tight">
-                  {appName}
-                </span>
+                <div className="flex flex-col items-start leading-none">
+                  <span className="font-display text-sm font-semibold tracking-tight">
+                    {appName}
+                  </span>
+                  <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-orange-500 dark:text-orange-400">
+                    Campaigns
+                  </span>
+                </div>
               )}
             </>
           )}

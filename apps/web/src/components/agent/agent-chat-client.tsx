@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { VoiceInputButton } from '@/components/ui/voice-input-button';
 import { useAgentStream } from './use-agent-stream';
 import { EmailPreviewPane } from './email-preview-pane';
 import { WhatsAppPreviewPane } from './whatsapp-preview-pane';
@@ -386,19 +387,28 @@ function ChatPane({
           disabled={disabled}
         />
         <div className="flex gap-2">
-          <Input
-            value={input}
-            onChange={(e) => onInput(e.target.value)}
-            placeholder={
-              disabled
-                ? 'Conversation is closed.'
-                : streaming
-                  ? 'Wait for the agent to finish…'
-                  : 'Reply to the agent…'
-            }
-            disabled={disabled || streaming}
-            autoFocus
-          />
+          <div className="relative flex-1">
+            <Input
+              value={input}
+              onChange={(e) => onInput(e.target.value)}
+              placeholder={
+                disabled
+                  ? 'Conversation is closed.'
+                  : streaming
+                    ? 'Wait for the agent to finish…'
+                    : 'Reply to the agent…'
+              }
+              disabled={disabled || streaming}
+              autoFocus
+              className="pr-10"
+            />
+            {!disabled && !streaming ? (
+              <VoiceInputButton
+                className="absolute right-1 top-1/2 -translate-y-1/2"
+                onFinal={(chunk) => onInput((input + ' ' + chunk).trimStart())}
+              />
+            ) : null}
+          </div>
           <Button type="submit" size="icon" disabled={disabled || streaming || !input.trim()}>
             <Send className="size-4" />
           </Button>
