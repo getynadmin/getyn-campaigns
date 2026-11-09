@@ -37,7 +37,7 @@ import { validateAutomationDefinition } from '@getyn/types';
 import { computeDayLabels } from './day-counter';
 import { nodeTypes } from './nodes';
 import { AiAssistantBar } from './ai-assistant-bar';
-import { AutomationPalette } from './palette';
+import { AutomationPalette, STEP_PALETTE } from './palette';
 import { WorkflowSettingsDialog } from './workflow-settings-dialog';
 import { PropertiesPanel } from './properties-panel';
 
@@ -86,6 +86,9 @@ function BuilderInner({
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [status, setStatus] = useState<'DRAFT' | 'ACTIVE' | 'PAUSED' | 'ARCHIVED'>('DRAFT');
+  const [kind, setKind] = useState<
+    'EMAIL_OUTBOUND' | 'WHATSAPP_OUTBOUND' | 'WHATSAPP_INBOUND'
+  >('EMAIL_OUTBOUND');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const hydratedRef = useRef(false);
 
@@ -113,6 +116,7 @@ function BuilderInner({
     );
     setName(row.name);
     setStatus(row.status as typeof status);
+    if (row.kind) setKind(row.kind as typeof kind);
   }, [row]);
 
   const updateDefinition = api.automation.updateDefinition.useMutation();
@@ -216,6 +220,9 @@ function BuilderInner({
       event.preventDefault();
       const type = event.dataTransfer.getData('application/x-automation-node-type') as AutomationNodeType;
       if (!type) return;
+      // Guard: palette items filter by kind but a user could still
+      // drop something cached in dataTransfer — belt-and-suspenders.
+      if (!STEP_PALETTE[kind].has(type)) return;
       const bounds = wrapperRef.current?.getBoundingClientRect();
       if (!bounds) return;
       const position = reactFlow.screenToFlowPosition({
@@ -234,7 +241,7 @@ function BuilderInner({
         return next;
       });
     },
-    [reactFlow, edges, scheduleSave],
+    [reactFlow, edges, scheduleSave, kind],
   );
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
@@ -488,7 +495,7 @@ function BuilderInner({
       {/* Body */}
       <div className="grid flex-1 grid-cols-[220px_minmax(0,1fr)_320px] overflow-hidden">
         <aside className="border-r bg-muted/20">
-          <AutomationPalette />
+          <AutomationPalette kind={kind} />
         </aside>
         <div
           ref={wrapperRef}
