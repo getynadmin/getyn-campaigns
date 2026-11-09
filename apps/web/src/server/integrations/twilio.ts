@@ -139,9 +139,11 @@ export function estimateSmsSegments(body: string): {
   segments: number;
 } {
   const chars = [...body].length;
-  // eslint-disable-next-line no-control-regex
-  const nonGsm = /[^\u0000-\u007F -ÿ]/.test(body);
-  const encoding = nonGsm ? 'UCS2' : 'GSM';
+  let nonGsm = false;
+  for (let i = 0; i < body.length; i++) {
+    if (body.charCodeAt(i) > 0xff) { nonGsm = true; break; }
+  }
+  const encoding: 'GSM' | 'UCS2' = nonGsm ? 'UCS2' : 'GSM';
   if (chars === 0) return { chars: 0, encoding, segments: 0 };
   const single = encoding === 'GSM' ? 160 : 70;
   const concat = encoding === 'GSM' ? 153 : 67;
