@@ -1,5 +1,6 @@
 import { AiCreditsTile } from './ai-credits-tile';
 import { EmailQuotaTile } from './email-quota-tile';
+import { TopbarSearch } from './topbar-search';
 import { UserMenu } from './user-menu';
 import { WorkspaceSwitcher } from './workspace-switcher';
 
@@ -25,6 +26,7 @@ export function Topbar({
         <WorkspaceSwitcher currentSlug={currentSlug} tenants={tenants} />
       </div>
       <div className="flex items-center gap-3">
+        <TopbarSearch />
         <EmailQuotaTile tenantSlug={currentSlug} />
         <AiCreditsTile tenantSlug={currentSlug} />
         <UserMenu

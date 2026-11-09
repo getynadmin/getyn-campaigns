@@ -16,11 +16,9 @@ import {
   type LucideIcon,
   Mail,
   MessageSquare,
-  Search,
   Settings,
   ShieldOff,
   Sparkles,
-  Star,
   Users,
   Workflow,
   Bot,
@@ -317,33 +315,6 @@ export function Sidebar({
           >
             <ChevronRight className="size-4" />
           </button>
-        </div>
-      )}
-
-      {/* Search */}
-      {!collapsed && (
-        <div className="px-3 pt-3">
-          <div
-            className={cn(
-              'flex h-9 items-center gap-2 rounded-lg border bg-background px-2.5 text-xs text-muted-foreground transition-colors focus-within:border-violet-500/40 focus-within:bg-card',
-              '[html[data-sidebar-theme=dark]_&]:border-white/5 [html[data-sidebar-theme=dark]_&]:bg-white/[0.04] [html[data-sidebar-theme=dark]_&]:text-zinc-400 [html[data-sidebar-theme=dark]_&]:focus-within:bg-white/[0.06]',
-            )}
-          >
-            <Search className="size-3.5" />
-            <input
-              type="text"
-              placeholder="Search"
-              className="flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/70 [html[data-sidebar-theme=dark]_&]:text-zinc-100"
-            />
-            <button
-              type="button"
-              aria-label="Pinned shortcuts"
-              className="text-amber-400 hover:text-amber-300"
-              title="Coming soon"
-            >
-              <Star className="size-3.5 fill-current" />
-            </button>
-          </div>
         </div>
       )}
 
