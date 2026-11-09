@@ -2339,6 +2339,10 @@ model EmailAgent {
   name                  String
   status                AutomationStatus @default(DRAFT)
   goal                  String           @db.Text
+  /// Short one-line persona ("You are a friendly sales rep at
+  /// Acme…") set by Set-up-with-AI. systemInstructions carries the
+  /// longer voice/behaviour prompt.
+  persona               String           @default("")
   tone                  EmailAgentTone   @default(PROFESSIONAL)
   systemInstructions    String           @db.Text
   /// `{ initialDelayHours: number, followUpDays: number[],

@@ -54,6 +54,7 @@ const upsertInputSchema = z.object({
   id: z.string().min(1).optional(),
   name: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(4_000),
+  persona: z.string().trim().max(4_000).default(''),
   tone: toneSchema.default('PROFESSIONAL'),
   systemInstructions: z.string().trim().max(20_000).default(''),
   outboundSchedule: outboundScheduleSchema,
@@ -218,6 +219,7 @@ export const emailAgentRouter = createTRPCRouter({
             data: {
               name: input.name,
               goal: input.goal,
+              persona: input.persona,
               tone: input.tone,
               systemInstructions: input.systemInstructions,
               outboundSchedule: input.outboundSchedule as object,
@@ -240,6 +242,7 @@ export const emailAgentRouter = createTRPCRouter({
             name: input.name,
             status: AutomationStatus.DRAFT,
             goal: input.goal,
+            persona: input.persona,
             tone: input.tone,
             systemInstructions: input.systemInstructions,
             outboundSchedule: input.outboundSchedule as object,

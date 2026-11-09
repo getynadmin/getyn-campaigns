@@ -71,6 +71,7 @@ type Tone = 'PROFESSIONAL' | 'FRIENDLY' | 'CASUAL' | 'PLAYFUL' | 'AUTHORITATIVE'
 interface FormState {
   name: string;
   goal: string;
+  persona: string;
   tone: Tone;
   systemInstructions: string;
   signature: string;
@@ -91,6 +92,7 @@ interface FormState {
 const EMPTY_STATE: FormState = {
   name: '',
   goal: '',
+  persona: '',
   tone: 'PROFESSIONAL',
   systemInstructions: '',
   signature: '',
@@ -179,6 +181,7 @@ export function EmailAgentWizard({
     setState({
       name: a.name,
       goal: a.goal,
+      persona: (a as { persona?: string }).persona ?? '',
       tone: a.tone as Tone,
       systemInstructions: a.systemInstructions,
       signature: a.signature,
@@ -270,6 +273,7 @@ export function EmailAgentWizard({
       id: agentId ?? undefined,
       name: state.name.trim(),
       goal: state.goal.trim(),
+      persona: state.persona.trim(),
       tone: state.tone,
       systemInstructions: state.systemInstructions,
       outboundSchedule: {
@@ -364,10 +368,14 @@ export function EmailAgentWizard({
           setState((s) => ({
             ...s,
             goal,
-            // The email agent's "systemInstructions" is the voice /
-            // tone / behaviour field — natural home for the drafted
-            // persona.
-            systemInstructions: persona,
+            persona,
+            // Drop a short default systemInstructions scaffold when
+            // the operator hasn't written one yet, so the agent has a
+            // sane voice/behaviour anchor before they customise it.
+            systemInstructions:
+              s.systemInstructions.trim().length > 0
+                ? s.systemInstructions
+                : `Speak in the voice of the persona above. Keep each email to 2–4 short sentences. Open with a warm, specific hook. Close with a single clear next step. Match the brand tone (${s.tone.toLowerCase()}). Never mention that you are an AI.`,
           }))
         }
       />
@@ -540,6 +548,18 @@ function GoalStep({
             <SelectItem value="EMPATHETIC">Empathetic</SelectItem>
           </SelectContent>
         </Select>
+      </Field>
+      <Field
+        label="Persona"
+        hint="Who the agent is and how it speaks — 2–4 sentences. Set-up-with-AI drops a draft here you can edit."
+      >
+        <textarea
+          className="min-h-24 w-full rounded-md border bg-background p-2 text-sm"
+          value={state.persona}
+          onChange={(e) => setState({ ...state, persona: e.target.value })}
+          placeholder="You are Sarah, a friendly sales concierge at Getyn. Warm, concise, never pushy — the kind of person who helps rather than sells."
+          maxLength={4000}
+        />
       </Field>
       <Field
         label="System instructions"
