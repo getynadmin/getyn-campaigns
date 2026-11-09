@@ -17,6 +17,7 @@ import {
   withTenant,
   type Prisma,
 } from '@getyn/db';
+import { notify } from '../utils/notify';
 import {
   abTestSchema,
   dispatchBatchPayloadSchema,
@@ -727,13 +728,21 @@ async function handleDispatchBatch(job: Job): Promise<void> {
     const isAbWaitingForWinner =
       ab && ab.status !== 'completed' && ab.status !== undefined;
     if (!isAbWaitingForWinner && c?.status === CampaignStatus.SENDING) {
-      await prisma.campaign.update({
+      const finalised = await prisma.campaign.update({
         where: { id: campaignId },
         data: { status: CampaignStatus.SENT, sentAt: new Date() },
+        select: { id: true, name: true, tenantId: true, tenant: { select: { slug: true } } },
       });
       console.info(
         `[sends:dispatch] campaign=${campaignId} done — marked SENT`,
       );
+      await notify({
+        tenantId: finalised.tenantId,
+        kind: 'CAMPAIGN_SENT',
+        title: `Campaign sent: ${finalised.name}`,
+        body: 'Your campaign finished delivering.',
+        href: `/t/${finalised.tenant.slug}/campaigns/${finalised.id}`,
+      });
     }
   }
 
@@ -894,13 +903,21 @@ async function markCampaignFailed(
   tenantId: string,
   reason: string,
 ): Promise<void> {
-  await withTenant(tenantId, (tx) =>
+  const row = await withTenant(tenantId, (tx) =>
     tx.campaign.update({
       where: { id: campaignId },
       data: { status: CampaignStatus.FAILED },
+      select: { id: true, name: true, tenant: { select: { slug: true } } },
     }),
   );
   console.error(`[sends:prepare] campaign=${campaignId} FAILED: ${reason}`);
+  await notify({
+    tenantId,
+    kind: 'CAMPAIGN_FAILED',
+    title: `Campaign failed: ${row.name}`,
+    body: reason,
+    href: `/t/${row.tenant.slug}/campaigns/${row.id}`,
+  });
 }
 
 /**

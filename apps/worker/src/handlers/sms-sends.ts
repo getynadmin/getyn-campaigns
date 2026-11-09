@@ -29,6 +29,8 @@ import {
 } from '@getyn/db';
 import { prepareSmsCampaignPayloadSchema } from '@getyn/types';
 
+import { notify } from '../utils/notify';
+
 type TwilioCreds = {
   enabled: boolean;
   accountSid: string;
@@ -284,16 +286,24 @@ export async function handleSmsSendsJob(job: Job): Promise<void> {
     else failed += 1;
   }
 
-  await withTenant(tenantId, (tx) =>
+  const row = await withTenant(tenantId, (tx) =>
     tx.campaign.update({
       where: { id: campaignId },
       data: {
         status: CampaignStatus.SENT,
         sentAt: new Date(),
       },
+      select: { id: true, name: true, tenant: { select: { slug: true } } },
     }),
   );
   console.log(
     `[sms-sends] campaign ${campaignId}: ${ok} sent, ${failed} failed`,
   );
+  await notify({
+    tenantId,
+    kind: 'CAMPAIGN_SENT',
+    title: `SMS campaign sent: ${row.name}`,
+    body: `${ok} delivered, ${failed} failed.`,
+    href: `/t/${row.tenant.slug}/campaigns/${row.id}`,
+  });
 }

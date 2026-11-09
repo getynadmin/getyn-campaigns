@@ -58,6 +58,7 @@ import { Queue } from 'bullmq';
 
 import { loadEnv } from '../env';
 import { createRedisConnection } from '../redis';
+import { notify } from '../utils/notify';
 
 const env = loadEnv();
 
@@ -523,12 +524,20 @@ async function maybeMarkCampaignDone(
     where: { tenantId, campaignId, status: WASendStatus.QUEUED },
   });
   if (queued > 0) return;
-  await withTenant(tenantId, (tx) =>
+  const row = await withTenant(tenantId, (tx) =>
     tx.campaign.update({
       where: { id: campaignId },
       data: { status: CampaignStatus.SENT, sentAt: new Date() },
+      select: { id: true, name: true, tenant: { select: { slug: true } } },
     }),
   );
+  await notify({
+    tenantId,
+    kind: 'CAMPAIGN_SENT',
+    title: `WhatsApp campaign sent: ${row.name}`,
+    body: 'Your WhatsApp broadcast finished delivering.',
+    href: `/t/${row.tenant.slug}/campaigns/${row.id}`,
+  });
 }
 
 // ----------------------------------------------------------------------------

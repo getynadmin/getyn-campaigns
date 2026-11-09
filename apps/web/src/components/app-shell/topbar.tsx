@@ -1,5 +1,6 @@
 import { AiCreditsTile } from './ai-credits-tile';
 import { EmailQuotaTile } from './email-quota-tile';
+import { NotificationsBell } from './notifications-bell';
 import { TopbarSearch } from './topbar-search';
 import { UserMenu } from './user-menu';
 import { WorkspaceSwitcher } from './workspace-switcher';
@@ -29,6 +30,7 @@ export function Topbar({
         <TopbarSearch />
         <EmailQuotaTile tenantSlug={currentSlug} />
         <AiCreditsTile tenantSlug={currentSlug} />
+        <NotificationsBell tenantSlug={currentSlug} />
         <UserMenu
           name={user.name}
           email={user.email}

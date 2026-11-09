@@ -14,6 +14,7 @@ import {
   countSendingDomains,
 } from '@/server/billing/measure-usage';
 import { resolveTenantLimit } from '@/server/billing/resolve-limits';
+import { publishNotification } from '@/server/notifications/publish';
 import {
   createResendDomain,
   deleteResendDomain,
@@ -168,6 +169,16 @@ export const sendingDomainsRouter = createTRPCRouter({
           },
         }),
       );
+      // Publish DOMAIN_VERIFIED only on the transition (not every poll).
+      if (result.status === 'VERIFIED' && row.status !== 'VERIFIED') {
+        await publishNotification({
+          tenantId,
+          kind: 'DOMAIN_VERIFIED',
+          title: `Sending domain verified: ${updated.domain}`,
+          body: 'You can now send campaigns from this address.',
+          href: `/t/${ctx.tenantContext.tenant.slug}/channels/email`,
+        });
+      }
       return updated;
     }),
 

@@ -22,6 +22,7 @@ import { onboardingRouter } from './routers/onboarding';
 import { checkoutRouter } from './routers/checkout';
 import { pricingRouter } from './routers/pricing';
 import { profileRouter } from './routers/profile';
+import { notificationsRouter } from './routers/notifications';
 import { searchRouter } from './routers/search';
 import { segmentsRouter } from './routers/segments';
 import { sendingDomainsRouter } from './routers/sending-domains';
@@ -96,6 +97,7 @@ export const appRouter = createTRPCRouter({
   analytics: analyticsRouter,
   dashboardPrefs: dashboardPrefsRouter,
   search: searchRouter,
+  notifications: notificationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

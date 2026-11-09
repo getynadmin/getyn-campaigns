@@ -1,5 +1,6 @@
 import { PlanMetric, prisma } from '@getyn/db';
 
+import { publishNotification } from '../notifications/publish';
 import { resolveTenantLimits } from './resolve-limits';
 
 /**
@@ -71,6 +72,22 @@ export async function provisionOrderExtras(orderId: string): Promise<{
       where: { id: order.id },
       data: { extrasAppliedAt: new Date() },
     });
+  });
+
+  // Fetch slug for the deep link on the notification; cheap single read.
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: order.tenantId },
+    select: { slug: true },
+  });
+  const isUpgrade = order.upgradeMethod === 'xpay_upgrade';
+  await publishNotification({
+    tenantId: order.tenantId,
+    kind: 'PLAN_UPGRADED',
+    title: isUpgrade ? 'Plan upgraded' : 'Plan activated',
+    body: `Your new limits are live${bundles.length ? ` (+${bundles.reduce((n, b) => n + b.count * 100, 0)} extra units)` : ''}.`,
+    href: tenant?.slug
+      ? `/t/${tenant.slug}/settings/subscription`
+      : null,
   });
 
   return { applied: true };

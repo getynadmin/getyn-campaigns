@@ -270,6 +270,8 @@ model User {
   // Phase 9 — checkout orders the user initiated
   checkoutOrders CheckoutOrder[]
 
+  notifications Notification[] @relation("UserNotifications")
+
   @@index([email])
 }
 
@@ -364,6 +366,8 @@ model Tenant {
 
   // Phase 9 — checkout orders that provisioned this tenant
   checkoutOrders CheckoutOrder[]
+
+  notifications Notification[]
 
   @@index([slug])
 }
@@ -2750,4 +2754,36 @@ model SmsCampaignSend {
   @@index([tenantId, campaignId, status])
   @@index([tenantId, providerMessageId])
   @@index([tenantId, status, createdAt])
+}
+
+enum NotificationKind {
+  CAMPAIGN_SENT
+  CAMPAIGN_SCHEDULED
+  CAMPAIGN_FAILED
+  AGENT_HANDOFF_PENDING
+  SEGMENT_READY
+  DOMAIN_VERIFIED
+  TRIAL_ENDING_SOON
+  PLAN_UPGRADED
+  SMS_DELIVERY_ISSUE
+  WABA_DISCONNECTED
+  FLOW_ENROLLED_HIGH
+}
+
+model Notification {
+  id        String            @id @default(cuid())
+  tenantId  String
+  userId    String?           // null = tenant-wide (every member sees it)
+  kind      NotificationKind
+  title     String
+  body      String?           @db.Text
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime          @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
 }
