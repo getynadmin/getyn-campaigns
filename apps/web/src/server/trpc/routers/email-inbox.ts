@@ -30,6 +30,23 @@ const listInputSchema = z.object({
 });
 
 export const emailInboxRouter = createTRPCRouter({
+  /**
+   * Badge count for the Unified Inbox sidebar item. The email
+   * inbox is a diagnostic surface with no per-user "read" state —
+   * so "unread" means "arrived but not yet processed by the worker"
+   * (the rows that still need operator attention). Cheap — a single
+   * count over a partially-indexed subset.
+   */
+  unreadCount: tenantProcedure.query(async ({ ctx }) => {
+    const tenantId = ctx.tenantContext.tenant.id;
+    return withTenant(tenantId, async (tx) => {
+      const total = await tx.inboundEmail.count({
+        where: { tenantId, processedAt: null },
+      });
+      return { total };
+    });
+  }),
+
   list: tenantProcedure.input(listInputSchema).query(async ({ ctx, input }) => {
     const tenantId = ctx.tenantContext.tenant.id;
     return withTenant(tenantId, async (tx) => {

@@ -193,7 +193,14 @@ export function Sidebar({
     refetchInterval: 30_000,
     retry: false,
   });
-  const inboxCount = inboxUnread.data?.total ?? 0;
+  const emailInboxUnread = api.emailInbox.unreadCount.useQuery(undefined, {
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const whatsappUnread = inboxUnread.data?.total ?? 0;
+  const emailUnread = emailInboxUnread.data?.total ?? 0;
+  const inboxCount = whatsappUnread + emailUnread;
+  const inboxBadgeTitle = `${whatsappUnread} WhatsApp · ${emailUnread} email`;
 
   // Phase 8 M5 — Email Agent approval-inbox badge.
   const agentPending = api.emailAgentInbox.pendingCount.useQuery(undefined, {
@@ -390,6 +397,11 @@ export function Sidebar({
                       collapsed={collapsed}
                       badgeNumber={badgeNumber}
                       badgeTone={badgeTone}
+                      badgeTitle={
+                        item.badge === 'inboxUnread'
+                          ? inboxBadgeTitle
+                          : undefined
+                      }
                     />
                   </li>
                 );
@@ -411,12 +423,14 @@ function NavRow({
   collapsed,
   badgeNumber,
   badgeTone = 'rose',
+  badgeTitle,
 }: {
   item: SidebarItem;
   active: boolean;
   collapsed: boolean;
   badgeNumber: number | null;
   badgeTone?: 'rose' | 'green';
+  badgeTitle?: string;
 }): JSX.Element {
   const Icon = item.icon;
   const showBadge = !item.soon && badgeNumber !== null && badgeNumber > 0;
@@ -472,7 +486,10 @@ function NavRow({
             </span>
           )}
           {showBadge && badgeTone === 'rose' && (
-            <span className="grid min-w-5 place-items-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+            <span
+              title={badgeTitle}
+              className="grid min-w-5 place-items-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-medium text-white"
+            >
               {badgeNumber > 99 ? '99+' : badgeNumber}
             </span>
           )}
