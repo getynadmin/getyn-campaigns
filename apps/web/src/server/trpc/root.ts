@@ -1,5 +1,6 @@
 import { agentRouter } from './routers/agent';
 import { analyticsRouter } from './routers/analytics';
+import { dashboardPrefsRouter } from './routers/dashboard-prefs';
 import { automationRouter } from './routers/automation';
 import { agentAttachmentsRouter } from './routers/agent-attachments';
 import { emailVerifierRouter } from './routers/email-verifier';
@@ -92,6 +93,7 @@ export const appRouter = createTRPCRouter({
   profile: profileRouter,
   // Analytics roll-ups powering /t/<slug>/analytics tabs.
   analytics: analyticsRouter,
+  dashboardPrefs: dashboardPrefsRouter,
 });
 
 export type AppRouter = typeof appRouter;

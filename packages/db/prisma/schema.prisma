@@ -234,6 +234,7 @@ model User {
   updatedAt      DateTime     @updatedAt
 
   memberships           Membership[]
+  tenantPrefs           TenantUserPreference[]
   sentInvites           Invitation[]    @relation("InvitedBy")
   segmentsCreated       Segment[]       @relation("SegmentsCreatedBy")
   importsCreated        ImportJob[]     @relation("ImportsCreatedBy")
@@ -303,6 +304,7 @@ model Tenant {
   updatedAt          DateTime           @updatedAt
 
   memberships        Membership[]
+  userPrefs          TenantUserPreference[]
   invitations        Invitation[]
   contacts           Contact[]
   tags               Tag[]
@@ -379,6 +381,30 @@ model Membership {
   @@unique([userId, tenantId])
   @@index([tenantId])
   @@index([userId])
+}
+
+/// Per-user-per-tenant UI state that doesn't belong on Membership (not
+/// a permission) or on User (tenant-scoped). Holds the onboarding
+/// checklist's dismiss/collapse/skip state and the drag-and-drop
+/// dashboard layout JSON. Created lazily on first mutation.
+model TenantUserPreference {
+  id                  String   @id @default(cuid())
+  userId              String
+  tenantId            String
+  onboardingDismissed Boolean  @default(false)
+  onboardingCollapsed Boolean  @default(false)
+  // Array of step keys the user chose to skip.
+  onboardingSkipped   Json     @default("[]")
+  // { tabs: { [tabKey]: { order: string[], hidden: string[] } } }
+  dashboardLayout     Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
 }
 
 model Invitation {

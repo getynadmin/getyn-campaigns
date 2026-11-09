@@ -1,39 +1,21 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowRight, Mail, Sparkles } from 'lucide-react';
+import { ArrowRight, Sparkles } from 'lucide-react';
 
-import {
-  CampaignSendStatus,
-  prisma,
-  withTenant,
-  type CampaignStatus,
-} from '@getyn/db';
+import { prisma, withTenant } from '@getyn/db';
 
+import { DashboardGrid } from '@/components/dashboard/dashboard-grid';
 import { OnboardingChecklist } from '@/components/dashboard/onboarding-checklist';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { TRIAL_DAYS } from '@/lib/constants';
-import { cn } from '@/lib/utils';
 
 export const metadata = { title: 'Dashboard' };
 
-const STATUS_TONE: Record<string, string> = {
-  DRAFT: 'bg-muted text-muted-foreground',
-  SCHEDULED: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
-  SENDING: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
-  SENT: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200',
-  PAUSED: 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200',
-  FAILED: 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200',
-  CANCELED: 'bg-muted text-muted-foreground',
-};
-
 /**
- * Tenant dashboard.
- *
- * Four panels:
- *   1. Greeting + trial countdown.
- *   2. Onboarding checklist — five steps reflecting Phase 2 + Phase 3.
- *   3. Stat strip — live audience counts.
- *   4. Recent campaigns — last 5 with status + open rate (Phase 3).
+ * Tenant dashboard — a bar of workspace context + the (collapsible,
+ * dismissible) onboarding checklist + the customisable widget grid.
+ * The old static panels are replaced by `DashboardGrid` so widgets
+ * can be reordered/hidden per-user-per-tenant and the whole page
+ * stays useful the day a user signs in even before they have data.
  */
 export default async function DashboardPage({
   params,
@@ -42,13 +24,11 @@ export default async function DashboardPage({
 }): Promise<JSX.Element> {
   const tenant = await prisma.tenant.findUnique({
     where: { slug: params.slug },
-    include: { _count: { select: { memberships: true } } },
   });
   if (!tenant) notFound();
-  // Phase 7 M1 — brand-profile nudge. Wrapped in try/catch so the
-  // dashboard still renders cleanly on deploys where the
-  // 0010_phase7_ai_agents migration hasn't been applied yet
-  // (the table won't exist; null = render no nudge).
+
+  // Brand nudge — wrapped in try/catch so a missing table on legacy
+  // deploys doesn't 500 the dashboard.
   let brandProfile: { completedAt: Date | null } | null = null;
   try {
     brandProfile = await prisma.tenantBrandProfile.findUnique({
@@ -68,112 +48,48 @@ export default async function DashboardPage({
       )
     : null;
 
-  // Counts + recent campaigns in one tenant-scoped transaction.
-  const {
-    contactsCount,
-    segmentsCount,
-    suppressedCount,
-    campaignsCount,
-    recentCampaigns,
-    activeAutomationsCount,
-    activeEmailAgentsCount,
-    pendingApprovalsCount,
-  } = await withTenant(tenant.id, async (tx) => {
-    const [
-      contactsCount,
-      segmentsCount,
-      suppressedCount,
-      campaignsCount,
-      recentCampaigns,
-      activeAutomationsCount,
-      activeEmailAgentsCount,
-      pendingApprovalsCount,
-    ] = await Promise.all([
-      tx.contact.count({ where: { tenantId: tenant.id, deletedAt: null } }),
-      tx.segment.count({ where: { tenantId: tenant.id } }),
-      tx.suppressionEntry.count({ where: { tenantId: tenant.id } }),
-      tx.campaign.count({ where: { tenantId: tenant.id } }),
-      tx.campaign.findMany({
-        where: { tenantId: tenant.id },
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-        include: {
-          emailCampaign: {
-            select: { subject: true },
-          },
-        },
-      }),
-      // Phase 8 M7 — automation dashboard widget.
-      tx.automation.count({
-        where: { tenantId: tenant.id, status: 'ACTIVE' },
-      }),
-      tx.emailAgent.count({
-        where: { tenantId: tenant.id, status: 'ACTIVE' },
-      }),
-      tx.emailAgentMessage.count({
-        where: {
-          tenantId: tenant.id,
-          status: 'DRAFT_AWAITING_APPROVAL',
-        },
-      }),
-    ]);
-    return {
-      contactsCount,
-      segmentsCount,
-      suppressedCount,
-      campaignsCount,
-      recentCampaigns,
-      activeAutomationsCount,
-      activeEmailAgentsCount,
-      pendingApprovalsCount,
-    };
-  });
-
-  // For each recent campaign, fetch a quick open-rate aggregate. We keep
-  // this off the dashboard's hot path by limiting to the 5 visible rows.
-  const campaignSummaries = await withTenant(tenant.id, async (tx) => {
-    return Promise.all(
-      recentCampaigns.map(async (c) => {
-        const sentTotal = await tx.campaignSend.count({
-          where: {
-            tenantId: tenant.id,
-            campaignId: c.id,
-            status: {
-              in: [
-                CampaignSendStatus.SENT,
-                CampaignSendStatus.DELIVERED,
-                CampaignSendStatus.OPENED,
-                CampaignSendStatus.CLICKED,
-              ],
-            },
-          },
-        });
-        const opened = await tx.campaignSend.count({
-          where: {
-            tenantId: tenant.id,
-            campaignId: c.id,
-            status: {
-              in: [CampaignSendStatus.OPENED, CampaignSendStatus.CLICKED],
-            },
-          },
-        });
-        return { campaign: c, sentTotal, opened };
-      }),
-    );
-  });
+  // Just the counts the onboarding checklist needs; everything else
+  // loads per-widget on the client.
+  const { contactsCount, segmentsCount, campaignsCount, verifiedDomains, waAccount } =
+    await withTenant(tenant.id, async (tx) => {
+      const [contactsCount, segmentsCount, campaignsCount, verifiedDomains, waAccount] =
+        await Promise.all([
+          tx.contact.count({ where: { tenantId: tenant.id, deletedAt: null } }),
+          tx.segment.count({ where: { tenantId: tenant.id } }),
+          tx.campaign.count({ where: { tenantId: tenant.id } }),
+          tx.sendingDomain.count({
+            where: { tenantId: tenant.id, status: 'VERIFIED' },
+          }),
+          tx.whatsAppAccount.findFirst({
+            where: { tenantId: tenant.id, status: 'CONNECTED' },
+            select: { id: true },
+          }),
+        ]);
+      return {
+        contactsCount,
+        segmentsCount,
+        campaignsCount,
+        verifiedDomains,
+        waAccount,
+      };
+    });
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
+    <div className="mx-auto max-w-7xl space-y-5 px-6 py-6">
+      {/* Hero strip — workspace name + trial countdown. Kept slim so
+          the dashboard content below gets the real estate. */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-sm font-medium text-muted-foreground">Workspace</p>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Workspace
+          </p>
+          <h1 className="font-display text-2xl font-semibold tracking-tight">
             {tenant.name}
           </h1>
         </div>
         {trialDaysLeft !== null ? (
-          <div className="rounded-lg border bg-card px-4 py-2 text-sm">
-            <span className="font-medium">{trialDaysLeft}</span>{' '}
+          <div className="rounded-lg border bg-card px-3 py-1.5 text-xs">
+            <span className="font-semibold">{trialDaysLeft}</span>{' '}
             <span className="text-muted-foreground">
               of {TRIAL_DAYS} trial days left
             </span>
@@ -206,170 +122,14 @@ export default async function DashboardPage({
 
       <OnboardingChecklist
         tenantSlug={params.slug}
-        teamSize={tenant._count.memberships}
         contactsCount={contactsCount}
         segmentsCount={segmentsCount}
         campaignsCount={campaignsCount}
+        hasVerifiedSendingDomain={verifiedDomains > 0}
+        hasConnectedWhatsapp={!!waAccount}
       />
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <StatCard
-          label="Contacts"
-          value={contactsCount.toLocaleString()}
-          href={`/t/${params.slug}/contacts`}
-          cta="Manage contacts"
-        />
-        <StatCard
-          label="Segments"
-          value={segmentsCount.toLocaleString()}
-          href={`/t/${params.slug}/segments`}
-          cta="View segments"
-        />
-        <StatCard
-          label="Suppressed"
-          value={suppressedCount.toLocaleString()}
-          href={`/t/${params.slug}/suppression`}
-          cta="View list"
-        />
-      </div>
-
-      {/* Phase 8 M7 — Automation strip. Only render when the tenant has
-          something live (active flows / agents / pending approvals) so
-          new tenants aren't cluttered with zero widgets. */}
-      {(activeAutomationsCount > 0 ||
-        activeEmailAgentsCount > 0 ||
-        pendingApprovalsCount > 0) && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <StatCard
-            label="Active automations"
-            value={activeAutomationsCount.toLocaleString()}
-            href={`/t/${params.slug}/automation/drip`}
-            cta="Open drip campaigns"
-          />
-          <StatCard
-            label="Active email agents"
-            value={activeEmailAgentsCount.toLocaleString()}
-            href={`/t/${params.slug}/automation/agents`}
-            cta="Open email agents"
-          />
-          <StatCard
-            label="Replies awaiting approval"
-            value={pendingApprovalsCount.toLocaleString()}
-            href={`/t/${params.slug}/automation/agents/inbox`}
-            cta={pendingApprovalsCount > 0 ? 'Review now' : 'Open inbox'}
-            tone={pendingApprovalsCount > 0 ? 'amber' : undefined}
-          />
-        </div>
-      )}
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-base">Recent campaigns</CardTitle>
-          <Link
-            href={`/t/${params.slug}/campaigns`}
-            className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-          >
-            All campaigns
-            <ArrowRight className="size-3" />
-          </Link>
-        </CardHeader>
-        <CardContent>
-          {campaignSummaries.length === 0 ? (
-            <div className="py-6 text-center">
-              <Mail className="mx-auto mb-2 size-6 text-muted-foreground/60" />
-              <p className="text-sm text-muted-foreground">
-                No campaigns yet — your first one starts here.
-              </p>
-              <Link
-                href={`/t/${params.slug}/campaigns/new`}
-                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary"
-              >
-                Create a campaign
-                <ArrowRight className="size-3" />
-              </Link>
-            </div>
-          ) : (
-            <ul className="divide-y">
-              {campaignSummaries.map(({ campaign, sentTotal, opened }) => {
-                const openRate =
-                  sentTotal === 0 ? null : (opened / sentTotal) * 100;
-                return (
-                  <li key={campaign.id}>
-                    <Link
-                      href={`/t/${params.slug}/campaigns/${campaign.id}`}
-                      className="flex items-center gap-3 py-2.5 transition-colors hover:bg-muted/40"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{campaign.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {campaign.emailCampaign?.subject ?? '—'}
-                        </p>
-                      </div>
-                      <span
-                        className={cn(
-                          'inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium',
-                          STATUS_TONE[campaign.status as CampaignStatus] ??
-                            STATUS_TONE.DRAFT,
-                        )}
-                      >
-                        {campaign.status}
-                      </span>
-                      <span className="hidden w-16 text-right text-xs text-muted-foreground sm:block">
-                        {openRate !== null ? `${openRate.toFixed(1)}%` : '—'}
-                      </span>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      <DashboardGrid tenantSlug={params.slug} />
     </div>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  href,
-  cta,
-  tone,
-}: {
-  label: string;
-  value: string;
-  href: string;
-  cta: string;
-  /** 'amber' highlights the card (e.g. items awaiting operator action). */
-  tone?: 'amber';
-}): JSX.Element {
-  return (
-    <Card
-      className={cn(
-        tone === 'amber' &&
-          'border-amber-300 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20',
-      )}
-    >
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">
-          {label}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="font-display text-3xl font-semibold">{value}</p>
-        <Link
-          href={href}
-          className={cn(
-            'mt-2 inline-flex items-center gap-1 text-xs font-medium transition-colors',
-            tone === 'amber'
-              ? 'text-amber-900 hover:text-amber-950 dark:text-amber-200 dark:hover:text-amber-100'
-              : 'text-muted-foreground hover:text-foreground',
-          )}
-        >
-          {cta}
-          <ArrowRight className="size-3" />
-        </Link>
-      </CardContent>
-    </Card>
   );
 }
