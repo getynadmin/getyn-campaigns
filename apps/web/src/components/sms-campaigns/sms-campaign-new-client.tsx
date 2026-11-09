@@ -65,6 +65,7 @@ export function SmsCampaignNewClient({
   const [scheduledAt, setScheduledAt] = useState('');
 
   const segments = api.segments.list.useQuery({ limit: 100 });
+  const senders = api.smsChannel.sendersForCampaign.useQuery();
   const create = api.smsCampaign.create.useMutation();
   const sendNow = api.smsCampaign.sendNow.useMutation();
   const schedule = api.smsCampaign.schedule.useMutation();
@@ -201,13 +202,53 @@ export function SmsCampaignNewClient({
         </div>
 
         <div className="space-y-1">
-          <Label>From number or Messaging-Service SID (optional)</Label>
-          <Input
-            value={fromNumber}
-            onChange={(e) => setFromNumber(e.target.value)}
-            placeholder="Leave blank to use the platform default"
-            className="font-mono text-xs"
-          />
+          <Label>Send from</Label>
+          {senders.data &&
+          (senders.data.numbers.length > 0 || senders.data.alphaSenders.length > 0) ? (
+            <select
+              value={fromNumber}
+              onChange={(e) => setFromNumber(e.target.value)}
+              className="flex h-10 w-full rounded-lg border border-input bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="">Platform default</option>
+              {senders.data.numbers.length > 0 ? (
+                <optgroup label="Your numbers">
+                  {senders.data.numbers.map((n) => (
+                    <option key={n.id} value={n.phoneNumber}>
+                      {n.phoneNumber}
+                      {n.friendlyName ? ` — ${n.friendlyName}` : ''} ({n.country})
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              {senders.data.alphaSenders.length > 0 ? (
+                <optgroup label="Your sender IDs">
+                  {senders.data.alphaSenders.map((a) => (
+                    <option key={a.id} value={a.senderId}>
+                      {a.senderId} (alpha, {a.country})
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+            </select>
+          ) : (
+            <Input
+              value={fromNumber}
+              onChange={(e) => setFromNumber(e.target.value)}
+              placeholder="Platform default (buy a number in Channels → SMS to override)"
+              className="font-mono text-xs"
+            />
+          )}
+          <p className="text-[11px] text-muted-foreground">
+            Buy phone numbers or register alphanumeric sender IDs in{' '}
+            <a
+              href={`/t/${tenantSlug}/channels/sms`}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              Channels → SMS
+            </a>
+            .
+          </p>
         </div>
 
         <div className="space-y-1">

@@ -1,41 +1,43 @@
-import { Phone } from 'lucide-react';
+import { notFound } from 'next/navigation';
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Role, prisma } from '@getyn/db';
+
+import { SmsChannelClient } from '@/components/sms-channel/sms-channel-client';
+import { getCurrentUser } from '@/server/auth/session';
 
 export const metadata = { title: 'SMS channel' };
 
-export default function SmsChannelPage(): JSX.Element {
+export default async function SmsChannelPage({
+  params,
+}: {
+  params: { slug: string };
+}): Promise<JSX.Element> {
+  const user = await getCurrentUser();
+  if (!user) notFound();
+  const tenant = await prisma.tenant.findUnique({
+    where: { slug: params.slug },
+  });
+  if (!tenant) notFound();
+  const membership = await prisma.membership.findUnique({
+    where: { userId_tenantId: { userId: user.id, tenantId: tenant.id } },
+  });
+  if (!membership) notFound();
+  const canManage =
+    membership.role === Role.OWNER || membership.role === Role.ADMIN;
+
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-3">
-          <span className="grid size-10 place-items-center rounded-md bg-muted text-muted-foreground">
-            <Phone className="size-5" />
-          </span>
-          <div>
-            <CardTitle>SMS</CardTitle>
-            <CardDescription>
-              Twilio-backed transactional + marketing SMS.
-            </CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="rounded-lg border border-dashed p-6 text-center">
-          <p className="text-sm font-medium">Coming in Phase 6</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            SMS sending (Twilio bring-your-own) ships after email and
-            WhatsApp are fully hardened. We'll notify you here when it's
-            live.
-          </p>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="space-y-6">
+      <div>
+        <h2 className="font-display text-xl font-semibold tracking-tight">
+          SMS
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Twilio-backed transactional + marketing SMS. Buy real phone
+          numbers for a given country, or register a brand name as an
+          alphanumeric sender ID.
+        </p>
+      </div>
+      <SmsChannelClient canManage={canManage} tenantSlug={params.slug} />
+    </div>
   );
 }

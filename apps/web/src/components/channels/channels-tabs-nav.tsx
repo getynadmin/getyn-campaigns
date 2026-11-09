@@ -36,11 +36,21 @@ export function ChannelsTabsNav({
 
   const domains = api.sendingDomain.list.useQuery({});
   const waba = api.whatsAppAccount.get.useQuery();
+  const sms = api.smsChannel.list.useQuery(undefined, {
+    // Fail-open — don't thrash the sidebar if Twilio isn't configured yet.
+    retry: false,
+  });
 
   const emailConnected = (domains.data?.items ?? []).some(
     (d) => d.status === 'VERIFIED',
   );
   const whatsappConnected = waba.data?.status === 'CONNECTED';
+  const smsConnected = Boolean(
+    sms.data &&
+      sms.data.twilioReady &&
+      (sms.data.phoneNumbers.length > 0 ||
+        sms.data.alphaSenders.some((a) => a.status === 'APPROVED')),
+  );
 
   const statusFor = (
     key: ChannelTab['key'],
@@ -53,7 +63,9 @@ export function ChannelsTabsNav({
       return whatsappConnected
         ? { label: 'Connected', tone: 'green' }
         : { label: 'Not connected', tone: 'muted' };
-    return { label: 'Soon', tone: 'amber' };
+    return smsConnected
+      ? { label: 'Connected', tone: 'green' }
+      : { label: 'Not connected', tone: 'muted' };
   };
 
   return (

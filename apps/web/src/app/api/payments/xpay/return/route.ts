@@ -4,6 +4,7 @@ import { CheckoutOrderStatus, prisma } from '@getyn/db';
 
 import { appBaseUrl } from '@/server/auth/auth0';
 import { provisionOrderExtras } from '@/server/billing/provision-order-extras';
+import { provisionTwilioNumberOrder } from '@/server/billing/provision-twilio-number';
 import { getXpaySubscription } from '@/server/integrations/xpay';
 
 /**
@@ -32,6 +33,7 @@ export async function GET(request: Request): Promise<Response> {
       status: true,
       xpaySubscriptionId: true,
       merchantReference: true,
+      upgradeMethod: true,
     },
   });
   if (!order) {
@@ -40,8 +42,11 @@ export async function GET(request: Request): Promise<Response> {
 
   // Already terminal — just bounce to the right place.
   if (order.status === CheckoutOrderStatus.PAID) {
-    // Retry extras in case it landed PAID before tenant was linked.
-    await provisionOrderExtras(order.id);
+    if (order.upgradeMethod === 'twilio_number_purchase') {
+      await provisionTwilioNumberOrder(order.id);
+    } else {
+      await provisionOrderExtras(order.id);
+    }
     return NextResponse.redirect(
       new URL(`/checkout/confirmation?ref=${ref}`, appBaseUrl()),
     );
@@ -73,7 +78,11 @@ export async function GET(request: Request): Promise<Response> {
       },
     });
     // Best-effort — idempotent, re-tried by webhook if it fails.
-    await provisionOrderExtras(order.id);
+    if (order.upgradeMethod === 'twilio_number_purchase') {
+      await provisionTwilioNumberOrder(order.id);
+    } else {
+      await provisionOrderExtras(order.id);
+    }
     return NextResponse.redirect(
       new URL(`/checkout/confirmation?ref=${ref}`, appBaseUrl()),
     );

@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { CheckoutOrderStatus, prisma } from '@getyn/db';
 
 import { provisionOrderExtras } from '@/server/billing/provision-order-extras';
+import { provisionTwilioNumberOrder } from '@/server/billing/provision-twilio-number';
 import {
   getXpayCredentials,
   getXpaySubscription,
@@ -63,16 +64,23 @@ export async function POST(request: Request): Promise<Response> {
 
   const order = await prisma.checkoutOrder.findUnique({
     where: { merchantReference: ref },
-    select: { id: true, status: true, xpaySubscriptionId: true },
+    select: {
+      id: true,
+      status: true,
+      xpaySubscriptionId: true,
+      upgradeMethod: true,
+    },
   });
   if (!order) {
     return NextResponse.json({ ok: true, ignored: 'no_order' });
   }
   if (order.status === CheckoutOrderStatus.PAID) {
-    // Retry extras in case the previous call landed PAID but failed
-    // to provision (e.g. tenantId was null at that time).
-    const provisioned = await provisionOrderExtras(order.id);
-    return NextResponse.json({ ok: true, already: 'PAID', extras: provisioned });
+    const isTwilio = order.upgradeMethod === 'twilio_number_purchase';
+    const [extras, twilio] = await Promise.all([
+      isTwilio ? Promise.resolve({ applied: false, reason: 'twilio_order' }) : provisionOrderExtras(order.id),
+      isTwilio ? provisionTwilioNumberOrder(order.id) : Promise.resolve({ applied: false, reason: 'not_twilio' }),
+    ]);
+    return NextResponse.json({ ok: true, already: 'PAID', extras, twilio });
   }
 
   // Re-verify with XPay — never trust the webhook body alone.
@@ -98,11 +106,16 @@ export async function POST(request: Request): Promise<Response> {
     // Idempotent — re-entry is a no-op once extrasAppliedAt is set.
     // Orders without tenantId (first-signup checkout) skip here and
     // get applied once onboarding links the tenant.
-    const provisioned = await provisionOrderExtras(order.id);
+    const isTwilio = order.upgradeMethod === 'twilio_number_purchase';
+    const [extras, twilio] = await Promise.all([
+      isTwilio ? Promise.resolve({ applied: false, reason: 'twilio_order' }) : provisionOrderExtras(order.id),
+      isTwilio ? provisionTwilioNumberOrder(order.id) : Promise.resolve({ applied: false, reason: 'not_twilio' }),
+    ]);
     return NextResponse.json({
       ok: true,
       updated: 'PAID',
-      extras: provisioned,
+      extras,
+      twilio,
     });
   }
 

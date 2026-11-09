@@ -369,6 +369,13 @@ model Tenant {
 
   notifications Notification[]
 
+  // Phase 10 — tenant-owned SMS sender identities (Twilio).
+  twilioPhoneNumbers    TwilioPhoneNumber[]
+  alphaSenderIds        AlphanumericSenderId[]
+  // Shared Twilio Messaging Service SID — created on first alpha
+  // sender registration, reused for every subsequent sender.
+  twilioMessagingServiceSid String?
+
   @@index([slug])
 }
 
@@ -1584,6 +1591,8 @@ model CheckoutOrder {
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
   tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
 
+  twilioNumbers TwilioPhoneNumber[]
+
   @@index([status, createdAt(sort: Desc)])
   @@index([xpaySubscriptionId])
   @@index([customerEmail])
@@ -2768,6 +2777,8 @@ enum NotificationKind {
   SMS_DELIVERY_ISSUE
   WABA_DISCONNECTED
   FLOW_ENROLLED_HIGH
+  SMS_NUMBER_PURCHASED
+  SMS_SENDER_ID_APPROVED
 }
 
 model Notification {
@@ -2786,4 +2797,69 @@ model Notification {
 
   @@index([tenantId, createdAt(sort: Desc)])
   @@index([userId, readAt])
+}
+
+// ------------------------------------------------------------------
+// Phase 10 — tenant Twilio SMS sender identities.
+// Each tenant can buy real phone numbers from Twilio (used as From)
+// or register alphanumeric sender IDs (brand names like "MSFT") that
+// Twilio supports in select destinations. SmsCampaign.fromNumber
+// resolves against these rows at send time.
+// ------------------------------------------------------------------
+
+enum TwilioPhoneNumberStatus {
+  PENDING          // xPay checkout in flight; Twilio purchase not yet made
+  ACTIVE           // owned + usable
+  RELEASED         // was ACTIVE, operator released it back to Twilio
+  PURCHASE_FAILED  // xPay PAID but Twilio refused the purchase (refund_pending on order)
+}
+
+enum AlphaSenderIdStatus {
+  PENDING_SUBMISSION
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+model TwilioPhoneNumber {
+  id                String                  @id @default(cuid())
+  tenantId          String
+  country           String                  // ISO2
+  phoneNumber       String                  // E.164
+  friendlyName      String?
+  twilioSid         String                  @unique
+  monthlyPriceCents Int                     @default(0)
+  capabilities      Json                    @default("{}")
+  status            TwilioPhoneNumberStatus @default(ACTIVE)
+  checkoutOrderId   String?
+  purchasedAt       DateTime                @default(now())
+  releasedAt        DateTime?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  checkoutOrder CheckoutOrder? @relation(fields: [checkoutOrderId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@index([checkoutOrderId])
+}
+
+model AlphanumericSenderId {
+  id                  String              @id @default(cuid())
+  tenantId            String
+  senderId            String              // 1-11 alphanumeric
+  country             String              // ISO2 destination (or 'ANY')
+  status              AlphaSenderIdStatus @default(PENDING_SUBMISSION)
+  twilioSid           String?
+  messagingServiceSid String?
+  rejectionReason     String?
+  submittedAt         DateTime?
+  approvedAt          DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, senderId, country])
+  @@index([tenantId, status])
 }
