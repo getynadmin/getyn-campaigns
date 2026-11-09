@@ -26,6 +26,7 @@ import {
   handlePrepareWaCampaign,
   handleResumeAfterTier,
 } from './handlers/wa-sends';
+import { handleSmsSendsJob } from './handlers/sms-sends';
 import {
   handleWaTemplatePoll,
   handleWaTemplateSyncOne,
@@ -370,6 +371,15 @@ workers.push(
       lockDuration: 300_000,
     },
   ),
+);
+
+// sms-sends queue — Twilio-backed SMS campaign dispatch.
+workers.push(
+  new Worker(QUEUE_NAMES.smsSends, handleSmsSendsJob, {
+    connection,
+    concurrency: 2,
+    lockDuration: 300_000,
+  }),
 );
 
 // wa-poll-status queue — Phase 4 M8 (outbound delivery polling).

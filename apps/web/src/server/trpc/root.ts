@@ -32,6 +32,7 @@ import { tenantBrandRouter } from './routers/tenant-brand';
 import { userSessionsRouter } from './routers/user-sessions';
 import { whatsAppAccountsRouter } from './routers/whatsapp-accounts';
 import { whatsAppCampaignsRouter } from './routers/whatsapp-campaigns';
+import { smsCampaignsRouter } from './routers/sms-campaigns';
 import { whatsAppInboxRouter } from './routers/whatsapp-inbox';
 import { whatsAppPhoneNumbersRouter } from './routers/whatsapp-phone-numbers';
 import { whatsAppTemplatesRouter } from './routers/whatsapp-templates';
@@ -66,6 +67,7 @@ export const appRouter = createTRPCRouter({
   whatsAppPhoneNumber: whatsAppPhoneNumbersRouter,
   whatsAppTemplate: whatsAppTemplatesRouter,
   whatsAppCampaign: whatsAppCampaignsRouter,
+  smsCampaign: smsCampaignsRouter,
   whatsAppInbox: whatsAppInboxRouter,
   whatsappAgent: whatsappAgentRouter,
   // Phase 4 M7

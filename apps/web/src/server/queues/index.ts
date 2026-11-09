@@ -14,6 +14,7 @@ import {
   inboundEmailProcessPayloadSchema,
   pollTemplateSubmissionPayloadSchema,
   prepareCampaignPayloadSchema,
+  prepareSmsCampaignPayloadSchema,
   prepareWaCampaignPayloadSchema,
   resendWebhookPayloadSchema,
   type AttachmentParsePayload,
@@ -27,6 +28,7 @@ import {
   type InboundEmailProcessPayload,
   type PollTemplateSubmissionPayload,
   type PrepareCampaignPayload,
+  type PrepareSmsCampaignPayload,
   type PrepareWaCampaignPayload,
   type ResendWebhookPayload,
 } from '@getyn/types';
@@ -449,6 +451,38 @@ function getWaSendsQueue(): Queue<PrepareWaCampaignPayload> {
     },
   });
   return cachedWaSendsQueue;
+}
+
+// ----------------------------------------------------------------------------
+// SMS campaign dispatch (Twilio-backed).
+// ----------------------------------------------------------------------------
+
+let cachedSmsSendsQueue: Queue<PrepareSmsCampaignPayload> | null = null;
+
+function getSmsSendsQueue(): Queue<PrepareSmsCampaignPayload> {
+  if (cachedSmsSendsQueue) return cachedSmsSendsQueue;
+  cachedSmsSendsQueue = new Queue<PrepareSmsCampaignPayload>(QUEUE_NAMES.smsSends, {
+    connection: getConnection(),
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5_000 },
+      removeOnComplete: { age: 60 * 60 * 24 * 7, count: 1000 },
+      removeOnFail: { age: 60 * 60 * 24 * 30 },
+    },
+  });
+  return cachedSmsSendsQueue;
+}
+
+export async function enqueuePrepareSmsCampaign(
+  payload: PrepareSmsCampaignPayload,
+  options: { delayMs?: number } = {},
+): Promise<void> {
+  const validated = prepareSmsCampaignPayloadSchema.parse(payload);
+  const queue = getSmsSendsQueue();
+  await queue.add(JOB_NAMES.smsSends.prepareCampaign, validated, {
+    jobId: `prepare-sms_${validated.campaignId}`,
+    ...(options.delayMs !== undefined ? { delay: options.delayMs } : {}),
+  });
 }
 
 /**

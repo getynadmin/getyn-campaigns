@@ -328,6 +328,7 @@ model Tenant {
   whatsAppConversations WhatsAppConversation[]
   whatsAppMessages      WhatsAppMessage[]
   whatsAppWebhookEvents WhatsAppWebhookEvent[]
+  smsCampaignSends      SmsCampaignSend[]
   assets                Asset[]
   aiGenerations         AiGeneration[]
 
@@ -442,6 +443,7 @@ model Contact {
   // Phase 4 — WhatsApp campaign sends + inbox conversations
   whatsAppCampaignSends WhatsAppCampaignSend[]
   whatsAppConversations WhatsAppConversation[]
+  smsCampaignSends      SmsCampaignSend[]
   // Phase 8 — Automation + Email Agent
   automationEnrollments AutomationEnrollment[]
   emailAgentEnrollments EmailAgentEnrollment[]
@@ -670,6 +672,9 @@ model Campaign {
   // Phase 4 — 1:1 sidecar for type=WHATSAPP campaigns
   whatsAppCampaign      WhatsAppCampaign?
   whatsAppCampaignSends WhatsAppCampaignSend[]
+  // 1:1 sidecar for type=SMS campaigns
+  smsCampaign           SmsCampaign?
+  smsCampaignSends      SmsCampaignSend[]
   sends                 CampaignSend[]
   events                CampaignEvent[]
   trackingLinks         TrackingLink[]
@@ -2661,4 +2666,62 @@ model WhatsAppAgentMessage {
 
   @@index([enrollmentId, createdAt])
   @@index([tenantId, status])
+}
+
+// ==================================================================
+// SMS campaigns (Twilio for now; provider-shaped so more are easy).
+// ==================================================================
+
+enum SmsSendStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  UNDELIVERED
+}
+
+enum SmsProvider {
+  TWILIO
+}
+
+/// 1:1 sidecar of Campaign for type=SMS. Carries the message body +
+/// per-campaign from-number (null = use platform default).
+model SmsCampaign {
+  id                  String      @id @default(cuid())
+  campaignId          String      @unique
+  body                String      @db.Text
+  fromNumber          String?
+  provider            SmsProvider @default(TWILIO)
+  segmentsPerMessage  Int         @default(1)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+/// Per-recipient send row for SMS. Analogous to WhatsAppCampaignSend.
+model SmsCampaignSend {
+  id                String        @id @default(cuid())
+  tenantId          String
+  campaignId        String
+  contactId         String
+  phone             String        // E.164 snapshot at queue time
+  providerMessageId String?       // Twilio message SID; set once dispatched
+  status            SmsSendStatus @default(QUEUED)
+  segments          Int           @default(1)
+  errorCode         String?
+  errorMessage      String?       @db.Text
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  lastEventAt       DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, campaignId, status])
+  @@index([tenantId, providerMessageId])
+  @@index([tenantId, status, createdAt])
 }

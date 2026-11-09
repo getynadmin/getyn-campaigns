@@ -393,11 +393,40 @@ export const campaignGetSchema = z.object({ id: cuidSchema });
 
 export const campaignListInputSchema = z.object({
   status: campaignStatusSchema.optional(),
+  type: campaignTypeSchema.optional(),
   search: z.string().trim().max(120).optional(),
   segmentId: cuidSchema.optional(),
   limit: z.number().int().min(1).max(100).default(25),
   cursor: cuidSchema.optional(),
 });
+
+// ---------------------------------------------------------------------------
+// SMS campaign — thin schemas, Twilio-backed (Workstream 2).
+// ---------------------------------------------------------------------------
+
+export const smsCampaignCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  segmentId: cuidSchema,
+  body: z.string().trim().min(1).max(1600),
+  fromNumber: z.string().trim().max(64).optional(),
+});
+export type SmsCampaignCreateInput = z.infer<typeof smsCampaignCreateSchema>;
+
+export const smsCampaignUpdateSchema = z.object({
+  id: cuidSchema,
+  name: z.string().trim().min(1).max(120).optional(),
+  segmentId: cuidSchema.optional(),
+  body: z.string().trim().min(1).max(1600).optional(),
+  fromNumber: z.string().trim().max(64).nullable().optional(),
+});
+
+export const smsCampaignSendNowSchema = z.object({ id: cuidSchema });
+export const smsCampaignScheduleSchema = z.object({
+  id: cuidSchema,
+  scheduledAt: z.string().datetime(),
+});
+export const smsCampaignCancelSchema = z.object({ id: cuidSchema });
+export const smsCampaignDeleteSchema = z.object({ id: cuidSchema });
 
 // ---------------------------------------------------------------------------
 // Campaign — test send (M3) and analytics (M8)

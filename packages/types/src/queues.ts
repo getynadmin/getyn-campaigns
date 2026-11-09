@@ -50,6 +50,8 @@ export const QUEUE_NAMES = {
   attachmentParse: 'attachment-parse',
   // WhatsApp Agent — mirror of Email Agent for WhatsApp channel.
   whatsappAgent: 'whatsapp-agent',
+  // SMS campaign dispatch (Twilio-backed). Prepare + per-batch dispatch.
+  smsSends: 'sms-sends',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -351,7 +353,19 @@ export const JOB_NAMES = {
     processReply: 'whatsapp-agent-process-reply',
     coolingWake: 'whatsapp-agent-cooling-wake',
   },
+  smsSends: {
+    prepareCampaign: 'prepare-sms-campaign',
+  },
 } as const;
+
+// SMS campaign dispatch payload — one prepare job per campaign.
+export const prepareSmsCampaignPayloadSchema = z.object({
+  campaignId: cuidSchema,
+  tenantId: cuidSchema,
+});
+export type PrepareSmsCampaignPayload = z.infer<
+  typeof prepareSmsCampaignPayloadSchema
+>;
 
 // -----------------------------------------------------------------
 // WhatsApp Agent payloads
