@@ -15,6 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { VoiceInputButton } from '@/components/ui/voice-input-button';
 import { api } from '@/lib/trpc';
 
 /**
@@ -34,6 +35,7 @@ export function AiGenerateTemplateDialog({
   const router = useRouter();
   const utils = api.useUtils();
   const [brief, setBrief] = useState('');
+  const [interim, setInterim] = useState('');
 
   const generate = api.ai.generateEmailTemplate.useMutation({
     onSuccess: (res) => {
@@ -62,14 +64,24 @@ export function AiGenerateTemplateDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <textarea
-          value={brief}
-          onChange={(e) => setBrief(e.target.value)}
-          rows={5}
-          maxLength={1500}
-          placeholder='e.g. "Welcome email for new Getyn signups — warm tone, a hero heading, a single CTA to the dashboard."'
-          className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
+        <div className="relative">
+          <textarea
+            value={brief + interim}
+            onChange={(e) => {
+              setInterim('');
+              setBrief(e.target.value);
+            }}
+            rows={5}
+            maxLength={1500}
+            placeholder='e.g. "Welcome email for new Getyn signups — warm tone, a hero heading, a single CTA to the dashboard."'
+            className="flex w-full rounded-md border border-input bg-background px-3 py-2 pr-11 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <VoiceInputButton
+            className="absolute bottom-2 right-2"
+            onInterim={setInterim}
+            onFinal={(chunk) => setBrief((prev) => prev + chunk)}
+          />
+        </div>
 
         <DialogFooter>
           <Button

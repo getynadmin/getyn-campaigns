@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { VoiceInputButton } from '@/components/ui/voice-input-button';
 import { api } from '@/lib/trpc';
 
 type Props = {
@@ -42,6 +43,7 @@ export function CampaignComposeDialog({
 }: Props): JSX.Element {
   const router = useRouter();
   const [goal, setGoal] = useState('');
+  const [goalInterim, setGoalInterim] = useState('');
   const [proposal, setProposal] = useState<Proposal>(null);
   // Editable overrides on top of the AI proposal. We don't mutate the
   // proposal object so the user can "reset" by regenerating.
@@ -155,14 +157,24 @@ export function CampaignComposeDialog({
             <label className="text-xs font-medium text-muted-foreground">
               Campaign goal
             </label>
-            <textarea
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              rows={3}
-              maxLength={1500}
-              placeholder='e.g. "Re-engage SkillCertified GCC leads who signed up in 2024. Drive to /pricing."'
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            />
+            <div className="relative">
+              <textarea
+                value={goal + goalInterim}
+                onChange={(e) => {
+                  setGoalInterim('');
+                  setGoal(e.target.value);
+                }}
+                rows={3}
+                maxLength={1500}
+                placeholder='e.g. "Re-engage SkillCertified GCC leads who signed up in 2024. Drive to /pricing."'
+                className="flex w-full rounded-md border border-input bg-background px-3 py-2 pr-11 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              />
+              <VoiceInputButton
+                className="absolute bottom-2 right-2"
+                onInterim={setGoalInterim}
+                onFinal={(chunk) => setGoal((prev) => prev + chunk)}
+              />
+            </div>
             <div className="flex items-center justify-end">
               <Button
                 size="sm"

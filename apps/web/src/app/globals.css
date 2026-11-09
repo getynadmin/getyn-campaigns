@@ -127,6 +127,13 @@
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.6; transform: scale(1.12); }
 }
+.voice-dot {
+  animation: voice-dot-pulse 1.2s ease-in-out infinite;
+}
+@keyframes voice-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.4); }
+}
 @media (prefers-reduced-motion: reduce) {
-  .ai-btn-wrap, .ai-btn-sparkle { animation: none; }
+  .ai-btn-wrap, .ai-btn-sparkle, .voice-dot { animation: none; }
 }

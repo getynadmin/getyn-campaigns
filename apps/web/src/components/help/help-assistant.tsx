@@ -12,6 +12,7 @@ import {
 
 import { api } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
+import { VoiceInputButton } from '@/components/ui/voice-input-button';
 
 /**
  * Strip the markdown tokens the model occasionally emits even though
@@ -55,6 +56,7 @@ const INTRO: Message = {
 export function HelpAssistant(): JSX.Element {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
+  const [interim, setInterim] = useState('');
   const [messages, setMessages] = useState<Message[]>([INTRO]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -193,8 +195,11 @@ export function HelpAssistant(): JSX.Element {
             <div className="flex items-end gap-2 rounded-xl border bg-background focus-within:ring-2 focus-within:ring-ring">
               <textarea
                 ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
+                value={input + interim}
+                onChange={(e) => {
+                  setInterim('');
+                  setInput(e.target.value);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -205,6 +210,11 @@ export function HelpAssistant(): JSX.Element {
                 maxLength={2000}
                 placeholder="Ask anything about Getyn…"
                 className="flex-1 resize-none bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground"
+              />
+              <VoiceInputButton
+                className="mb-1 mr-1"
+                onInterim={setInterim}
+                onFinal={(chunk) => setInput((prev) => prev + chunk)}
               />
               <button
                 type="button"

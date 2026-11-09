@@ -10,6 +10,7 @@ import type { SegmentRules } from '@getyn/types';
 
 import { AiButton } from '@/components/ui/ai-button';
 import { Button } from '@/components/ui/button';
+import { VoiceInputButton } from '@/components/ui/voice-input-button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -68,6 +69,7 @@ export function SegmentEditor({
   const [description, setDescription] = useState(initialDescription);
   const [rules, setRules] = useState<SegmentRules>(initialRules);
   const [aiBrief, setAiBrief] = useState('');
+  const [aiBriefInterim, setAiBriefInterim] = useState('');
   const [aiRationale, setAiRationale] = useState<string | null>(null);
 
   const draftSegment = api.ai.draftSegment.useMutation({
@@ -226,14 +228,24 @@ export function SegmentEditor({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <textarea
-                value={aiBrief}
-                onChange={(e) => setAiBrief(e.target.value)}
-                placeholder='e.g. "Subscribers tagged Interested who were created in the last 30 days"'
-                rows={2}
-                maxLength={1000}
-                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              />
+              <div className="relative">
+                <textarea
+                  value={aiBrief + aiBriefInterim}
+                  onChange={(e) => {
+                    setAiBriefInterim('');
+                    setAiBrief(e.target.value);
+                  }}
+                  placeholder='e.g. "Subscribers tagged Interested who were created in the last 30 days"'
+                  rows={2}
+                  maxLength={1000}
+                  className="flex w-full rounded-md border border-input bg-background px-3 py-2 pr-11 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                />
+                <VoiceInputButton
+                  className="absolute bottom-2 right-2"
+                  onInterim={setAiBriefInterim}
+                  onFinal={(chunk) => setAiBrief((prev) => prev + chunk)}
+                />
+              </div>
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
                   Getyn AI will fill in the rules below. Review before saving.

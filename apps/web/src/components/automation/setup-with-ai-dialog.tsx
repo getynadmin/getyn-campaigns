@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { Loader2, Mic, MicOff, Sparkles } from 'lucide-react';
+import { useState } from 'react';
+import { Loader2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { AiButton } from '@/components/ui/ai-button';
@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { VoiceInputButton } from '@/components/ui/voice-input-button';
 import { api } from '@/lib/trpc';
 
 /**
@@ -35,8 +36,7 @@ export function SetupWithAiDialog({
   onDrafted: (draft: { persona: string; goal: string }) => void;
 }): JSX.Element {
   const [brief, setBrief] = useState('');
-  const [listening, setListening] = useState(false);
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const [interim, setInterim] = useState('');
 
   const mutation = api.ai.setupAgent.useMutation({
     onSuccess: (res) => {
@@ -44,59 +44,10 @@ export function SetupWithAiDialog({
       onDrafted({ persona: res.persona, goal: res.goal });
       onOpenChange(false);
       setBrief('');
+      setInterim('');
     },
     onError: (err) => toast.error(err.message ?? 'Could not draft.'),
   });
-
-  // Clean up any active recognition when the dialog closes.
-  useEffect(() => {
-    if (!open) {
-      recognitionRef.current?.stop?.();
-      recognitionRef.current = null;
-      setListening(false);
-    }
-  }, [open]);
-
-  const supportsSpeech =
-    typeof window !== 'undefined' &&
-    (Boolean((window as WindowWithSpeech).SpeechRecognition) ||
-      Boolean((window as WindowWithSpeech).webkitSpeechRecognition));
-
-  const toggleMic = (): void => {
-    if (!supportsSpeech) {
-      toast.error('Your browser does not support voice dictation.');
-      return;
-    }
-    if (listening) {
-      recognitionRef.current?.stop?.();
-      return;
-    }
-    const w = window as WindowWithSpeech;
-    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
-    if (!Ctor) return;
-    const rec = new Ctor();
-    rec.lang = 'en-US';
-    rec.interimResults = true;
-    rec.continuous = false;
-    rec.onresult = (e: SpeechRecognitionEventLike) => {
-      for (let i = e.resultIndex; i < e.results.length; i += 1) {
-        const r = e.results[i];
-        if (!r || !r.isFinal) continue;
-        const transcript = r[0]?.transcript ?? '';
-        setBrief((prev) =>
-          prev ? `${prev.trim()} ${transcript}`.trim() : transcript,
-        );
-      }
-    };
-    rec.onend = () => setListening(false);
-    rec.onerror = () => {
-      setListening(false);
-      toast.error('Voice dictation failed. Try typing instead.');
-    };
-    recognitionRef.current = rec;
-    rec.start();
-    setListening(true);
-  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -115,8 +66,11 @@ export function SetupWithAiDialog({
 
         <div className="relative">
           <textarea
-            value={brief}
-            onChange={(e) => setBrief(e.target.value)}
+            value={brief + interim}
+            onChange={(e) => {
+              setInterim('');
+              setBrief(e.target.value);
+            }}
             rows={5}
             maxLength={1500}
             placeholder={
@@ -126,25 +80,11 @@ export function SetupWithAiDialog({
             }
             className="flex w-full resize-none rounded-md border border-input bg-background px-3 py-2 pr-11 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
-          <button
-            type="button"
-            onClick={toggleMic}
-            disabled={!supportsSpeech}
-            title={
-              supportsSpeech
-                ? listening
-                  ? 'Stop dictation'
-                  : 'Dictate with microphone'
-                : 'Voice dictation not supported in this browser'
-            }
-            className="absolute bottom-2 right-2 grid size-8 place-items-center rounded-md border bg-background text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
-          >
-            {listening ? (
-              <MicOff className="size-4 text-rose-500" />
-            ) : (
-              <Mic className="size-4" />
-            )}
-          </button>
+          <VoiceInputButton
+            className="absolute bottom-2 right-2"
+            onInterim={setInterim}
+            onFinal={(chunk) => setBrief((prev) => prev + chunk)}
+          />
         </div>
 
         <DialogFooter>
@@ -171,29 +111,3 @@ export function SetupWithAiDialog({
     </Dialog>
   );
 }
-
-// Minimal typings — the Web Speech API is not in lib.dom.d.ts in every
-// TS target we support. Keeps us from pulling @types/dom-speech-recognition
-// as a dep for this one file.
-type SpeechRecognitionEventLike = {
-  resultIndex: number;
-  results: ArrayLike<{
-    isFinal: boolean;
-    0: { transcript: string };
-    [index: number]: { transcript: string };
-  }>;
-};
-type SpeechRecognitionLike = {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  onresult: ((e: SpeechRecognitionEventLike) => void) | null;
-  onend: (() => void) | null;
-  onerror: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-type WindowWithSpeech = Window & {
-  SpeechRecognition?: new () => SpeechRecognitionLike;
-  webkitSpeechRecognition?: new () => SpeechRecognitionLike;
-};
