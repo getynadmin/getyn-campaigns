@@ -78,20 +78,14 @@ export function SetupWithAiDialog({
     rec.lang = 'en-US';
     rec.interimResults = true;
     rec.continuous = false;
-    let interim = '';
     rec.onresult = (e: SpeechRecognitionEventLike) => {
-      interim = '';
       for (let i = e.resultIndex; i < e.results.length; i += 1) {
         const r = e.results[i];
-        if (!r) continue;
+        if (!r || !r.isFinal) continue;
         const transcript = r[0]?.transcript ?? '';
-        if (r.isFinal) {
-          setBrief((prev) =>
-            prev ? `${prev.trim()} ${transcript}`.trim() : transcript,
-          );
-        } else {
-          interim += transcript;
-        }
+        setBrief((prev) =>
+          prev ? `${prev.trim()} ${transcript}`.trim() : transcript,
+        );
       }
     };
     rec.onend = () => setListening(false);

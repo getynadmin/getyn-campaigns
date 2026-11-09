@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { prisma, withTenant } from '@getyn/db';
+import { withTenant } from '@getyn/db';
 
 import { createTRPCRouter, tenantProcedure } from '../trpc';
 

@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import {
-  Activity,
   BarChart3,
   Bot,
   Mail,
@@ -471,9 +470,3 @@ function LoadingGrid({ rows }: { rows: number }): JSX.Element {
   );
 }
 
-export function Icon({ icon: IconC }: { icon: LucideIcon }): JSX.Element {
-  return <IconC className="size-4" />;
-}
-
-// Hoisted icon to shut up lint about unused import.
-void Activity;
