@@ -34,7 +34,7 @@ export default async function NewCampaignPage({
   if (!canCreate) notFound();
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-8">
+    <div className="mx-auto max-w-4xl px-6 py-8">
       <h1 className="font-display text-2xl font-semibold tracking-tight">
         New campaign
       </h1>

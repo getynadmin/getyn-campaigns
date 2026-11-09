@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 
 import { Role, prisma } from '@getyn/db';
 
+import { OngoingFlowUpsell } from '@/components/campaigns/ongoing-flow-upsell';
 import { WhatsAppCampaignNewClient } from '@/components/whatsapp-campaigns/whatsapp-campaign-new-client';
 import { getCurrentUser } from '@/server/auth/session';
 
@@ -34,7 +35,7 @@ export default async function NewWhatsAppCampaignPage({
   if (membership.role === Role.VIEWER) notFound();
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-4xl px-6 py-8 space-y-6">
       <div>
         <h2 className="font-display text-2xl font-semibold tracking-tight">
           New WhatsApp campaign
@@ -47,6 +48,8 @@ export default async function NewWhatsAppCampaignPage({
       </div>
 
       <WhatsAppCampaignNewClient tenantSlug={params.slug} />
+
+      <OngoingFlowUpsell tenantSlug={params.slug} channel="whatsapp" />
     </div>
   );
 }

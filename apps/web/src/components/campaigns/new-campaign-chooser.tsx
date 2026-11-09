@@ -8,6 +8,7 @@ import {
   Loader2,
   Mail,
   MessageCircle,
+  Phone,
   Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -88,7 +89,7 @@ export function NewCampaignChooser({
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Or build manually
         </p>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
           <Link
             href={`/t/${tenantSlug}/campaigns/new/email`}
             className="group rounded-lg border bg-card p-4 transition-colors hover:bg-muted/40"
@@ -106,7 +107,7 @@ export function NewCampaignChooser({
             </div>
           </Link>
           <Link
-            href={`/t/${tenantSlug}/whatsapp/campaigns/new`}
+            href={`/t/${tenantSlug}/campaigns/whatsapp/new`}
             className="group rounded-lg border bg-card p-4 transition-colors hover:bg-muted/40"
           >
             <div className="flex items-center gap-3">
@@ -117,6 +118,22 @@ export function NewCampaignChooser({
                 <p className="text-sm font-medium">Build WhatsApp manually</p>
                 <p className="text-xs text-muted-foreground">
                   Pick an approved template + segment.
+                </p>
+              </div>
+            </div>
+          </Link>
+          <Link
+            href={`/t/${tenantSlug}/campaigns/sms/new`}
+            className="group rounded-lg border bg-card p-4 transition-colors hover:bg-muted/40"
+          >
+            <div className="flex items-center gap-3">
+              <span className="grid size-9 place-items-center rounded-md bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                <Phone className="size-4" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Build SMS manually</p>
+                <p className="text-xs text-muted-foreground">
+                  Short text to a segment, via Twilio.
                 </p>
               </div>
             </div>

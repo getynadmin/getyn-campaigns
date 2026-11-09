@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { Role, prisma } from '@getyn/db';
 
 import { CampaignNewClient } from '@/components/campaigns/campaign-new-client';
+import { OngoingFlowUpsell } from '@/components/campaigns/ongoing-flow-upsell';
 import { getCurrentUser } from '@/server/auth/session';
 
 export const metadata = { title: 'New email campaign' };
@@ -56,6 +57,9 @@ export default async function ManualNewEmailCampaignPage({
             fromEmail: '',
           }}
         />
+      </div>
+      <div className="mt-6">
+        <OngoingFlowUpsell tenantSlug={params.slug} channel="email" />
       </div>
     </div>
   );
