@@ -120,6 +120,16 @@ export const automationRouter = createTRPCRouter({
       z.object({
         name: z.string().trim().min(1).max(120),
         description: z.string().trim().max(500).optional(),
+        kind: z
+          .enum(['EMAIL_OUTBOUND', 'WHATSAPP_OUTBOUND', 'WHATSAPP_INBOUND'])
+          .default('EMAIL_OUTBOUND'),
+        inboundTrigger: z
+          .union([
+            z.object({ kind: z.literal('any') }),
+            z.object({ kind: z.literal('keyword'), match: z.string().min(1).max(200) }),
+            z.object({ kind: z.literal('phoneNumber'), phoneNumberId: z.string().min(1) }),
+          ])
+          .optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -131,7 +141,15 @@ export const automationRouter = createTRPCRouter({
             name: input.name,
             description: input.description ?? null,
             status: AutomationStatus.DRAFT,
-            trigger: { kind: 'manual_enrollment' },
+            kind: input.kind,
+            trigger:
+              input.kind === 'WHATSAPP_INBOUND'
+                ? { kind: 'whatsapp_inbound' }
+                : { kind: 'manual_enrollment' },
+            inboundTrigger:
+              input.kind === 'WHATSAPP_INBOUND'
+                ? ((input.inboundTrigger ?? { kind: 'any' }) as object)
+                : undefined,
             definition: bareDefinition() as unknown as object,
             settings: { onReply: 'STOP' },
             createdByUserId: ctx.user.id,

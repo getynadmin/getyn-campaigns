@@ -2245,9 +2245,18 @@ model Automation {
   name            String
   description     String?           @db.Text
   status          AutomationStatus  @default(DRAFT)
+  /// What kind of flow this is. The builder shows different step
+  /// palettes per kind. EMAIL_OUTBOUND is the historical default and
+  /// what every existing Automation row backfills to.
+  kind            AutomationKind    @default(EMAIL_OUTBOUND)
   /// Zod-validated at write time. See `automationTriggerSchema` in
   /// @getyn/types — discriminated union on `kind`.
   trigger         Json              @default("{\"kind\": \"manual_enrollment\"}")
+  /// For WHATSAPP_INBOUND flows: how an incoming WA message matches
+  /// this flow. `{ kind: 'any' } | { kind: 'keyword', match: string }
+  /// | { kind: 'phoneNumber', phoneNumberId: string }`. Null for
+  /// outbound flows.
+  inboundTrigger  Json?
   /// React Flow graph. Validated at write time.
   definition      Json              @default("{\"nodes\": [], \"edges\": []}")
   /// Tenant-level policy for what happens when an enrolled contact
@@ -2266,6 +2275,13 @@ model Automation {
 
   @@index([tenantId, status])
   @@index([tenantId, updatedAt(sort: Desc)])
+  @@index([tenantId, kind, status])
+}
+
+enum AutomationKind {
+  EMAIL_OUTBOUND
+  WHATSAPP_OUTBOUND
+  WHATSAPP_INBOUND
 }
 
 // Per-contact cursor through an automation. `currentNodeId` matches

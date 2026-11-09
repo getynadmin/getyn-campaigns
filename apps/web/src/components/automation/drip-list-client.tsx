@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Loader2,
@@ -364,6 +364,8 @@ function EmptyState({ onCreate }: { onCreate: () => void }): JSX.Element {
   );
 }
 
+type FlowKind = 'EMAIL_OUTBOUND' | 'WHATSAPP_OUTBOUND' | 'WHATSAPP_INBOUND';
+
 function CreateAutomationDialog({
   open,
   onOpenChange,
@@ -374,6 +376,8 @@ function CreateAutomationDialog({
   slug: string;
 }): JSX.Element {
   const router = useRouter();
+  const [step, setStep] = useState<'kind' | 'name'>('kind');
+  const [kind, setKind] = useState<FlowKind>('EMAIL_OUTBOUND');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const utils = api.useUtils();
@@ -386,54 +390,164 @@ function CreateAutomationDialog({
     onError: (err) => toast.error(err.message),
   });
 
+  // Reset on close so reopening starts from the kind picker.
+  useEffect(() => {
+    if (!open) {
+      setStep('kind');
+      setKind('EMAIL_OUTBOUND');
+      setName('');
+      setDescription('');
+    }
+  }, [open]);
+
   function submit(e: React.FormEvent): void {
     e.preventDefault();
     create.mutate({
       name: name.trim(),
       description: description.trim() || undefined,
+      kind,
     });
   }
 
+  const kinds: Array<{
+    key: FlowKind;
+    title: string;
+    blurb: string;
+    tone: string;
+    available: boolean;
+  }> = [
+    {
+      key: 'EMAIL_OUTBOUND',
+      title: 'Email — Outbound',
+      blurb:
+        'Broadcast or segment-triggered email sequence. Picks up every contact who matches the trigger.',
+      tone: 'border-sky-500/40 bg-sky-50 dark:bg-sky-950/30',
+      available: true,
+    },
+    {
+      key: 'WHATSAPP_OUTBOUND',
+      title: 'WhatsApp — Outbound',
+      blurb:
+        'Broadcast an approved WA template, then branch on reply / delay for follow-ups.',
+      tone: 'border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/30',
+      available: true,
+    },
+    {
+      key: 'WHATSAPP_INBOUND',
+      title: 'WhatsApp — Inbound reply flow',
+      blurb:
+        'Fires when a customer messages your connected WABA number. Branch on message text, tag contact, auto-reply with a template.',
+      tone: 'border-violet-500/40 bg-violet-50 dark:bg-violet-950/30',
+      available: true,
+    },
+  ];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>New automation</DialogTitle>
           <DialogDescription>
-            Give it a name — you can rename anytime.
+            {step === 'kind'
+              ? 'Pick what kind of flow this is — the builder adapts to show the right step types.'
+              : 'Give it a name — you can rename anytime.'}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs">Name</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Welcome series"
-              autoFocus
-              required
-              maxLength={120}
-            />
+
+        {step === 'kind' ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-2">
+              {kinds.map((k) => (
+                <button
+                  key={k.key}
+                  type="button"
+                  onClick={() => setKind(k.key)}
+                  className={cn(
+                    'rounded-lg border px-4 py-3 text-left transition-colors',
+                    kind === k.key
+                      ? k.tone
+                      : 'border-border bg-card hover:bg-muted/40',
+                  )}
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">{k.title}</p>
+                    {kind === k.key ? (
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-foreground">
+                        Selected
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {k.blurb}
+                  </p>
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Email inbound flows aren&apos;t supported yet — route inbound
+              email through the Email Agent instead.
+            </p>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => onOpenChange(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={() => setStep('name')}>
+                Continue
+              </Button>
+            </DialogFooter>
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Description (optional)</Label>
-            <Input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="3 emails over 2 weeks for new signups"
-              maxLength={500}
-            />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={create.isPending || name.trim().length === 0}>
-              {create.isPending && <Loader2 className="mr-1 size-4 animate-spin" />}
-              Create & open builder
-            </Button>
-          </DialogFooter>
-        </form>
+        ) : (
+          <form onSubmit={submit} className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Name</Label>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={
+                  kind === 'WHATSAPP_INBOUND'
+                    ? 'Support bot — pricing questions'
+                    : kind === 'WHATSAPP_OUTBOUND'
+                      ? 'WhatsApp re-engagement blast'
+                      : 'Welcome series'
+                }
+                autoFocus
+                required
+                maxLength={120}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Description (optional)</Label>
+              <Input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="3 emails over 2 weeks for new signups"
+                maxLength={500}
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setStep('kind')}
+              >
+                Back
+              </Button>
+              <Button
+                type="submit"
+                disabled={create.isPending || name.trim().length === 0}
+              >
+                {create.isPending && (
+                  <Loader2 className="mr-1 size-4 animate-spin" />
+                )}
+                Create & open builder
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );

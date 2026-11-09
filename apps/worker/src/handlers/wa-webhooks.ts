@@ -391,6 +391,77 @@ async function handleInbound(event: {
           console.warn('[wa-webhooks:inbound] agent enqueue failed', err);
         }
       }
+
+      // WhatsApp Inbound Flow routing: find any active WHATSAPP_INBOUND
+      // Automations for this tenant whose trigger matches, then enroll
+      // the contact if they're not already enrolled. The flow worker
+      // picks it up on the next tick.
+      try {
+        const inboundFlows = await tx.automation.findMany({
+          where: {
+            tenantId: phone.tenantId,
+            kind: 'WHATSAPP_INBOUND',
+            status: 'ACTIVE',
+          },
+          select: {
+            id: true,
+            inboundTrigger: true,
+            definition: true,
+          },
+        });
+
+        const bodyLower = (body ?? '').toLowerCase();
+        const matches = inboundFlows.filter((f) => {
+          const t = (f.inboundTrigger ?? { kind: 'any' }) as {
+            kind: string;
+            match?: string;
+            phoneNumberId?: string;
+          };
+          if (t.kind === 'any') return true;
+          if (t.kind === 'keyword') {
+            return (
+              typeof t.match === 'string' &&
+              t.match.length > 0 &&
+              bodyLower.includes(t.match.toLowerCase())
+            );
+          }
+          if (t.kind === 'phoneNumber') {
+            return t.phoneNumberId === phone.phoneNumberId;
+          }
+          return false;
+        });
+
+        for (const flow of matches) {
+          const def = flow.definition as unknown as {
+            nodes?: Array<{ id: string; type?: string }>;
+          };
+          const firstNode = def.nodes?.[0]?.id;
+          if (!firstNode) continue;
+          if (!conv.contactId) continue;
+          const existingEnrollment = await tx.automationEnrollment.findFirst({
+            where: {
+              tenantId: phone.tenantId,
+              automationId: flow.id,
+              contactId: conv.contactId,
+              status: 'ACTIVE',
+            },
+            select: { id: true },
+          });
+          if (existingEnrollment) continue;
+          await tx.automationEnrollment.create({
+            data: {
+              tenantId: phone.tenantId,
+              automationId: flow.id,
+              contactId: conv.contactId,
+              status: 'ACTIVE',
+              currentNodeId: firstNode,
+              nextActionAt: new Date(),
+            },
+          });
+        }
+      } catch (err) {
+        console.warn('[wa-webhooks:inbound] flow enrollment failed', err);
+      }
     }
   });
 }
