@@ -217,8 +217,6 @@ const RAIL: RailEntry[] = [
               href: '/admin/integrations/sms-servers',
               label: 'SMS Servers',
               icon: Smartphone,
-              badge: 'Soon',
-              soon: true,
             },
           ],
         },
