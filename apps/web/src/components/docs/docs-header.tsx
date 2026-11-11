@@ -175,15 +175,20 @@ export function DocsHeader({ logoUrl }: { logoUrl?: string | null } = {}): JSX.E
           className="flex items-center gap-2 font-display text-base font-semibold tracking-tight"
         >
           {logoUrl ? (
-            <Image
-              src={logoUrl}
-              alt="Getyn Campaigns"
-              width={140}
-              height={32}
-              unoptimized
-              className="h-8 w-auto object-contain"
-              priority
-            />
+            <span className="flex items-center gap-2">
+              <Image
+                src={logoUrl}
+                alt="Getyn Campaigns"
+                width={140}
+                height={32}
+                unoptimized
+                className="h-8 w-auto object-contain"
+                priority
+              />
+              <span className="hidden text-[10px] font-semibold uppercase tracking-[0.18em] text-orange-500 sm:inline">
+                Campaigns
+              </span>
+            </span>
           ) : (
             <>
               <span className="inline-flex size-7 items-center justify-center rounded-md bg-emerald-600 text-white">

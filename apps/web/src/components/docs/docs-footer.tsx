@@ -89,14 +89,19 @@ export function DocsFooter({
             <div className="flex flex-col gap-5">
               <a href="/pricing" className="w-max">
                 {logoUrl ? (
-                  <Image
-                    src={logoUrl}
-                    alt="Getyn Campaigns"
-                    width={160}
-                    height={36}
-                    unoptimized
-                    className="h-9 w-auto object-contain"
-                  />
+                  <span className="flex items-center gap-2">
+                    <Image
+                      src={logoUrl}
+                      alt="Getyn Campaigns"
+                      width={160}
+                      height={36}
+                      unoptimized
+                      className="h-9 w-auto object-contain"
+                    />
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-orange-400">
+                      Campaigns
+                    </span>
+                  </span>
                 ) : (
                   <span className="inline-flex items-center gap-2 text-base font-semibold tracking-tight text-white">
                     <span className="inline-flex size-7 items-center justify-center rounded-md bg-emerald-600 text-xs">
