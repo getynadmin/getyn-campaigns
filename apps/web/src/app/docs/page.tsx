@@ -51,6 +51,41 @@ const CATEGORY_ACCENT: Record<
     iconFg: 'text-amber-700 dark:text-amber-300',
     chip: 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200',
   },
+  'whatsapp-campaigns': {
+    surface: 'from-green-50 to-white dark:from-green-950/30 dark:to-background',
+    ring: 'hover:border-green-300 dark:hover:border-green-800',
+    iconBg: 'bg-green-100 dark:bg-green-950/60',
+    iconFg: 'text-green-700 dark:text-green-300',
+    chip: 'bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-200',
+  },
+  'sms-campaigns': {
+    surface: 'from-orange-50 to-white dark:from-orange-950/30 dark:to-background',
+    ring: 'hover:border-orange-300 dark:hover:border-orange-800',
+    iconBg: 'bg-orange-100 dark:bg-orange-950/60',
+    iconFg: 'text-orange-700 dark:text-orange-300',
+    chip: 'bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-200',
+  },
+  'automation-and-flows': {
+    surface: 'from-fuchsia-50 to-white dark:from-fuchsia-950/30 dark:to-background',
+    ring: 'hover:border-fuchsia-300 dark:hover:border-fuchsia-800',
+    iconBg: 'bg-fuchsia-100 dark:bg-fuchsia-950/60',
+    iconFg: 'text-fuchsia-700 dark:text-fuchsia-300',
+    chip: 'bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-950/60 dark:text-fuchsia-200',
+  },
+  'analytics-and-deliverability': {
+    surface: 'from-cyan-50 to-white dark:from-cyan-950/30 dark:to-background',
+    ring: 'hover:border-cyan-300 dark:hover:border-cyan-800',
+    iconBg: 'bg-cyan-100 dark:bg-cyan-950/60',
+    iconFg: 'text-cyan-700 dark:text-cyan-300',
+    chip: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-200',
+  },
+  'billing-and-plans': {
+    surface: 'from-rose-50 to-white dark:from-rose-950/30 dark:to-background',
+    ring: 'hover:border-rose-300 dark:hover:border-rose-800',
+    iconBg: 'bg-rose-100 dark:bg-rose-950/60',
+    iconFg: 'text-rose-700 dark:text-rose-300',
+    chip: 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-200',
+  },
 };
 
 const DEFAULT_ACCENT = {
