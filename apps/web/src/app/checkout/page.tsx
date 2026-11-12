@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import { CheckoutClient } from '@/components/checkout/checkout-client';
 import { DocsFooter } from '@/components/docs/docs-footer';
-import { MetaPixel } from '@/components/marketing/meta-pixel';
+import { TrackingTags } from '@/components/marketing/tracking-tags';
 import { getSiteBranding } from '@/server/integrations/site-branding';
 import { getTrackingPixels } from '@/server/integrations/tracking-pixels';
 import { createCaller } from '@/server/trpc/root';
@@ -57,9 +57,28 @@ export default async function CheckoutPage({
   const extraWa = clampBundle(searchParams.extraWa, 100);
   const extraSms = clampBundle(searchParams.extraSms, 100);
 
+  // AddToCart value — plan monthly price in cents, used for Meta
+  // AddToCart + Google Ads add-to-cart conversion on arrival.
+  const cfg = pricing.config;
+  const extraMsgs = Math.max(0, volume - cfg.baseIncludedMessages);
+  const blocks = extraMsgs > 0 ? Math.ceil(extraMsgs / cfg.blockSize) : 0;
+  const monthlyCents = cfg.basePriceCents + blocks * cfg.pricePerBlockCents;
+  const addToCartCents =
+    cycle === 'monthly'
+      ? monthlyCents
+      : Math.round(
+          monthlyCents * 12 * (1 - cfg.annualDiscountPercent / 100),
+        );
+
   return (
     <>
-      <MetaPixel pixelId={pixels.metaPixelId} />
+      <TrackingTags
+        pixels={pixels}
+        addToCart={{
+          valueCents: addToCartCents,
+          currency: cfg.currency,
+        }}
+      />
       <CheckoutClient
         initial={{
           planSlug,

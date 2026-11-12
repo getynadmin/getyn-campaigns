@@ -13,22 +13,32 @@ import { adminApi } from '@/lib/admin-trpc';
 export function TrackingPixelsClient(): JSX.Element {
   return (
     <div className="space-y-4">
-      <MetaPixelPanel />
+      <TrackingPanel />
     </div>
   );
 }
 
-function MetaPixelPanel(): JSX.Element {
+function TrackingPanel(): JSX.Element {
   const utils = adminApi.useUtils();
   const { data, isLoading } = adminApi.integrations.metaPixel.get.useQuery();
   const [hydrated, setHydrated] = useState(false);
-  const [pixelId, setPixelId] = useState('');
   const [enabled, setEnabled] = useState(false);
+  const [pixelId, setPixelId] = useState('');
+  const [gaId, setGaId] = useState('');
+  const [gtagId, setGtagId] = useState('');
+  const [adsConversionId, setAdsConversionId] = useState('');
+  const [adsPurchaseLabel, setAdsPurchaseLabel] = useState('');
+  const [adsAddToCartLabel, setAdsAddToCartLabel] = useState('');
 
   useEffect(() => {
     if (!data || hydrated) return;
-    setPixelId(data.config.pixelId);
     setEnabled(data.enabled);
+    setPixelId(data.config.pixelId);
+    setGaId(data.config.gaId);
+    setGtagId(data.config.gtagId);
+    setAdsConversionId(data.config.adsConversionId);
+    setAdsPurchaseLabel(data.config.adsPurchaseLabel);
+    setAdsAddToCartLabel(data.config.adsAddToCartLabel);
     setHydrated(true);
   }, [data, hydrated]);
 
@@ -40,71 +50,115 @@ function MetaPixelPanel(): JSX.Element {
     onError: (err) => toast.error(err.message),
   });
 
-  if (isLoading || !data) return <Skeleton className="h-72" />;
+  if (isLoading || !data) return <Skeleton className="h-96" />;
 
   return (
     <section className="space-y-4">
-      <div className="flex items-center justify-between rounded-lg border bg-card p-4">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
-            f
-          </div>
-          <div>
-            <p className="font-semibold">Meta Pixel (Facebook)</p>
-            <p className="text-xs text-muted-foreground">
-              Tracks PageView on every marketing page, Purchase on
-              /checkout/confirmation. Uses your Business Manager Pixel ID.
-            </p>
-          </div>
-        </div>
-        <span
-          className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
-            data.enabled
-              ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
-              : 'bg-muted text-muted-foreground'
-          }`}
-        >
-          {data.enabled ? 'Live' : 'Off'}
-        </span>
-      </div>
-
-      <section className="space-y-4 rounded-lg border bg-card p-5">
-        <div className="space-y-1">
-          <Label className="text-xs">Meta Pixel ID</Label>
-          <Input
-            value={pixelId}
-            onChange={(e) => setPixelId(e.target.value.replace(/\D/g, ''))}
-            placeholder="123456789012345"
-            className="font-mono"
-            inputMode="numeric"
-          />
-          <p className="text-[11px] text-muted-foreground">
-            Numeric only. Find yours in Business Manager → Events Manager →
-            your Pixel → Settings.
+      {/* Master toggle */}
+      <div className="flex items-center justify-between rounded-lg border bg-card p-5">
+        <div>
+          <p className="font-semibold">Enable tracking</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Master switch. When off, no pixels or tags load anywhere,
+            regardless of the IDs below.
           </p>
         </div>
-
-        <label className="flex items-start gap-3 rounded-md border p-3 text-sm">
+        <label className="inline-flex cursor-pointer items-center">
           <input
             type="checkbox"
             checked={enabled}
             onChange={(e) => setEnabled(e.target.checked)}
-            className="mt-0.5 size-4 accent-foreground"
+            className="peer sr-only"
           />
-          <span>
-            <span className="font-medium">Enable Meta Pixel</span>
-            <span className="mt-0.5 block text-xs text-muted-foreground">
-              When enabled, the pixel script is injected on the public
-              /pricing, /checkout, and /checkout/confirmation pages. Fires
-              a standard Purchase event with the order value on the
-              confirmation page.
-            </span>
+          <span className="relative inline-block h-6 w-11 rounded-full bg-muted transition-colors peer-checked:bg-emerald-500">
+            <span className="absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
           </span>
         </label>
+      </div>
 
-        <div className="flex justify-end">
+      <section className="space-y-5 rounded-lg border bg-card p-5">
+        <Field
+          label="Facebook Pixel ID"
+          hint="Meta Pixel — fires a PageView on every page."
+          placeholder="773182113413719"
+          value={pixelId}
+          onChange={(v) => setPixelId(v.replace(/\D/g, ''))}
+          mono
+        />
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Google Analytics ID"
+            hint="GA4 measurement ID."
+            placeholder="G-XXXXXXXXXX"
+            value={gaId}
+            onChange={setGaId}
+            mono
+          />
+          <Field
+            label="Google Tag ID"
+            hint="Optional Google Tag (gtag) container."
+            placeholder="AW-XXXXXXXXXX"
+            value={gtagId}
+            onChange={setGtagId}
+            mono
+          />
+        </div>
+
+        <Field
+          label="Google Ads Conversion ID"
+          hint="Google Ads / conversion tag. Loaded via the same gtag.js."
+          placeholder="11322651176"
+          value={adsConversionId}
+          onChange={setAdsConversionId}
+          mono
+        />
+
+        <Field
+          label="Google Ads purchase label"
+          hint={
+            <>
+              Optional. The conversion label for the <b>Purchase</b> action
+              (the part after the slash in <code>AW-XXXX/label</code>). Used
+              to fire the paid-checkout conversion. GA4{' '}
+              <code>purchase</code> fires regardless.
+            </>
+          }
+          placeholder="Cy_pCKX3-docEKjkh5cq"
+          value={adsPurchaseLabel}
+          onChange={setAdsPurchaseLabel}
+          mono
+        />
+
+        <Field
+          label="Google Ads add-to-cart label"
+          hint={
+            <>
+              Optional. The conversion label for the <b>Add to cart</b>{' '}
+              action (the part after the slash in <code>AW-XXXX/label</code>).
+              Fires once when a visitor reaches the checkout page with a
+              plan selected. Also sends a Meta <code>AddToCart</code> event.
+            </>
+          }
+          placeholder="PBudCO35ubEdEKjkh5cq"
+          value={adsAddToCartLabel}
+          onChange={setAdsAddToCartLabel}
+          mono
+        />
+
+        <div className="flex justify-end pt-2">
           <Button
-            onClick={() => save.mutate({ pixelId, enabled })}
+            onClick={() =>
+              save.mutate({
+                pixelId,
+                gaId,
+                gtagId,
+                adsConversionId,
+                adsPurchaseLabel,
+                adsAddToCartLabel,
+                enabled,
+              })
+            }
             disabled={save.isPending}
           >
             {save.isPending ? (
@@ -117,5 +171,38 @@ function MetaPixelPanel(): JSX.Element {
         </div>
       </section>
     </section>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  placeholder,
+  value,
+  onChange,
+  mono,
+}: {
+  label: string;
+  hint?: React.ReactNode;
+  placeholder?: string;
+  value: string;
+  onChange: (v: string) => void;
+  mono?: boolean;
+}): JSX.Element {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">{label}</Label>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={mono ? 'font-mono' : undefined}
+      />
+      {hint ? (
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          {hint}
+        </p>
+      ) : null}
+    </div>
   );
 }

@@ -5,7 +5,7 @@ import { CheckCircle2 } from 'lucide-react';
 import { CheckoutOrderStatus, prisma } from '@getyn/db';
 
 import { DocsFooter } from '@/components/docs/docs-footer';
-import { MetaPixel } from '@/components/marketing/meta-pixel';
+import { TrackingTags } from '@/components/marketing/tracking-tags';
 import { getSiteBranding } from '@/server/integrations/site-branding';
 import { getTrackingPixels } from '@/server/integrations/tracking-pixels';
 
@@ -55,9 +55,13 @@ export default async function CheckoutConfirmationPage({
 
   return (
     <>
-    <MetaPixel
-      pixelId={pixels.metaPixelId}
-      purchase={{ valueCents: order.amountCents, currency: order.currency }}
+    <TrackingTags
+      pixels={pixels}
+      purchase={{
+        valueCents: order.amountCents,
+        currency: order.currency,
+        transactionId: ref,
+      }}
     />
     <div className="mx-auto flex min-h-[80vh] max-w-lg items-center justify-center px-6 py-16">
       <div className="w-full rounded-2xl border bg-card p-8 text-center shadow-sm">

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import { DocsFooter } from '@/components/docs/docs-footer';
 import { DocsHeader } from '@/components/docs/docs-header';
-import { MetaPixel } from '@/components/marketing/meta-pixel';
+import { TrackingTags } from '@/components/marketing/tracking-tags';
 import { PricingClient } from '@/components/pricing/pricing-client';
 import { getSiteBranding } from '@/server/integrations/site-branding';
 import { getTrackingPixels } from '@/server/integrations/tracking-pixels';
@@ -34,7 +34,7 @@ export default async function PricingPage(): Promise<JSX.Element> {
 
   return (
     <div className="flex min-h-dvh flex-col bg-white text-neutral-900">
-      <MetaPixel pixelId={pixels.metaPixelId} />
+      <TrackingTags pixels={pixels} />
       <DocsHeader logoUrl={headerLogo} />
       <main className="flex-1 bg-white">
         <PricingClient initial={initial} />

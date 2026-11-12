@@ -1117,6 +1117,11 @@ const metaPixelUpdateSchema = z.object({
     .max(64)
     .regex(/^\d{6,}$/u, 'Meta Pixel IDs are numeric, ≥6 digits')
     .or(z.literal('')),
+  gaId: z.string().trim().max(64).default(''),
+  gtagId: z.string().trim().max(64).default(''),
+  adsConversionId: z.string().trim().max(64).default(''),
+  adsPurchaseLabel: z.string().trim().max(128).default(''),
+  adsAddToCartLabel: z.string().trim().max(128).default(''),
   enabled: z.boolean(),
 });
 
@@ -1130,6 +1135,11 @@ const metaPixelRouter = createAdminRouter({
       enabled: row?.enabled ?? false,
       config: {
         pixelId: row?.config.pixelId ?? '',
+        gaId: row?.config.gaId ?? '',
+        gtagId: row?.config.gtagId ?? '',
+        adsConversionId: row?.config.adsConversionId ?? '',
+        adsPurchaseLabel: row?.config.adsPurchaseLabel ?? '',
+        adsAddToCartLabel: row?.config.adsAddToCartLabel ?? '',
       },
     };
   }),
@@ -1138,29 +1148,45 @@ const metaPixelRouter = createAdminRouter({
     .input(metaPixelUpdateSchema)
     .mutation(async ({ ctx, input }) => {
       return withAdminContext(ctx.staff, async () => {
-        if (input.enabled && !input.pixelId) {
+        const hasAnyId =
+          !!input.pixelId ||
+          !!input.gaId ||
+          !!input.gtagId ||
+          !!input.adsConversionId;
+        if (input.enabled && !hasAnyId) {
           throw new TRPCError({
             code: 'BAD_REQUEST',
-            message: 'Enter a Meta Pixel ID before enabling.',
+            message:
+              'Enter at least one tracking ID (Meta Pixel, GA4, Google Tag, or Ads Conversion) before enabling.',
           });
         }
         await saveIntegration({
           provider: 'meta-pixel',
           enabled: input.enabled,
-          config: { pixelId: input.pixelId || undefined } as unknown as Record<
-            string,
-            unknown
-          >,
-          // No secrets on this row (public id only).
+          config: {
+            pixelId: input.pixelId || undefined,
+            gaId: input.gaId || undefined,
+            gtagId: input.gtagId || undefined,
+            adsConversionId: input.adsConversionId || undefined,
+            adsPurchaseLabel: input.adsPurchaseLabel || undefined,
+            adsAddToCartLabel: input.adsAddToCartLabel || undefined,
+          } as unknown as Record<string, unknown>,
+          // No secrets on this row (public ids only).
           secrets: null,
           staffUserId: ctx.staff.staffUserId,
         });
         return {
           result: { ok: true as const },
           audit: {
-            action: 'admin.integration.metaPixel.updated',
+            action: 'admin.integration.trackingPixels.updated',
             targetEntityId: 'meta-pixel',
-            afterSnapshot: { enabled: input.enabled, hasPixelId: !!input.pixelId },
+            afterSnapshot: {
+              enabled: input.enabled,
+              hasPixelId: !!input.pixelId,
+              hasGaId: !!input.gaId,
+              hasGtagId: !!input.gtagId,
+              hasAdsConversionId: !!input.adsConversionId,
+            },
           },
         };
       });
