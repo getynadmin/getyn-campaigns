@@ -4,6 +4,7 @@ import { AppShell } from '@/components/app-shell/app-shell';
 import { Providers } from '@/components/providers/providers';
 import { TenantStateBanner } from '@/components/billing/tenant-state-banner';
 import { getCurrentUser } from '@/server/auth/session';
+import { stampLastSeen } from '@/server/marketing';
 import { deriveTenantState } from '@/server/billing/tenant-state';
 import { getSiteBranding } from '@/server/integrations/site-branding';
 import { prisma } from '@getyn/db';
@@ -55,6 +56,11 @@ export default async function TenantLayout({
     where: { userId_tenantId: { userId: user.id, tenantId: tenant.id } },
   });
   if (!membership) notFound();
+
+  // Phase 5.6 M8 — Retargeting heartbeat. Throttled 5min inside the
+  // helper; swallowed on error so a marketing-table hiccup can't 500
+  // a dashboard load.
+  void stampLastSeen(user.id).catch(() => {});
 
   const memberships = await prisma.membership.findMany({
     where: { userId: user.id },

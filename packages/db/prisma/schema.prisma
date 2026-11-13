@@ -272,7 +272,14 @@ model User {
 
   notifications Notification[] @relation("UserNotifications")
 
+  // Phase 5.6 M8 — last-seen heartbeat for Retargeting cadence.
+  // Stamped (throttled) from tenant layout on each dashboard load.
+  lastSeenAt DateTime?
+
+  retargetSends RetargetSend[]
+
   @@index([email])
+  @@index([lastSeenAt])
 }
 
 model Tenant {
@@ -2862,4 +2869,98 @@ model AlphanumericSenderId {
 
   @@unique([tenantId, senderId, country])
   @@index([tenantId, status])
+}
+
+// ------------------------------------------------------------------
+// Phase 5.6 M8 — Marketing: Retargeting + Cart Recovery.
+// Mirrors the Getyn Builder pattern (see project_getyn_retargeting
+// memory). Both surfaces share one config row + separate reminder
+// sequences + separate send ledgers. Ships PAUSED.
+// ------------------------------------------------------------------
+
+model MarketingConfig {
+  id              String   @id @default("singleton")
+  retargetEnabled Boolean  @default(false)
+  cartEnabled     Boolean  @default(false)
+  whatsappUrl     String?
+  defaultBcc      String?
+  updatedAt       DateTime @updatedAt
+}
+
+model RetargetReminder {
+  id           String   @id @default(cuid())
+  name         String
+  // Minutes of inactivity after which this reminder becomes
+  // eligible. The cadence is stage-based: each user gets the ONE
+  // reminder whose window they're currently in.
+  delayMinutes Int
+  subject      String
+  bodyHtml     String   @db.Text
+  bcc          String?
+  enabled      Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sends RetargetSend[]
+
+  @@index([enabled, sortOrder])
+}
+
+model RetargetSend {
+  id         String   @id @default(cuid())
+  userId     String
+  reminderId String
+  recipient  String
+  // Anchor = user.lastSeenAt at the time the reminder went out.
+  // (userId, reminderId, anchorAt) is unique so we never resend the
+  // same reminder for the same inactivity cycle.
+  anchorAt   DateTime
+  status     String   @default("sent")
+  resendId   String?
+  error      String?  @db.Text
+  createdAt  DateTime @default(now())
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reminder RetargetReminder @relation(fields: [reminderId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, reminderId, anchorAt])
+  @@index([createdAt(sort: Desc)])
+}
+
+model CartRecoveryReminder {
+  id           String   @id @default(cuid())
+  name         String
+  delayMinutes Int
+  subject      String
+  bodyHtml     String   @db.Text
+  bcc          String?
+  enabled      Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sends CartRecoverySend[]
+
+  @@index([enabled, sortOrder])
+}
+
+model CartRecoverySend {
+  id         String   @id @default(cuid())
+  // CheckoutOrder.id — the abandoned order being chased.
+  orderId    String
+  reminderId String
+  recipient  String
+  // Anchor = order.createdAt (never changes) so (orderId, reminderId,
+  // anchorAt) collapses to one row per reminder per order.
+  anchorAt   DateTime
+  status     String   @default("sent")
+  resendId   String?
+  error      String?  @db.Text
+  createdAt  DateTime @default(now())
+
+  reminder CartRecoveryReminder @relation(fields: [reminderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, reminderId, anchorAt])
+  @@index([createdAt(sort: Desc)])
 }

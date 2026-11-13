@@ -15,6 +15,7 @@ import {
   Layers,
   LogOut,
   Mail,
+  Megaphone,
   MessageSquare,
   PanelsTopLeft,
   Plug,
@@ -24,6 +25,7 @@ import {
   Server,
   Settings,
   ShieldCheck,
+  ShoppingCart,
   SlidersHorizontal,
   Smartphone,
   Sparkles,
@@ -177,6 +179,31 @@ const RAIL: RailEntry[] = [
               href: '/admin/settings/staff',
               label: 'Staff Users',
               icon: Users,
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    id: 'marketing',
+    icon: Megaphone,
+    label: 'Marketing',
+    detail: {
+      title: 'Marketing',
+      sections: [
+        {
+          title: 'Lifecycle',
+          items: [
+            {
+              href: '/admin/marketing/retargeting',
+              label: 'Retargeting',
+              icon: Megaphone,
+            },
+            {
+              href: '/admin/marketing/cart-recovery',
+              label: 'Cart Recovery',
+              icon: ShoppingCart,
             },
           ],
         },

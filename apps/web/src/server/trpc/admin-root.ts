@@ -3,6 +3,7 @@ import { adminAuditLogRouter } from './routers/admin-audit-log';
 import { adminGsuiteMockRouter } from './routers/admin-gsuite-mock';
 import { adminImpersonationRouter } from './routers/admin-impersonation';
 import { adminIntegrationsRouter } from './routers/admin-integrations';
+import { adminMarketingRouter } from './routers/admin-marketing';
 import { adminPlansRouter } from './routers/admin-plans';
 import { adminSiteBrandingRouter } from './routers/admin-site-branding';
 import { adminStaffRouter } from './routers/admin-staff';
@@ -34,6 +35,8 @@ export const adminRouter = createAdminRouter({
   integrations: adminIntegrationsRouter,
   // Phase 5.6 M5 — site branding (logos, colors, custom CSS).
   siteBranding: adminSiteBrandingRouter,
+  // Phase 5.6 M8 — Marketing: Retargeting + Cart Recovery.
+  marketing: adminMarketingRouter,
 });
 
 export type AdminRouter = typeof adminRouter;
